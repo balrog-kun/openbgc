@@ -1,0 +1,26 @@
+diff --git a/main.c b/main.c
+index 549f2d0..f43b0a2 100644
+--- a/main.c
++++ b/main.c
+@@ -23,6 +23,7 @@ static const uint16_t SUPPORTED_CHIP_IDS[] =
+   0x0410,
+   0x0414,
+   0x0413,
++  0x0422,
+   0x0440,
+   0
+ };
+diff --git a/stm32ld.c b/stm32ld.c
+index 4bac7a8..6bff768 100644
+--- a/stm32ld.c
++++ b/stm32ld.c
+@@ -99,6 +99,9 @@ int stm32_init( const char *portname, u32 baud )
+ 
+ // Get bootloader version
+ // Expected response: ACK version OPTION1 OPTION2 ACK
++//
++// But since we use GET instead of GET_VERSION (0x01), the response is:
++// ACK length version length*<command ID> ACK
+ int stm32_get_version( u8 *major, u8 *minor )
+ {
+   u8 i, version;
