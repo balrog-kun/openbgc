@@ -84,7 +84,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
     }
 
     while (naxis < 3) {
-        float q[4], diff_q[4], angle, axis[3], inv_sin_half, enc[3];
+        float q[4], diff_q[4], halfangle, angle, axis[3], inv_sin_half, enc[3];
         float corr_axis, corr_enc[3];
         int best = -1;
         bool accepted;
@@ -116,8 +116,12 @@ int axes_calibrate(struct calibrate_data_s *data) {
         /* Get new orientation, calc difference from prev as conj(prev_q) x q */
         get_q(data, q, naxis);
         quaternion_mult_to(conj_prev_q, q, diff_q); /* We could delay the other terms calc but this is not a hot path */
-        //// maybe normalize diff_q, see if it makes a difference
-        angle = 2 * acosf(diff_q[0]); /* 0 - 2 * M_PI range */
+
+        if (fabsf(diff_q[0]) > 0.999f)
+            halfangle = 0.0f;
+        else
+            halfangle = acosf(diff_q[0]); /* 0 - 1 * M_PI range */
+        angle = 2 * halfangle;            /* 0 - 2 * M_PI range */
         if (angle > M_PI)
             angle -= 2 * M_PI; /* Now discontinuous at diff_q[0] == 0 */
 
@@ -150,11 +154,21 @@ int axes_calibrate(struct calibrate_data_s *data) {
         get_enc(data, enc);
 
         memcpy(axis, diff_q + 1, 3 * sizeof(float));
+        /*
+         * We can normalize axis by dividing by abs(sin(halfangle)), len(x, y, z) or sqrt(1 - w^2).
+         * FTR sqrtf() takes about half the time of a sinf() on STMF3 / F4, and 5-6 multiplies time.
+         * sqrt(1 - w^2) is the most likely to produce a nan but we don't expect diff_q to have
+         * lost normalization by a lot.  w would be close to +/-1.0f if angle is close to 0 which
+         * we have confirmed it isn't, or if all of q has drifted towards higher values.
+         */
         vector_mult_scalar(axis, 1.0f / sqrtf(1.0f - diff_q[0] * diff_q[0])); /* Divide by abs(sin(angle / 2)) to normalize */
-        //// TODO: maybe should directly normalize the axis here..., or take the chance to divide by both the diff_q norm and then by abs(sin...)
-        //// is the abs ok here?????
 
-        /* If we already have some samples, align the sign of the axis with previous samples so we can accumulate them */
+        /*
+         * If we already have some samples, align the sign of the axis with previous samples so we
+         * can accumulate them, and change angle to accordingly.  We could align the signs of the
+         * angles and accumulate the raw axes per encoder with the longest accumulated axis wins but
+         * that complicates some things.
+         */
         if (nsamples) {
             float axis_d_pos[] = { axis_accum[0] - axis[0], axis_accum[1] - axis[1], axis_accum[2] - axis[2] };
             float axis_d_neg[] = { axis_accum[0] + axis[0], axis_accum[1] + axis[1], axis_accum[2] + axis[2] };
@@ -210,7 +224,15 @@ int axes_calibrate(struct calibrate_data_s *data) {
                 if (data->out->axis_to_encoder[j] == i)
                     break; /* This encoder is already used */
 
-            if ((best < 0 || corr_enc[i] > corr_enc[best]) && j == naxis)
+            /*
+             * Until we figure out a better way, use the absolute correlation values for the
+             * comparison, unscaled.  enc_scale_accum[i] could end up being really big for a
+             * completely unrelated axis and boost corr_enc[i] for that axis and make it win.
+             * For now assume the three encoders have a similar scale and use enc_corr_accum[i]
+             * directly.  We have no max value for enc_corr_accum[i] so we cannot display it
+             * as a percentage but we can use it for the comparisons.
+             */
+            if ((best < 0 || fabsf(enc_corr_accum[i]) > fabsf(enc_corr_accum[best])) && j == naxis)
                 best = i;
         }
 
@@ -225,7 +247,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
             data->print("   Correlation is too low, let's redo this axis.\r\n");
 
         for (i = 0; i < 3; i++)
-            if (accepted && i != best && corr_enc[i] >= 0.2f) {
+            if (accepted && best >= 0 && i != best && fabsf(enc_corr_accum[i]) >= fabsf(enc_corr_accum[best]) * 0.2f) {
                 accepted = false;
                 data->print("   Correlation too high with other axes, let's redo this axis.\r\n");
             }
