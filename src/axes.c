@@ -1,5 +1,5 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Arduino.h> /* For delay() */
+#include <Arduino.h> /* For millis() */
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -71,6 +71,8 @@ int axes_calibrate(struct calibrate_data_s *data) {
 
     char msg[200];
     bool reinit = true;
+    bool reinit_wait;
+    unsigned long reinit_move_ts;
 
     data->print("1. Rotate the outer joint manually over full range of motion or at\r\n");
     data->print("   least 30 degs each direction, while keeping the other two joints'\r\n");
@@ -89,23 +91,20 @@ int axes_calibrate(struct calibrate_data_s *data) {
 
         if (reinit) {
             reinit = false;
+            reinit_wait = true;
+            reinit_move_ts = millis();
 
-            //// TODO: maybe even wait for the ahrs-detected speed to be < 0.5deg/s?
-            ahrs_update(data->main_ahrs); ////
-            if (data->frame_ahrs)////
-                ahrs_update(data->frame_ahrs);//// we need to avoid destabilizing the ahrs after long periods of no updates
-
-            get_enc(data, prev_enc);
             get_q(data, conj_prev_q, naxis);
             conj_prev_q[0] = -conj_prev_q[0];
+
+            /* Wait for the ahrs-detected delta in relative q to stay < 0.5deg for a 2s period */
+            data->print("   Waiting for IMUs to report no movement...\r");
 
             memset(enc_corr_accum, 0, sizeof(enc_corr_accum));
             enc_corr_max = 0.0f;
             memset(enc_scale_accum, 0, sizeof(enc_scale_accum));
             memset(axis_accum, 0, sizeof(axis_accum));
             nsamples = 0;
-
-            data->print("   Start now\r");
         }
 
         main_loop_sleep();
@@ -121,16 +120,28 @@ int axes_calibrate(struct calibrate_data_s *data) {
         angle = 2 * acosf(diff_q[0]); /* 0 - 2 * M_PI range */
         if (angle > M_PI)
             angle -= 2 * M_PI; /* Now discontinuous at diff_q[0] == 0 */
-        ///////////////////// is acosf a good estimation here? do we get the right sign? do we even need to use fabsf?
-        ///////////////////// we do
-        //////////// and can sqrtf(1.0f - diff_q[0] * diff_q[0]) yield 0 or nan, so that we end up with a nan in axis??
-        ///                 mmm, 0 yes, nan nope becuase even if not normalized, .x/.y/.z would probably need to be 0s
-        ///                 then .w would have to be .1 and acosf would yield something very close to 0 or 2pi and the above condition would be false
-        /////// recheck/rethink the signs in angle and axis...
-        ///
-        /////// do we wanna score the absolute resolutions?
-        ///         this may mean that an axis with 
-        ///     TODO: did we use fabsf()?????
+
+        if (reinit_wait) {
+            unsigned long now = millis();
+
+            if (fabsf(angle) > 0.5f * M_PI / 180) {
+                reinit_move_ts = now;
+                memcpy(conj_prev_q, q, sizeof(q));
+                conj_prev_q[0] = -conj_prev_q[0];
+                continue;
+            }
+
+            if (now - reinit_move_ts < 2000)
+                continue;
+
+            reinit_wait = false;
+            data->print("   Start now                                      \r");
+
+            get_enc(data, prev_enc);
+            memcpy(conj_prev_q, q, sizeof(q));
+            conj_prev_q[0] = -conj_prev_q[0];
+            continue;
+        }
 
         /* Do nothing until angle difference of 10 degrees or more */
         if (fabsf(angle) < 10.0f * M_PI / 180)
@@ -241,8 +252,6 @@ int axes_calibrate(struct calibrate_data_s *data) {
                 data->print("   Also keep the previously calibrated axes as stable as possible.\r\n");
         }
 
-        data->print("   Waiting..\r");
-        delay(2000); /* Ideally should wait for movement to stop rather than hardcode period */
         reinit = true;
     }
 
