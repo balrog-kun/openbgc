@@ -67,9 +67,9 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
 int axes_calibrate(struct calibrate_data_s *data) {
     float prev_enc[3];
     float conj_prev_q[4];
-    int naxis = 0, nsamples;
+    int naxis = 0, nsamples, enc_nsamples[3];
     float enc_corr_accum[3];
-    float enc_corr_max;
+    float enc_corr_max[3];
     float enc_scale_accum[3];
     float axis_accum[3];
     int i;
@@ -106,8 +106,9 @@ int axes_calibrate(struct calibrate_data_s *data) {
             data->print("   Waiting for IMUs to report no movement...\r");
 
             memset(enc_corr_accum, 0, sizeof(enc_corr_accum));
-            enc_corr_max = 0.0f;
+            memset(enc_corr_max, 0, sizeof(enc_corr_max));
             memset(enc_scale_accum, 0, sizeof(enc_scale_accum));
+            memset(enc_nsamples, 0, sizeof(enc_nsamples));
             memset(axis_accum, 0, sizeof(axis_accum));
             nsamples = 0;
         }
@@ -185,6 +186,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
         }
 
         vector_add(axis_accum, axis);
+        nsamples++;
 
         for (i = 0; i < 3; i++) {
             float enc_diff = enc[i] - prev_enc[i];
@@ -192,21 +194,39 @@ int axes_calibrate(struct calibrate_data_s *data) {
             if (!data->encoders[i])
                 continue;
 
+            /*
+             * If the encoder readings wrapped around we have a problem because we try to not
+             * assume a specific encoder resolution in this code and try to autocalibrate it
+             * from the readings.  That would mean we also don't have the exact min/max values
+             * or the period.  But assume the driver has at least a rough approximation of the
+             * scale factor and that a delta of > M_PI means we wrapped around.  Skip this
+             * sample.  TODO: if we have some samples already, use current enc_scale_accum to
+             * decide if this new delta has the wrong sign and is roughly off by 2 * M_PI
+             * scaled by enc_scale_accum.
+             */
+            if (fabsf(enc_diff) > M_PI)
+                continue;
+
+            /*
+             * The idea here is that enc_corr_max[i] is the upper bound for
+             * enc_corr_accum[i] * enc_scale_accum[i].  If the correlation is perfect they're
+             * equal and lower values mean worse correlation, so we can get a percentage value.
+             */
             enc_corr_accum[i] += angle * enc_diff;
             if (fabsf(enc_diff) > 0.01f)
                 enc_scale_accum[i] += angle / enc_diff;
+            enc_corr_max[i] += angle * angle;
+            enc_nsamples[i]++;
         }
 
-        enc_corr_max += angle * angle;
         memcpy(conj_prev_q, q, sizeof(q));
         conj_prev_q[0] = -q[0];
         memcpy(prev_enc, enc, sizeof(enc));
-        nsamples++;
 
         sprintf(msg, "   %i / 32 samples so far\r", nsamples);
         data->print(msg);
 
-        /* Wait for more samples? */
+        /* Wait for more samples? TODO: check enc_nsamples too */
         if (nsamples < 32)
             continue;
 
@@ -223,7 +243,8 @@ int axes_calibrate(struct calibrate_data_s *data) {
              * enc_scale_accum which *should* have the same sign.  They can perhaps have different
              * signs but that just means the correaltion is really bad?  So positive values still win.
              */
-            corr_enc[i] = enc_corr_accum[i] * (enc_scale_accum[i] / nsamples) / enc_corr_max;
+            enc_scale_accum[i] *= 1.0f / enc_nsamples[i];
+            corr_enc[i] = enc_corr_accum[i] * enc_scale_accum[i] / enc_corr_max[i];
 
             for (j = 0; j < naxis; j++)
                 if (data->out->axis_to_encoder[j] == i)
@@ -242,12 +263,12 @@ int axes_calibrate(struct calibrate_data_s *data) {
         }
 
         sprintf(msg, "   Done. Axis correlation %.1f%%, encoder correlations (%.1f%%, %.1f%%, %.1f%%) * "
-                "(%.2f, %.2f, %.2f)\r\n", corr_axis * 100.0f,
+                "scale (%.2f, %.2f, %.2f)\r\n", corr_axis * 100.0f,
                 corr_enc[0] * 100.0f, corr_enc[1] * 100.0f, corr_enc[2] * 100.0f,
-                enc_scale_accum[0] / nsamples, enc_scale_accum[1] / nsamples, enc_scale_accum[2] / nsamples);
+                enc_scale_accum[0], enc_scale_accum[1], enc_scale_accum[2]);
         data->print(msg);
 
-        accepted = corr_axis >= 0.8f && (best < 0 || corr_enc[best] >= 0.8f);
+        accepted = corr_axis >= 0.9f && (best < 0 || corr_enc[best] >= 0.8f);
         if (!accepted)
             data->print("   Correlation is too low, let's redo this axis.\r\n");
 
@@ -263,7 +284,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
 
             if (best >= 0) {
                 data->out->axis_to_encoder[naxis] = best;
-                data->out->encoder_scale[best] = enc_scale_accum[best] / nsamples;
+                data->out->encoder_scale[best] = enc_scale_accum[best];
             } else
                 data->out->axis_to_encoder[naxis] = -1;
 
