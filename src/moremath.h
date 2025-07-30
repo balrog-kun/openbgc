@@ -29,13 +29,13 @@ static inline void vector_normalize(float *v) {
     v[2] /= norm;
 }
 
-static inline float vector_add(float *v, const float *dv) {
+static inline void vector_add(float *v, const float *dv) {
     v[0] += dv[0];
     v[1] += dv[1];
     v[2] += dv[2];
 }
 
-static inline float vector_mult_scalar(float *v, float factor) {
+static inline void vector_mult_scalar(float *v, float factor) {
     v[0] *= factor;
     v[1] *= factor;
     v[2] *= factor;
