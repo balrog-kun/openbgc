@@ -37,11 +37,16 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
         memcpy(q, data->main_ahrs->q, 4 * sizeof(float));
     }
 
-    /* Take into account the angles from the encoders that we've already calibrated */
+    /*
+     * Take into account the angles from the encoders that we've already calibrated.  Go from
+     * outer to inner axes because normally the rotations are applied in the reverse order to
+     * go from frame IMU quaternion to main IMU quaternion.  Since we're undoing the rotations
+     * we need to apply the inverse rotations in the normal order (reverse the reverse.)
+     */
     for (i = 0; i < naxis; i++) {
         float angle2, sin_angle2;
         int num = data->out->axis_to_encoder[i];
-        float q_frame[4], q_joint[4];
+        float q_main[4], q_joint[4];
 
         if (num < 0 || !data->encoders[num])
             return;
@@ -50,11 +55,11 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
             data->encoders[num]->cls->scale * D2R * data->out->encoder_scale[num] * 0.5f;
         sin_angle2 = sinf(angle2);
 
-        memcpy(q_frame, q, sizeof(q_frame));
+        memcpy(q_main, q, sizeof(q_main));
         q_joint[0] = -cosf(angle2); /* - to directly produce the conjugate */
         memcpy(q_joint + 1, data->out->axes[i], 3 * sizeof(float));
         vector_mult_scalar(q_joint + 1, sin_angle2);
-        quaternion_mult_to(q_joint, q_frame, q);
+        quaternion_mult_to(q_joint, q_main, q);
     }
 }
 
@@ -113,9 +118,9 @@ int axes_calibrate(struct calibrate_data_s *data) {
         if (data->frame_ahrs)
             ahrs_update(data->frame_ahrs);
 
-        /* Get new orientation, calc difference from prev as conj(prev_q) x q */
+        /* Get new orientation, calc difference from prev as q x conj(prev_q) */
         get_q(data, q, naxis);
-        quaternion_mult_to(conj_prev_q, q, diff_q); /* We could delay the other terms calc but this is not a hot path */
+        quaternion_mult_to(q, conj_prev_q, diff_q); /* We could delay the other terms calc but this is not a hot path */
 
         if (fabsf(diff_q[0]) > 0.999f)
             halfangle = 0.0f;
