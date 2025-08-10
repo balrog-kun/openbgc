@@ -456,6 +456,15 @@ void ahrs_update(sbgc_ahrs *ahrs) {
     /* Read sensor data */
     ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
 
+    if (ahrs->debug_print) {
+        if (abs(gyr_raw[0]) > 0x7f00)
+            ahrs->debug_print("X OF");
+        if (abs(gyr_raw[1]) > 0x7f00)
+            ahrs->debug_print("Y OF");
+        if (abs(gyr_raw[2]) > 0x7f00)
+            ahrs->debug_print("Z OF");
+    }
+
     /* Convert to physical units */
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
