@@ -196,12 +196,37 @@ static inline void quaternion_to_matrix(const float *q, float r[][3]) {
 }
 
 static inline void quaternion_to_rotvec(const float *q, float *v) {
-    float half_angle = acosf(q[0]);
-    float factor = 2 * half_angle / sinf(half_angle);
+    float sin_half_angle = vector_norm(q + 1);
+    float factor = 0.0f;
+
+    if (fabsf(sin_half_angle) > 0.0001f) {
+        /* Could also use acosf(q[0]) then sinf(), may be less stable and not necessarily faster */
+        /* Note the sign of half_angle is the same in both cases: always positive */
+        float half_angle = atan2f(sin_half_angle, q[0]);
+
+        /*
+         * Not necessary for correctness but it ensures same output for different but equivalent
+         * inputs, i.e. removes the double-cover property of the quaternions by avoiding rotvec
+         * magnitudes >= Pi.  Makes this function not reversible.
+         */
+        if (half_angle >= M_PI_2)
+            half_angle -= M_PI;
+
+        factor = 2 * half_angle / sin_half_angle;
+    }
 
     v[0] = factor * q[1];
     v[1] = factor * q[2];
     v[2] = factor * q[3];
+}
+
+static inline void quaternion_from_axis_angle(float *q, const float *axis, float angle) {
+    float sina = sinf(angle * 0.5f);
+
+    q[0] = cosf(angle * 0.5f);
+    q[1] = sina * axis[0];
+    q[2] = sina * axis[1];
+    q[3] = sina * axis[2];
 }
 
 static inline bool vector_solve(const float A[][3], const float *b, float *x) {
