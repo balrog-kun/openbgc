@@ -9,6 +9,10 @@
 #define MPU6050_REG_CONFIG       0x1a
 #define MPU6050_REG_GYRO_CONFIG  0x1b
 #define MPU6050_REG_ACCEL_CONFIG 0x1c
+#define MPU6050_REG_FIFO_EN      0x23
+#define MPU6050_REG_USER_CTRL    0x6a
+#define MPU6050_REG_FIFO_COUNT   0x72
+#define MPU6050_REG_FIFO_R_W     0x74
 #define MPU6050_REG_WHO_AM_I     0x75
 #define MPU6050_REG_DATA_START   0x3b
 
@@ -35,14 +39,21 @@ sbgc_imu *sbgc_mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
         return NULL;
     }
 
+#define USE_FIFO
+
     /* Initialization sequence */
     static uint8_t init_sequence[] = {
         /* Values 0-5 all work and it looks like other factors dominate gyro stddev, hard to see any dependency */
         MPU6050_REG_PWR_MGMT_1,   0x01, /* X-gyro as PLL clock source */
-        MPU6050_REG_SMPLRT_DIV,   0x00,
+        MPU6050_REG_SMPLRT_DIV,   0x00, /* 1kHz gyro sample rate (8kHz without DLPF) */
         MPU6050_REG_CONFIG,       0x02, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
         MPU6050_REG_ACCEL_CONFIG, 0x00,
-        MPU6050_REG_GYRO_CONFIG,  0x00
+        MPU6050_REG_GYRO_CONFIG,  0x00,
+#ifdef USE_FIFO
+        MPU6050_REG_USER_CTRL,    0x04, /* Reset FIFO */
+        MPU6050_REG_FIFO_EN,      0x70, /* Enable FIFO for gyro readings */
+        MPU6050_REG_USER_CTRL,    0x40, /* Enable FIFO in general */
+#endif
     };
 
     for (uint8_t i = 0; i < sizeof(init_sequence); i += 2) {
@@ -63,14 +74,34 @@ static void mpu6050_free(struct mpu6050_s *dev) {
 }
 
 static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gyro) {
-    uint8_t buffer[14];
+#ifdef USE_FIFO
+    uint16_t byte_cnt = 0, sample_cnt;
+    int32_t gyro_total[3] = {};
+# define DATA_SIZE 8
+#else
+# define DATA_SIZE 14
+#endif
 
-    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 14, MPU6050_REG_DATA_START, 1, true) != 14) {
+    uint8_t buffer[DATA_SIZE];
+
+#ifdef USE_FIFO
+    if (gyro) {
+        if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
+            /* TODO: report error */
+            return;
+        }
+
+        byte_cnt = (uint16_t) dev->i2c->read() << 8;
+        byte_cnt |= dev->i2c->read();
+    }
+#endif
+
+    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) DATA_SIZE, MPU6050_REG_DATA_START, 1, true) != DATA_SIZE) {
         /* TODO: report error */
         return;
     }
 
-    for (uint8_t i = 0; i < 14; i++)
+    for (uint8_t i = 0; i < DATA_SIZE; i++)
         buffer[i] = dev->i2c->read();
 
     /* Accelerometer data */
@@ -83,12 +114,66 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
     /* Temperature data */
     dev->last_temp = (int16_t) (buffer[6] << 8 | buffer[7]);
 
+    if (!gyro)
+        return;
+
     /* Gyroscope data */
-    if (gyro) {
-        gyro[0] = (int16_t) (buffer[8] << 8 | buffer[9]);
-        gyro[1] = (int16_t) (buffer[10] << 8 | buffer[11]);
-        gyro[2] = (int16_t) (buffer[12] << 8 | buffer[13]);
+#ifdef USE_FIFO
+    byte_cnt = min((int) byte_cnt, 1024);
+
+# define SAMPLE_SIZE 6
+    sample_cnt = byte_cnt / SAMPLE_SIZE;
+    if (!sample_cnt) {
+        gyro[0] = 0;
+        gyro[1] = 0;
+        gyro[2] = 0;
+        /* TODO: return previous reading? */
+        return;
     }
+
+    for (uint8_t i = 0; i < sample_cnt;) {
+        uint8_t sample_cnt_chunk = min((int) sample_cnt - i, 255 / SAMPLE_SIZE);
+
+        i += sample_cnt_chunk;
+        byte_cnt = sample_cnt_chunk * SAMPLE_SIZE;
+
+        if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt, MPU6050_REG_FIFO_R_W, 1, true) != byte_cnt) {
+            /* TODO: report error */
+            return;
+        }
+
+        while (sample_cnt_chunk--) {
+            buffer[0] = dev->i2c->read();
+            gyro_total[0] += (int16_t) (buffer[0] << 8 | dev->i2c->read());
+            buffer[0] = dev->i2c->read();
+            gyro_total[1] += (int16_t) (buffer[0] << 8 | dev->i2c->read());
+            buffer[0] = dev->i2c->read();
+            gyro_total[2] += (int16_t) (buffer[0] << 8 | dev->i2c->read());
+        }
+    }
+
+    uint16_t c = sample_cnt / 2; /* Compensate for the rounding down when dividing by sample_cnt */
+    if (gyro_total[0] > 0)
+        gyro_total[0] += c;
+    else
+        gyro_total[0] -= c;
+    if (gyro_total[1] > 0)
+        gyro_total[1] += c;
+    else
+        gyro_total[1] -= c;
+    if (gyro_total[2] > 0)
+        gyro_total[2] += c;
+    else
+        gyro_total[2] -= c;
+
+    gyro[0] = gyro_total[0] / sample_cnt;
+    gyro[1] = gyro_total[1] / sample_cnt;
+    gyro[2] = gyro_total[2] / sample_cnt;
+#else
+    gyro[0] = (int16_t) (buffer[8] << 8 | buffer[9]);
+    gyro[1] = (int16_t) (buffer[10] << 8 | buffer[11]);
+    gyro[2] = (int16_t) (buffer[12] << 8 | buffer[13]);
+#endif
 }
 
 static void mpu6050_read_temp(struct mpu6050_s *dev, int32_t *temp) {
