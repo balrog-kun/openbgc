@@ -60,10 +60,47 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
         memcpy(q_joint + 1, data->out->axes[i], 3 * sizeof(float));
         vector_mult_scalar(q_joint + 1, sin_angle2);
         quaternion_mult_to(q_joint, q_main, q);
+        quaternion_normalize(q);
     }
 }
 
-/* In theory this can be easily changed for more than 3 joints */
+/*
+ * Ask the user to rotate the gimbal joints in specific ways and calculate the axis vectors for the
+ * joints, their corresponding encoder numbers, encoder offsets (positions at encoder 0 angle) and
+ * encoder scale factors.
+ *
+ * After this is done, with the encoders and/or IMUs we can have a quite complete picture of the
+ * positions of each element of the gimbal.  The chain of orientations and the rotations that take
+ * us from one to the next orientation is this:
+ *
+ *                         World/global frame (identity quaternion)
+ *                     < rotation by q_frame, from data->frame_ahrs->q >
+ *                            Frame (gimbal handle) IMU orientation
+ *      < rotation by angle[0] (from encoder out->axis_to_encoder[0]) around out->axis[0] >
+ *                  Gimbal outer arm orientation, q_frame if angle[0] == 0
+ *      < rotation by angle[1] (from encoder out->axis_to_encoder[1]) around out->axis[1] >
+ *               Gimbal middle arm orientation, q_frame if angle[0:2] == 0, 0
+ *      < rotation by angle[2] (from encoder out->axis_to_encoder[2]) around out->axis[2] >
+ *              Gimbal inner arm orientation, q_frame if angle[0:3] == 0, 0, 0
+ *                          < rotation by out->main_imu_mount_q >
+ *                         Main IMU orientation, data->main_ahrs->q
+ *          < rotation by another user-calibrated quaternion, out of scope here >
+ *                                Camera home orientation
+ *
+ * Each rotation within <...> is within the local reference frame of the previous orientation.
+ *
+ * Note that the IMU orientations represent actual current physical orientations of the IMU chips
+ * up to a very small factory error.  The gimbal handle and arm orientations on the other hand
+ * have no physical meaning, they're each the orientation of an arbitrary element of the
+ * corresponding part of the gimbal.  But we likely don't care about their physical orientations,
+ * only relative relations.  Similarly the camera home orientation may not be related to any
+ * physical part of the camera, only the relative home orientation that the user is wants to
+ * maintain or in relation to which they want to operate.  The camera, the main IMU and the
+ * inner arm are assumed to be rigidly connected and their orientations differ by constant
+ * amounts.
+ *
+ * In theory this can be easily changed for more than 3 joints.
+ */
 int axes_calibrate(struct calibrate_data_s *data) {
     float prev_enc[3];
     float conj_prev_q[4];
