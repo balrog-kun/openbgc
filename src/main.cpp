@@ -8,6 +8,7 @@
 extern "C" {
 #include "ahrs.h"
 #include "axes.h"
+#include "moremath.h"
 }
 
 #define SBGC_LED_GREEN     PB12
@@ -349,18 +350,68 @@ void loop(void) {
             serial->println(" on next sample rate change");
             break;
         case 'e':
-            /* Read encoder angles */
-            for (i = 0; i < 3; i++) {
-                if (!encoders[i])
-                    continue;
+            {
+                float angles[3];
 
-                serial->print("Encoder ");
-                serial->print(i);
-                serial->print(" angle = ");
-                serial->println((float) encoders[i]->cls->read(encoders[i]) / encoders[i]->cls->scale);
+                /* Read encoder angles */
+                for (i = 0; i < 3; i++) {
+                    float scale;
+
+                    if (!encoders[i])
+                        continue;
+
+                    scale = (have_axes ? axes.encoder_scale[i] : 1.0f) / encoders[i]->cls->scale;
+                    angles[i] = (float) encoders[i]->cls->read(encoders[i]) * scale + (scale < 0 ? 360 : 0);
+
+                    serial->print("Encoder ");
+                    serial->print(i);
+                    serial->print(" angle = ");
+                    serial->println(angles[i]);
+                }
+
+                if (have_axes) {
+                    float q[4], q_est[4], q_axis[4], q_tmp[4];
+                    float angles_est[3], mapped[3];
+
+                    if (frame_ahrs) {
+                        float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
+                        quaternion_mult_to(main_ahrs->q, conj_frame_q, q);
+                    } else
+                        memcpy(q, main_ahrs->q, 4 * sizeof(float));
+
+                    /* Try to estimate the same angles from IMU data */
+                    axes_q_to_angles(&axes, q, angles_est);
+                    mapped[axes.axis_to_encoder[0]] = angles_est[0];
+                    mapped[axes.axis_to_encoder[1]] = angles_est[1];
+                    mapped[axes.axis_to_encoder[2]] = angles_est[2];
+                    serial->print("Estimated = ");
+                    serial->print(mapped[0] * R2D);
+                    serial->print(", ");
+                    serial->print(mapped[1] * R2D);
+                    serial->print(", ");
+                    serial->println(mapped[2] * R2D);
+
+                    /* Now try to estimate main_ahrs->q from encoder angles */
+                    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]] * D2R);
+                    quaternion_mult_to(q_axis, axes.main_imu_mount_q, q_tmp);
+                    quaternion_normalize(q_tmp);
+                    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]] * D2R);
+                    quaternion_mult_to(q_axis, q_tmp, q_est);
+                    quaternion_normalize(q_est);
+                    memcpy(q_tmp, q_est, sizeof(q_tmp));
+                    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]] * D2R);
+                    quaternion_mult_to(q_axis, q_tmp, q_est);
+                    quaternion_normalize(q_est);
+
+                    q_est[0] = -q_est[0];
+                    quaternion_mult_to(main_ahrs->q, q_est, q_tmp);
+                    /* TODO: frame_ahrs */
+                    serial->print("Q x Q_est error angle = ");
+                    serial->println(2 * acosf(q_tmp[0]) * R2D);
+                }
+
+                break;
             }
-
-            break;
         case 'c':
             serial->println("Recalibrating main AHRS");
             delay(100);
