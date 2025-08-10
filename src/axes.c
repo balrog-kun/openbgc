@@ -260,11 +260,11 @@ int axes_calibrate(struct calibrate_data_s *data) {
         conj_prev_q[0] = -q[0];
         memcpy(prev_enc, enc, sizeof(enc));
 
-        sprintf(msg, "   %i / 32 samples so far\r", nsamples);
+        sprintf(msg, "   %i / 64 samples so far\r", nsamples);
         data->print(msg);
 
         /* Wait for more samples? TODO: check enc_nsamples too */
-        if (nsamples < 32)
+        if (nsamples < 64)
             continue;
 
         corr_axis = vector_norm(axis_accum) / nsamples;
@@ -329,7 +329,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
 
             if (naxis == 1) {
                 data->print("2. Rotate the middle joint while keeping the inner joint angle fixed.\r\n");
-            } else {
+            } else if (naxis == 2) {
                 data->print("3. Finally rotate the inner joint over full range of motion.\r\n");
             }
 
@@ -344,9 +344,6 @@ int axes_calibrate(struct calibrate_data_s *data) {
     /* TODO: but without encoders, I guess we'll be using the orientation of 3-rd joint axis wrt. the IMU,
      * not sure how much we can really do without encoders here. */
     get_q(data, data->out->main_imu_mount_q, 3);
-
-    /* TODO: also calculate the axes in the reverse order: inner wrt. main IMU, middle wrt. inner, outer
-     * wrt. middle and frame IMU wrt. outer? */
     return 0;
 }
 
