@@ -17,7 +17,9 @@ extern "C" {
 #define SBGC_SDA           PA14
 #define SBGC_SCL           PA15
 
-#define SBGC_BAT           PA0  /* Through R17 (14k) to BAT+ and R18 to GND (4.7k)? */
+#define SBGC_VBAT          PA0   /* Through R17 (14k) to BAT+ and R18 to GND (4.7k)? */
+#define SBGC_VBAT_R_BAT    14000
+#define SBGC_VBAT_R_GND    4700
 
 #define SBGC_DRV8313_IN1   PB1
 #define SBGC_DRV8313_IN2   PA2
@@ -262,6 +264,7 @@ void setup(void) {
     // probe_pins_setup();
 
     pinMode(SBGC_LED_GREEN, OUTPUT);
+    pinMode(SBGC_VBAT, INPUT);
 
     /* Initialize IMUs */
     main_imu = sbgc_mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);
@@ -294,8 +297,8 @@ void setup(void) {
     serial->println("Encoders initialized!");
 }
 
-void shutdown_to_bl(void) __attribute__((noreturn));
-void shutdown_to_bl(void) {
+static void shutdown_to_bl(void) __attribute__((noreturn));
+static void shutdown_to_bl(void) {
     int i;
 
     /* Things we set up explicitly (TODO: steal_ptr() syntax) */
@@ -334,11 +337,59 @@ void shutdown_to_bl(void) {
     while (1); /* Silence warning */
 }
 
-void blink(void) {
+static void blink(void) {
     static uint8_t led_val = 0;
 
     led_val ^= 1;
     digitalWrite(SBGC_LED_GREEN, led_val);
+}
+
+static void vbat_update(void) {
+    uint16_t raw = analogRead(SBGC_VBAT);
+    /* Voltage in millivolts and resistances in 100 Ohm units should just about fit in 32 bits */
+    int voltage = (uint32_t) raw * 3300 * ((SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND / 100)) / (4095 * SBGC_VBAT_R_GND / 100);
+    static int voltage_prev = 0;
+    static int lvco = 0;
+    static unsigned long vbat_ts = 0;
+    static unsigned long msg_ts = 0;
+    unsigned long now = millis();
+
+    /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
+    if (!lvco) {
+        if (voltage > 3000) {
+            if (!vbat_ts)
+                vbat_ts = now;
+            else if (now - vbat_ts >= 10000) {
+                /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
+                int cells = voltage / (voltage < 10000 ? 4500 : 4400) + 1;
+                lvco = cells * 3300;
+                vbat_ts = 0;
+                serial->print("VBAT low-voltage cutoff set at ");
+                serial->print((lvco / 100) * 0.1f);
+                serial->println("V (guessed)");
+                goto print_update;
+            }
+        } else
+            vbat_ts = 0;
+    } else if (voltage <= lvco) {
+        lvco = -1; /* Only do this once */
+        serial->println("VBAT low, disabling motors!");
+        /* TODO: disable motors, play a sound? is there any data to save? */
+        goto print_update;
+    }
+
+    if (now - msg_ts < 2000)
+        return;
+
+    if (abs(voltage - voltage_prev) < 400)
+        return;
+
+print_update:
+    voltage_prev = voltage;
+    msg_ts = now;
+    serial->print("VBAT now at ");
+    serial->print((voltage / 100) * 0.1f);
+    serial->println("V");
 }
 
 void loop(void) {
@@ -355,6 +406,7 @@ void loop(void) {
     // probe_pins_update();
 
     blink();
+    vbat_update();
 
     if (serial->available()) {
         uint8_t cmd = serial->read();
