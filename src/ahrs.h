@@ -35,8 +35,13 @@ typedef struct sbgc_ahrs_s {
     const float *encoder_q; /* If set, gets consumed by update(), calibrate() or reset_orientation() */
     void (*debug_print)(const char *);
     uint16_t debug_cnt;
+    float gyr_contrib;
     float acc_contrib;
+    float acc_error_avg;
+    float acc_error_max;
     float enc_contrib;
+    float enc_error_avg;
+    float enc_error_max;
 } sbgc_ahrs;
 
 /*

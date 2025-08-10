@@ -154,19 +154,26 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     /* See if we have any useful values from other sensors to contrast the gyro based angles and limit drift */
     memset(p2, 0, sizeof(p2));
 
+    ahrs->gyr_contrib += vector_norm(omega) * dt;
+
     norm = vector_norm(acc);
     if (norm > 0.1f && norm < 1.9f) { /* acc is already scaled to 1g unit */
         float g_local[3];
-        float acc_error[3];
+        float acc_error[3], sin_angle;
 
         get_ref_gravity(ahrs->q, g_local);
 
         acc_error[0] = acc[1] * g_local[2] - acc[2] * g_local[1];
         acc_error[1] = acc[2] * g_local[0] - acc[0] * g_local[2];
         acc_error[2] = acc[0] * g_local[1] - acc[1] * g_local[0];
+        sin_angle = vector_norm(acc_error) / norm;
         vector_mult_scalar(acc_error, ahrs->acc_kp / norm);
         vector_add(error, acc_error);
-        ahrs->acc_contrib += vector_norm(acc_error);
+
+        ahrs->acc_contrib += sin_angle * ahrs->acc_kp * dt;
+        ahrs->acc_error_avg += sin_angle;
+        if (sin_angle > ahrs->acc_error_max)
+            ahrs->acc_error_max = sin_angle;
     }
 
     if (ahrs->encoder_q) {
@@ -202,13 +209,19 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         enc_error[1] = z_local[0];
         enc_error[2] = -y_local[0];
 
+        /* TODO: instead of all this, just enc_error = quaternion_to_rotvec(compound_q)?? */
+
         norm = vector_norm(enc_error);
         /* TODO: probably also need to take into account encoder stddev due to noise */
 #       define MIN_ENC_ERROR (1.5f * ahrs->encoder_step)
         if (norm >= MIN_ENC_ERROR) { /* sin(x) ~= x in this range */
             vector_mult_scalar(enc_error, (norm - MIN_ENC_ERROR) / norm * ahrs->enc_kp);
             vector_add(error, enc_error);
-            ahrs->enc_contrib += vector_norm(enc_error);
+
+            ahrs->enc_contrib += (norm - MIN_ENC_ERROR) * ahrs->enc_kp * dt;
+            ahrs->enc_error_avg += norm;
+            if (norm > ahrs->enc_error_max)
+                ahrs->enc_error_max = norm;
         }
     }
 
@@ -281,6 +294,7 @@ void ahrs_free(sbgc_ahrs *ahrs) {
     free(ahrs);
 }
 
+/* TODO: add parameter to keep yaw from before or from encoder readings */
 static void ahrs_init_q_with_a(sbgc_ahrs *ahrs, const float *a) {
     float lensq = vector_normsq(a);
 
@@ -333,8 +347,7 @@ void ahrs_calibrate(sbgc_ahrs *ahrs) {
         sum[0] += gyr_raw[i][0];
         sum[1] += gyr_raw[i][1];
         sum[2] += gyr_raw[i][2];
-        delay(20);
-        /* TODO: read imu registers to find out if we have a new reading? perhaps add a "wait_new" flag in read_main? */
+        delay(10); /* Use main_loop_sleep();? */
     }
 
     ahrs->gyro_bias[0] = (float) sum[0] * (factor / SAMPLES_NUM);
@@ -524,11 +537,18 @@ void ahrs_update(sbgc_ahrs *ahrs) {
         float ypr[3];
 
         quaternion_to_euler(ahrs->q, ypr);
-        sprintf(output, "New ypr = (%.2f, %.2f, %.2f), rates were (%.2f, %.2f, %.2f), acc (%.2f, %.2f, %.2f)"
-                " beta %.2f acc_contrib %.2f enc_contrib %.2f dt %ius",
+        sprintf(output, "New ypr = (%.2f, %.2f, %.2f), rates were (%.3f, %.3f, %.3f), acc (%.2f, %.2f, %.2f)"
+                " beta %.2f gyr_contrib %.2f acc_contrib %.2f errmax %.1f enc_contrib %.2f errmax %.1f dt %ius"
+                " gyr %.2f lpf %.2f acc_ypr (*, %.2f, %.2f)",
                 ypr[0] * R2D, ypr[1] * R2D, ypr[2] * R2D, gyr[0] * R2D, gyr[1] * R2D, gyr[2] * R2D,
-                acc[0], acc[1], acc[2], ahrs->beta, ahrs->acc_contrib, ahrs->enc_contrib, (int) (dt * 1e6f));
-        ahrs->acc_contrib = ahrs->enc_contrib = 0.0f;
+                acc[0], acc[1], acc[2], ahrs->beta, ahrs->gyr_contrib * R2D,
+                ahrs->acc_contrib * R2D, asinf(ahrs->acc_error_max) * R2D,
+                ahrs->enc_contrib * R2D, asinf(ahrs->enc_error_max) * R2D,
+                (int) (dt * 1e6f), vector_norm(gyr), vector_norm(ahrs->gyro_lpf),
+                atan2f(-acc[0], sqrtf(acc[1] * acc[1] + acc[2] * acc[2])) * R2D, atan2f(acc[1], acc[2]) * R2D);
+        ahrs->acc_contrib = ahrs->acc_error_avg = ahrs->acc_error_max = 0.0f;
+        ahrs->enc_contrib = ahrs->enc_error_avg = ahrs->enc_error_max = 0.0f;
+        ahrs->gyr_contrib = 0.0f;
         ahrs->debug_print(output);
     }
 }
