@@ -149,13 +149,50 @@ static inline void quaternion_from_euler(const float *ypr, float *q) {
 }
 
 static inline void quaternion_from_matrix(const float r[][3], float *q) {
-    float s = sqrtf(1.0f + r[0][0] + r[1][1] + r[2][2]);
-    float d = 0.25f / s;
+    float s, d;
 
-    q[0] = 0.5f * s;
-    q[1] = (r[2][1] - r[1][2]) * d;
-    q[2] = (r[0][2] - r[2][0]) * d;
-    q[3] = (r[1][0] - r[0][1]) * d;
+    /* Shepherd's method */
+    if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+        s = sqrtf(1.0f + r[0][0] - r[1][1] - r[2][2]) * 0.5f;
+        d = 0.25f / s;
+        q[0] = (r[2][1] - r[1][2]) * d;
+        q[1] = s;
+        q[2] = (r[1][0] + r[0][1]) * d;
+        q[3] = (r[0][2] + r[2][0]) * d;
+    } else if (r[1][1] > r[0][0] && r[1][1] > r[2][2]) {
+        s = sqrtf(1.0f - r[0][0] + r[1][1] - r[2][2]) * 0.5f;
+        d = 0.25f / s;
+        q[0] = (r[0][2] - r[2][0]) * d;
+        q[1] = (r[1][0] + r[0][1]) * d;
+        q[2] = s;
+        q[3] = (r[2][1] + r[1][2]) * d;
+    } else if (r[2][2] > r[0][0] && r[2][2] > r[1][1]) {
+        s = sqrtf(1.0f - r[0][0] - r[1][1] + r[2][2]) * 0.5f;
+        d = 0.25f / s;
+        q[0] = (r[1][0] - r[0][1]) * d;
+        q[1] = (r[0][2] + r[2][0]) * d;
+        q[2] = (r[2][1] + r[1][2]) * d;
+        q[3] = s;
+    } else {
+        s = sqrtf(1.0f + r[0][0] + r[1][1] + r[2][2]) * 0.5f;
+        d = 0.25f / s;
+        q[0] = s;
+        q[1] = (r[2][1] - r[1][2]) * d;
+        q[2] = (r[0][2] - r[2][0]) * d;
+        q[3] = (r[1][0] - r[0][1]) * d;
+    }
+}
+
+static inline void quaternion_to_matrix(const float *q, float r[][3]) {
+    r[0][0] = 1.0f - 2 * (q[2] * q[2] + q[3] * q[3]);
+    r[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
+    r[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
+    r[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
+    r[1][1] = 1.0f - 2 * (q[1] * q[1] + q[3] * q[3]);
+    r[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
+    r[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
+    r[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
+    r[2][2] = 1.0f - 2 * (q[1] * q[1] + q[2] * q[2]);
 }
 
 static inline void quaternion_to_rotvec(const float *q, float *v) {
