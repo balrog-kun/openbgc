@@ -359,8 +359,8 @@ int axes_calibrate(struct calibrate_data_s *data) {
  * earlier rotations.
  */
 void axes_q_to_angles(struct axes_data_s *data, float *to_q, float *out_angles) {
-    float r[3][3], q[4], to_q2[4];
-    float a2[3], zero2;
+    float r[3][3], q_axes[4], q_mount[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
+    bool invert;
 
     /*
      * Note: if this ever gets used in realtime, the following initial steps can be precaculated,
@@ -371,38 +371,46 @@ void axes_q_to_angles(struct axes_data_s *data, float *to_q, float *out_angles) 
      * 1. R = rotation that maps axis[0] to (0, 0, 1) and axis[1] to (0, 1, 0) -- note the
      * orthogonality assumption.
      */
-    r[0][0] = data->axes[0][1] * data->axes[1][2] - data->axes[0][2] * data->axes[1][1];
-    r[0][1] = data->axes[0][2] * data->axes[1][0] - data->axes[0][0] * data->axes[1][2];
-    r[0][2] = data->axes[0][0] * data->axes[1][1] - data->axes[0][1] * data->axes[1][0];
-    r[1][0] = data->axes[1][0];
-    r[1][1] = data->axes[1][1];
-    r[1][2] = data->axes[1][2];
-    r[2][0] = data->axes[0][0];
-    r[2][1] = data->axes[0][1];
-    r[2][2] = data->axes[0][2];
-    quaternion_from_matrix(r, q);
+    r[0][0] = data->axes[1][1] * data->axes[0][2] - data->axes[1][2] * data->axes[0][1];
+    r[0][1] = data->axes[1][2] * data->axes[0][0] - data->axes[1][0] * data->axes[0][2];
+    r[0][2] = data->axes[1][0] * data->axes[0][1] - data->axes[1][1] * data->axes[0][0];
+    memcpy(r[1], data->axes[1], 3 * sizeof(float));
+    memcpy(r[2], data->axes[0], 3 * sizeof(float));
+    quaternion_from_matrix(r, q_axes);
 
-    /* 2. Rotate axis[2] by R: a2 = axis[2] @ R */
+    /* Check if inner axis and r[0] point in opposite directions (>90deg apart), if so invert inner angle */
+    /* TODO: do we need to rotate data->axes[2] by outer and middle angles for this check? */
     memcpy(a2, data->axes[2], sizeof(a2));
     vector_mult_matrix(a2, r);
-
-    /* 3. Calculate the 0 or neutral angle for axis[2]: zero2 = atan2(len(cross(a2, (1, 0, 0))), dot(a2, (1, 0, 0))) */
-    zero2 = atan2f(sqrtf(a2[1] * a2[1] + a2[2] * a2[2]), a2[0]);
-
-    /* 3.1. Set sign for the angle from (1, 0, 0) to a2: zero2 *= cross(a2, (1, 0, 0))[1] < 0 ? 1 : -1 */
-    if (a2[2] >= 0.0f)
-        zero2 = -zero2;
+    invert = a2[0] * r[0][0] + a2[1] * r[0][1] + a2[2] * r[0][2] < 0;
 
     /* End of precalculated values */
 
-    /* 4. Rotate to_q by R too */
-    quaternion_mult_to(to_q, q, to_q2); /// TODO check order
+    /* 2. Rotate to_q by R and by data->main_imu_mount_q (R @ (to_q @ data->main_imu_mount_q) @ R^T) */
+    /* TODO: we have both R and data->main_imu_mount_q at calibration-time, should merge to avoid two multiplications here */
+    memcpy(q_mount, data->main_imu_mount_q, sizeof(q_mount));
+    q_mount[0] = -q_mount[0];
+    quaternion_mult_to(to_q, q_mount, q_tmp1);
+    quaternion_mult_to(q_axes, q_tmp1, q_tmp2);
+    q_axes[0] = -q_axes[0];
+    quaternion_mult_to(q_tmp2, q_axes, q_target);
 
-    /* 5. Use standard formula for quaternion to Tait-Bryan angles in ENU */
-    quaternion_to_euler(to_q2, out_angles);
+    /* 3. Use standard formula for quaternion to Tait-Bryan angles in ENU */
+    quaternion_to_euler(q_target, out_angles);
 
-    /* 6. Rebase the inner axis angle on its neutral angle */
-    out_angles[2] -= zero2;
+    /* Double-cover, select the orientation with inner angle in -90 - 90deg range */
+    if (fabsf(out_angles[2]) > M_PI * 0.5) {
+        out_angles[0] = out_angles[0] - M_PI;
+        out_angles[1] = -out_angles[1] - M_PI;
+        out_angles[2] = out_angles[2] - M_PI;
+    }
+
+    if (invert)
+        out_angles[2] = -out_angles[2];
+
+    for (int i = 0; i < 3; i++)
+        while (out_angles[i] < 0)
+            out_angles[i] += 2 * M_PI;
 }
 
 /*
