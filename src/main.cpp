@@ -185,6 +185,42 @@ static void main_ahrs_debug_print(const char *str) {
     serial->println(str);
 }
 
+static void main_ahrs_from_encoders_debug(void) {
+    float q_tmp[4], q_est[4], q_axis[4], angles[3];
+    char buf[128];
+    static float q_est_prev[4] = { 1, 0, 0, 0 };
+
+    if (quiet || !have_axes)
+        return;
+
+    /* Read encoder angles */
+    for (int i = 0; i < 3; i++) {
+         if (!encoders[i])
+              continue;
+
+         angles[i] = copysign((float) encoders[i]->cls->read(encoders[i]) / encoders[i]->cls->scale, axes.encoder_scale[i]);
+    }
+
+    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]] * D2R);
+    quaternion_mult_to(q_axis, axes.main_imu_mount_q, q_tmp);
+    quaternion_normalize(q_tmp);
+    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]] * D2R);
+    quaternion_mult_to(q_axis, q_tmp, q_est);
+    quaternion_normalize(q_est);
+    memcpy(q_tmp, q_est, sizeof(q_tmp));
+    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]] * D2R);
+    quaternion_mult_to(q_axis, q_tmp, q_est);
+    quaternion_normalize(q_est);
+
+    q_est_prev[0] = -q_est_prev[0];
+    quaternion_mult_to(q_est_prev, q_est, q_tmp);
+    quaternion_to_rotvec(q_tmp, angles);
+    memcpy(q_est_prev, q_est, sizeof(q_est));
+
+    sprintf(buf, "est_gyr %.5f %.5f %.5f", angles[0] * R2D, angles[1] * R2D, angles[2] * R2D);
+    main_ahrs_debug_print(buf);
+}
+
 static void calibrate_print(const char *str) {
     serial->print("[");
     serial->print(micros());
@@ -311,6 +347,9 @@ void loop(void) {
 
     if (frame_ahrs)
         ahrs_update(frame_ahrs);
+
+    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
+        main_ahrs_from_encoders_debug();
 
     // imu_debug_update();
     // probe_pins_update();
