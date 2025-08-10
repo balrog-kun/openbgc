@@ -17,6 +17,9 @@ struct axes_data_s {
     int axis_to_encoder[3]; /* -1 for no encoder */
     float encoder_scale[3];
     float main_imu_mount_q[4];
+    bool has_limits[3];
+    float limit_max[3];
+    float limit_min[3];
 };
 
 struct calibrate_data_s {
