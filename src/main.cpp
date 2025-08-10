@@ -39,6 +39,8 @@ static bool have_axes;
 static float home_q[4];
 static bool have_home;
 
+#define TARGET_LOOP_RATE 128
+
 void print_mcu() {
     /*
      * Specific register addresses for F3 in RM0316, F4 RM0090:
@@ -194,8 +196,7 @@ void main_loop_sleep(void) {
     static unsigned long next_update = 0;
     unsigned long now = micros();
 
-#define TARGET_RATE 128
-#define TARGET_INTERVAL (1e6 / TARGET_RATE)
+#define TARGET_INTERVAL (1e6 / TARGET_LOOP_RATE)
 
     if (next_update - now > TARGET_INTERVAL)
         next_update = now;
