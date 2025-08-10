@@ -232,14 +232,21 @@ void setup(void) {
         while (1);
     }
 
+    // mpu6050_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
+    /* The above minimzes number of samples to read, the below seems to reduce noise */
+    mpu6050_set_srate(main_imu, 3, 0); /* 2000 Hz, no DLPF */
+
     serial->println("Main MPU6050 initialized!");
 
     main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z);
-    ahrs_set_weights(main_ahrs, 0.5f, 0.1f, 0.5f, M_PI / 0x800);
+    ahrs_set_weights(main_ahrs, 0.5f, 0.05f, 0.5f, M_PI / 0x800);
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
     ahrs_calibrate(main_ahrs);
     serial->println("Main AHRS initialized!");
+    /* TODO: make AHRS an abstract class, then convert the current AHRS to its subclass and add another that exposes the mpu6050
+     * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions
+     * from encoders?? */
 
     /* TODO: frame_ahrs */
 
@@ -331,8 +338,8 @@ void loop(void) {
             break;
         case '6' ... '9':
             serial->println("Setting new MPU6050 sample rate");
+            /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
             mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
-            /// 1k / ((1 << 6) + 1)
             delay(100);
             break;
         case '*':
