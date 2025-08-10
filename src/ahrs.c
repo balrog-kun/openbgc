@@ -138,12 +138,15 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     omega[1] = ahrs->gyro_lpf[1] * mbeta + gyr[1] * ahrs->beta;
     omega[2] = ahrs->gyro_lpf[2] * mbeta + gyr[2] * ahrs->beta;
 
+    p[0] = 0.0f;
+
     /*
      * Apply the new weighted gyro data before calculating errors from other sources.
      * This is a little wasteful but hopefully worth it.
      */
-    p[0] = 0.0f;
-    quaternion_mult_to(ahrs->q, p, qdot);
+//#define APPLY_GYRO_FIRST
+#ifdef APPLY_GYRO_FIRST
+    quaternion_mult_to(ahrs->q, omega - 1, qdot);
 
     ahrs->q[0] += qdot[0] * (dt / 2);
     ahrs->q[1] += qdot[1] * (dt / 2);
@@ -153,6 +156,9 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
 
     /* See if we have any useful values from other sensors to contrast the gyro based angles and limit drift */
     memset(p2, 0, sizeof(p2));
+#else
+    error = omega;
+#endif
 
     ahrs->gyr_contrib += vector_norm(omega) * dt;
 
@@ -226,7 +232,7 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     }
 
     /* Finally apply the error and rotate again */
-    quaternion_mult_to(ahrs->q, p2, qdot);
+    quaternion_mult_to(ahrs->q, error - 1, qdot);
 
     ahrs->q[0] += qdot[0] * (dt / 2);
     ahrs->q[1] += qdot[1] * (dt / 2);
@@ -234,7 +240,9 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     ahrs->q[3] += qdot[3] * (dt / 2);
     quaternion_normalize(ahrs->q);
 
+#ifdef APPLY_GYRO_FIRST
     vector_add(omega, error);
+#endif
     memcpy(ahrs->gyro_lpf, omega, 3 * sizeof(float));
     /* TODO: do we want to consider the error magnitude in updating beta, too? */
     /* TODO: do we want to update ahrs->gyro_bias using the error * ahrs->ki? */
