@@ -1,0 +1,22 @@
+/* vim: set ts=4 sw=4 sts=4 et : */
+#ifndef MOTOR_H
+#define MOTOR_H
+
+#include <stdint.h>
+
+struct sbgc_motor_class_s;
+
+typedef struct sbgc_motor_s {
+    struct sbgc_motor_class_s *cls;
+    bool ready;
+} sbgc_motor;
+
+typedef struct sbgc_motor_class_s {
+    void (*set_velocity)(sbgc_motor *motor, float velocity);
+    int (*powered_init)(sbgc_motor *motor);
+    int (*on)(sbgc_motor *motor);
+    void (*off)(sbgc_motor *motor);
+    void (*free)(sbgc_motor *motor);
+} sbgc_motor_class;
+
+#endif /* MOTOR_H */
