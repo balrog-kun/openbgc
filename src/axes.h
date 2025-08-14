@@ -36,7 +36,4 @@ void axes_q_to_angles(struct axes_data_s *data, float *q, float *out_angles);
 void axes_q_to_step(struct axes_data_s *data, const float *from_q, const float *to_q,
         float *angles, float damp_factor, float *out_steps);
 
-/* main.cpp */
-void main_loop_sleep(void);
-
 #endif /* AXES_H */

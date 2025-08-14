@@ -8,6 +8,7 @@
 #include "ahrs.h"
 #include "moremath.h"
 #include "encoder.h"
+#include "main.h"
 
 #include "axes.h"
 

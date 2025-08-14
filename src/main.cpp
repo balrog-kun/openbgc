@@ -9,6 +9,8 @@ extern "C" {
 #include "ahrs.h"
 #include "axes.h"
 #include "moremath.h"
+
+#include "main.h"
 }
 
 #define SBGC_LED_GREEN     PB12
@@ -40,6 +42,8 @@ static struct axes_data_s axes;
 static bool have_axes;
 static float home_q[4];
 static bool have_home;
+
+static struct main_loop_cb_s *cbs;
 
 #define TARGET_LOOP_RATE 128
 
@@ -402,11 +406,14 @@ void loop(void) {
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
 
+    blink(); /* TODO: convert to cbs */
+    vbat_update();
+
+    for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
+        entry->cb(entry->data);
+
     // imu_debug_update();
     // probe_pins_update();
-
-    blink();
-    vbat_update();
 
     if (serial->available()) {
         uint8_t cmd = serial->read();
@@ -552,4 +559,25 @@ void loop(void) {
             serial->println(cmd);
         }
     }
+}
+
+void main_loop_cb_add(struct main_loop_cb_s *cb) {
+    struct main_loop_cb_s **ptr;
+
+    for (ptr = &cbs; *ptr; ptr = &(*ptr)->next);
+
+    *ptr = cb;
+}
+
+void main_loop_cb_remove(struct main_loop_cb_s *cb) {
+    struct main_loop_cb_s **ptr = &cbs;
+
+    while (*ptr) {
+        if (*ptr == cb)
+            *ptr = (*ptr)->next;
+        else
+            ptr = &(*ptr)->next;
+    }
+
+    cb->next = NULL;
 }
