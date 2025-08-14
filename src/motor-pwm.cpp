@@ -53,19 +53,21 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, i
 
     motor->sfoc_driver = new BLDCDriver3PWM(pin_uh, pin_vh, pin_wh, pin_en);
     motor->sfoc_driver->voltage_power_supply = 12; /* TODO */
-    if (motor->sfoc_driver->init()) /* FIXME: inverted in 2.2.1 */
+    if (!motor->sfoc_driver->init())
         goto error;
 
     motor->sfoc_motor = new BLDCMotor(11);
     motor->sfoc_motor->linkDriver(motor->sfoc_driver);
     motor->sfoc_motor->linkSensor(motor->sfoc_encoder);
-    motor->sfoc_motor->voltage_limit = 3;
+    motor->sfoc_motor->voltage_limit = 5;
+    motor->sfoc_motor->voltage_sensor_align = 5;
     motor->sfoc_motor->velocity_limit = 60 * D2R;
     motor->sfoc_motor->PID_velocity.P = 0.2;
-    motor->sfoc_motor->PID_velocity.I = 2;
-    motor->sfoc_motor->PID_velocity.D = 0.1;
-    motor->sfoc_motor->LPF_velocity.Tf = 0.001;
-    motor->sfoc_motor->init();
+    motor->sfoc_motor->PID_velocity.I = 1.0;
+    motor->sfoc_motor->PID_velocity.D = 0.0;
+    motor->sfoc_motor->LPF_velocity.Tf = 0.01;
+    if (!motor->sfoc_motor->init())
+        goto error;
     motor_pwm_class.off(&motor->obj);
 
     /* TODO: eventually switch to torque control so we can let the user override position by hand like the official firmware does?
