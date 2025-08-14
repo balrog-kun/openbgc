@@ -20,8 +20,8 @@ extern "C" {
 #define SBGC_SDA           PA14
 #define SBGC_SCL           PA15
 
-#define SBGC_VBAT          PA0   /* Through R17 (14k) to BAT+ and R18 to GND (4.7k)? */
-#define SBGC_VBAT_R_BAT    14000
+#define SBGC_VBAT          PA0   /* Through R17 (140k?) to BAT+ and R18 to GND (4.7k) */
+#define SBGC_VBAT_R_BAT    140000
 #define SBGC_VBAT_R_GND    4700
 
 #define SBGC_DRV8313_IN1   PB1   /* TIM1 */
@@ -47,6 +47,7 @@ static bool have_axes;
 static float home_q[4];
 static bool have_home;
 
+static int voltage;
 static bool motors_on;
 
 static struct main_loop_cb_s *cbs;
@@ -403,16 +404,17 @@ static void blink(void) {
 }
 
 static void vbat_update(void) {
-    uint16_t raw = analogRead(SBGC_VBAT);
-    /* Voltage in millivolts and resistances in 100 Ohm units should just about fit in 32 bits */
-    int voltage = (uint32_t) raw * 3300 * ((SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND / 100)) / (4095 * SBGC_VBAT_R_GND / 100);
+    uint16_t raw = analogRead(SBGC_VBAT); /* TODO: noisy, use multiple samples */
     static int voltage_prev = 0;
     static int lvco = 0;
     static unsigned long vbat_ts = 0;
     static unsigned long msg_ts = 0;
     unsigned long now = millis();
 
+    voltage = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND);
+
     /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
+    /* TODO: scale calibration? */
     if (!lvco) {
         if (voltage > 3000) {
             if (!vbat_ts)
