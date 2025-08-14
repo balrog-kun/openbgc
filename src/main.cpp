@@ -314,6 +314,7 @@ void setup(void) {
 
     serial->println("Motors early init done");
 }
+void setup_end(void) {}
 
 static void shutdown_to_bl(void) __attribute__((noreturn));
 static void shutdown_to_bl(void) {
@@ -703,6 +704,7 @@ void loop(void) {
         }
     }
 }
+void loop_end(void) {}
 
 void main_loop_cb_add(struct main_loop_cb_s *cb) {
     struct main_loop_cb_s **ptr;
