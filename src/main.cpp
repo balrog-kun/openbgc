@@ -6,6 +6,7 @@
 #include "encoder-as5600.h"
 #include "encoder-sbgc32_i2c_drv.h"
 extern "C" {
+#include "motor-pwm.h"
 #include "ahrs.h"
 #include "axes.h"
 #include "moremath.h"
@@ -23,10 +24,12 @@ extern "C" {
 #define SBGC_VBAT_R_BAT    14000
 #define SBGC_VBAT_R_GND    4700
 
-#define SBGC_DRV8313_IN1   PB1
-#define SBGC_DRV8313_IN2   PA2
-#define SBGC_DRV8313_IN3   PA3
+#define SBGC_DRV8313_IN1   PB1   /* TIM1 */
+#define SBGC_DRV8313_IN2   PA2   /* TIM2 */
+#define SBGC_DRV8313_IN3   PA3   /* TIM2 */
 #define SBGC_DRV8313_EN123 PB10
+
+#define SBGC_MOTOR0_PAIRS  11
 /* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
 /* TODO: current and temperature sensing for yaw motor */
 
@@ -34,7 +37,8 @@ static sbgc_imu *main_imu;
 static sbgc_ahrs *main_ahrs;
 static sbgc_imu *frame_imu;
 static sbgc_ahrs *frame_ahrs;
-static sbgc_encoder *encoders[3]; /* YPR */
+static sbgc_encoder *encoders[3];
+static sbgc_motor *motors[3];
 static TwoWire *i2c;
 static HardwareSerial *serial;
 
@@ -42,6 +46,8 @@ static struct axes_data_s axes;
 static bool have_axes;
 static float home_q[4];
 static bool have_home;
+
+static bool motors_on;
 
 static struct main_loop_cb_s *cbs;
 
@@ -298,7 +304,14 @@ void setup(void) {
     encoders[0] = sbgc_as5600_new(i2c);
     encoders[1] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(1), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     encoders[2] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-    serial->println("Encoders initialized!");
+    serial->println("Encoders initialized");
+
+    motors[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
+            SBGC_MOTOR0_PAIRS, encoders[0]);
+    if (!motors[0])
+        serial->println("Motor 0 early init failed!");
+
+    serial->println("Motors early init done");
 }
 
 static void shutdown_to_bl(void) __attribute__((noreturn));
@@ -341,6 +354,47 @@ static void shutdown_to_bl(void) {
     while (1); /* Silence warning */
 }
 
+static void motors_on_off(bool on) {
+    if (motors_on == on)
+        return;
+
+    for (int i = 0; i < 3; i++) {
+        if (!motors[i])
+            continue;
+
+        if (on) {
+            if (!motors[i]->ready || motors[i]->cls->on(motors[i]) != 0) {
+                for (int j = 0; j < i; j++)
+                    if (motors[j])
+                        motors[j]->cls->off(motors[j]);
+                serial->print("Motor ");
+                serial->print(i);
+                serial->println(" power on failed!");
+                return;
+            }
+        } else
+            motors[i]->cls->off(motors[i]);
+    }
+
+    motors_on = on;
+    /* TODO: beep */
+}
+
+static void powered_init(void) {
+    for (int i = 0; i < 3; i++) {
+        if (!motors[i] || motors[i]->ready)
+            continue;
+
+        if (motors[i]->cls->powered_init(motors[i]) != 0) {
+            serial->print("Motor ");
+            serial->print(i);
+            serial->println(" powered init failed!");
+        }
+    }
+
+    serial->println("Motors powered init done");
+}
+
 static void blink(void) {
     static uint8_t led_val = 0;
 
@@ -371,6 +425,7 @@ static void vbat_update(void) {
                 serial->print("VBAT low-voltage cutoff set at ");
                 serial->print((lvco / 100) * 0.1f);
                 serial->println("V (guessed)");
+                powered_init();
                 goto print_update;
             }
         } else
@@ -378,7 +433,8 @@ static void vbat_update(void) {
     } else if (voltage <= lvco) {
         lvco = -1; /* Only do this once */
         serial->println("VBAT low, disabling motors!");
-        /* TODO: disable motors, play a sound? is there any data to save? */
+        motors_on_off(false);
+        /* TODO: play a sound? is there any data to save? */
         goto print_update;
     }
 
@@ -427,16 +483,19 @@ void loop(void) {
             shutdown_to_bl();
             break;
         case 'Q':
+            motors_on_off(false);
             serial->println("Crashing in loop()"); /* Crash handler test */
             delay(100);
             *(uint8_t *) -1 = 5;
             break;
         case '0' ... '5':
+            motors_on_off(false);
             serial->println("Setting new MPU6050 clksource");
             mpu6050_set_clksrc(main_imu, cmd - '0');
             delay(100);
             break;
         case '6' ... '9':
+            motors_on_off(false);
             serial->println("Setting new MPU6050 sample rate");
             /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
             mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
@@ -512,11 +571,13 @@ void loop(void) {
                 break;
             }
         case 'c':
+            motors_on_off(false);
             serial->println("Recalibrating main AHRS");
             delay(100);
             ahrs_calibrate(main_ahrs);
             break;
         case 'C':
+            motors_on_off(false);
             /*
              * (Re-)Detect/calibrate motor/encoder order, axes, neutral angles (offsets), directions and scales.
              * We'll ask user to move the gimbal in a specific way so we can detect the exact orientation of each joint's axis
@@ -553,6 +614,34 @@ void loop(void) {
             serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)");
             memcpy(home_q, main_ahrs->q, sizeof(home_q));
             have_home = 1;
+            break;
+        case 'S':
+            /* TODO: also ensure have_axes before we power anything on */
+            if (!motors[0] && !motors[1] && !motors[2]) {
+                serial->println("We have no motors");
+                break;
+            }
+
+            for (i = 0; i < 3; i++)
+                if (motors[i] && !motors[i]->ready) {
+                    serial->print("Motor ");
+                    serial->print(i);
+                    serial->println(" not ready");
+                    break;
+                }
+            if (i < 3)
+                break;
+
+            /* TODO: move to control */
+            if (motors[0])
+                motors[0]->cls->set_velocity(motors[0], 0);
+
+            motors_on_off(true);
+            serial->println("Motors on");
+            break;
+        case 's':
+            motors_on_off(false);
+            serial->println("Motors off");
             break;
         default:
             serial->print("Unknown cmd ");
