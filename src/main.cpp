@@ -1,6 +1,7 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <Arduino.h>
 #include <Wire.h>
+#include <SimpleFOC.h>
 
 #include "imu-mpu6050.h"
 #include "encoder-as5600.h"
@@ -47,7 +48,7 @@ static bool have_axes;
 static float home_q[4];
 static bool have_home;
 
-static int voltage;
+static int vbat;
 static bool motors_on;
 
 static struct main_loop_cb_s *cbs;
@@ -307,6 +308,10 @@ void setup(void) {
     encoders[2] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     serial->println("Encoders initialized");
 
+// #define MOTOR_DEBUG
+#ifdef MOTOR_DEBUG
+    SimpleFOCDebug::enable(serial);
+#endif
     motors[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
             SBGC_MOTOR0_PAIRS, encoders[0]);
     if (!motors[0])
@@ -406,23 +411,23 @@ static void blink(void) {
 
 static void vbat_update(void) {
     uint16_t raw = analogRead(SBGC_VBAT); /* TODO: noisy, use multiple samples */
-    static int voltage_prev = 0;
+    static int vbat_prev = 0;
     static int lvco = 0;
     static unsigned long vbat_ts = 0;
     static unsigned long msg_ts = 0;
     unsigned long now = millis();
 
-    voltage = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND);
+    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND);
 
     /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
     /* TODO: scale calibration? */
     if (!lvco) {
-        if (voltage > 3000) {
+        if (vbat > 3000) {
             if (!vbat_ts)
                 vbat_ts = now;
             else if (now - vbat_ts >= 10000) {
                 /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
-                int cells = voltage / (voltage < 10000 ? 4500 : 4400) + 1;
+                int cells = vbat / (vbat < 10000 ? 4500 : 4400) + 1;
                 lvco = cells * 3300;
                 vbat_ts = 0;
                 serial->print("VBAT low-voltage cutoff set at ");
@@ -433,7 +438,7 @@ static void vbat_update(void) {
             }
         } else
             vbat_ts = 0;
-    } else if (voltage <= lvco) {
+    } else if (vbat <= lvco) {
         lvco = -1; /* Only do this once */
         serial->println("VBAT low, disabling motors!");
         motors_on_off(false);
@@ -444,14 +449,14 @@ static void vbat_update(void) {
     if (now - msg_ts < 2000)
         return;
 
-    if (abs(voltage - voltage_prev) < 400)
+    if (abs(vbat - vbat_prev) < 400)
         return;
 
 print_update:
-    voltage_prev = voltage;
+    vbat_prev = vbat;
     msg_ts = now;
     serial->print("VBAT now at ");
-    serial->print((voltage / 100) * 0.1f);
+    serial->print((vbat / 100) * 0.1f);
     serial->println("V");
 }
 
