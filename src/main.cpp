@@ -473,7 +473,7 @@ void loop(void) {
 
     if (serial->available()) {
         uint8_t cmd = serial->read();
-        int i;
+        int i, param;
         struct calibrate_data_s cs;
         static uint8_t dlpf = 0;
 
@@ -642,6 +642,58 @@ void loop(void) {
         case 's':
             motors_on_off(false);
             serial->println("Motors off");
+            break;
+        case 27:
+            if (!serial->available())
+                delay(5);
+            if (!serial->available())
+                break;
+            if (serial->read() != '[') /* Not an ANSI CSI sequence */
+                break;
+            /* Parse first parameter */
+            param = 0;
+            while (1) {
+                cmd = serial->read();
+                if (cmd < '0' || cmd > '9')
+                    break;
+                param = param * 10 + (cmd - '0');
+            }
+            /* Ignore everything until CSI command final byte */
+            while (cmd < 0x40 || cmd > 0x7e)
+                cmd = serial->read();
+
+            switch (cmd) {
+            case 'D': /* Cursor Back or left arrow, param is modifier */
+                if (motors[0])
+                    motors[0]->cls->set_velocity(motors[0], -5 * D2R);
+                break;
+            case 'C': /* Cursor Forward or right arrow, param is modifier */
+                if (motors[0])
+                    motors[0]->cls->set_velocity(motors[0], 5 * D2R);
+                break;
+            case 'A': /* Cursor Up or up arrow, param is modifier */
+            case 'B': /* Cursor Down or down arrow, param is modifier */
+            case 'H': /* Cursor Position or Home */
+            case 'F': /* Cursos Previous Line or End */
+                break;
+            case '~': /* Private sequence: xterm keycode sequence, param is keycode */
+                switch (param) {
+                case 1: /* Home */
+                case 7: /* Home */
+                case 4: /* End */
+                case 8: /* End */
+                case 5: /* Page Up */
+                case 6: /* Page Down */
+                    break;
+                default:
+                    serial->print("Unknown xterm keycode ");
+                    serial->println(param);
+                }
+                break;
+            default:
+                serial->print("Unknown CSI seq ");
+                serial->println(cmd);
+            }
             break;
         default:
             serial->print("Unknown cmd ");
