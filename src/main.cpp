@@ -24,6 +24,7 @@ extern "C" {
 #define SBGC_VBAT          PA0   /* Through R17 (140k?) to BAT+ and R18 to GND (4.7k) */
 #define SBGC_VBAT_R_BAT    140000
 #define SBGC_VBAT_R_GND    4700
+#define SBGC_VBAT_SCALE    0.9f  /* TODO: make user configurable */
 
 #define SBGC_DRV8313_IN1   PB1   /* TIM1 */
 #define SBGC_DRV8313_IN2   PA2   /* TIM2 */
@@ -49,6 +50,7 @@ static float home_q[4];
 static bool have_home;
 
 static int vbat;
+static int vbat_ok;
 static bool motors_on;
 
 static struct main_loop_cb_s *cbs;
@@ -417,7 +419,8 @@ static void vbat_update(void) {
     static unsigned long msg_ts = 0;
     unsigned long now = millis();
 
-    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND);
+    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND) * SBGC_VBAT_SCALE;
+    vbat_ok = lvco > 0 && vbat > lvco;
 
     /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
     /* TODO: scale calibration? */
