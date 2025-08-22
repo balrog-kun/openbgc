@@ -53,6 +53,8 @@ static int vbat;
 static int vbat_ok;
 static bool motors_on;
 
+static struct motor_pwm_calib_data_s motor0_calib = { 3.7, 1 }; /* 'm' to autocalibrate and print new values */
+
 static struct main_loop_cb_s *cbs;
 
 #define TARGET_LOOP_RATE 128
@@ -310,12 +312,12 @@ void setup(void) {
     encoders[2] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     serial->println("Encoders initialized");
 
-// #define MOTOR_DEBUG
+#define MOTOR_DEBUG
 #ifdef MOTOR_DEBUG
     SimpleFOCDebug::enable(serial);
 #endif
     motors[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
-            SBGC_MOTOR0_PAIRS, encoders[0], NULL);
+            SBGC_MOTOR0_PAIRS, encoders[0], &motor0_calib); /* Pass NULL to always auto-calibrate */
     if (!motors[0])
         serial->println("Motor 0 early init failed!");
 
@@ -658,6 +660,25 @@ void loop(void) {
         case 's':
             motors_on_off(false);
             serial->println("Motors off");
+            break;
+        case 'm':
+            if (motors[0]) {
+                struct motor_pwm_calib_data_s data;
+
+                if (motors_on && vbat_ok)
+                    serial->println("Motors must be off and VBAT good");
+                else if (!sbgc_motor_pwm_recalibrate(motors[0]))
+                    serial->println("Motor 0 calibration failed");
+                else if (!sbgc_motor_pwm_get_calibration(motors[0], &data))
+                    serial->println("Motor 0 calibration no data");
+                else {
+                    char msg[200];
+                    sprintf(msg, "Motor 0 calibration = { .zero_electric_offset = %f, .sensor_direction = %i }",
+                            data.zero_electric_offset, data.sensor_direction);
+                    serial->println(msg);
+                }
+            }
+
             break;
         case 27:
             if (!serial->available())
