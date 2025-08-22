@@ -26,7 +26,7 @@ extern "C" {
 #define SBGC_VBAT_R_GND    4700
 #define SBGC_VBAT_SCALE    0.9f  /* TODO: make user configurable */
 
-#define SBGC_DRV8313_IN1   PB1   /* TIM1 */
+#define SBGC_DRV8313_IN1   PA1   /* TIM1 */
 #define SBGC_DRV8313_IN2   PA2   /* TIM2 */
 #define SBGC_DRV8313_IN3   PA3   /* TIM2 */
 #define SBGC_DRV8313_EN123 PB10
