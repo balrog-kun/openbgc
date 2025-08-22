@@ -315,7 +315,7 @@ void setup(void) {
     SimpleFOCDebug::enable(serial);
 #endif
     motors[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
-            SBGC_MOTOR0_PAIRS, encoders[0]);
+            SBGC_MOTOR0_PAIRS, encoders[0], NULL);
     if (!motors[0])
         serial->println("Motor 0 early init failed!");
 

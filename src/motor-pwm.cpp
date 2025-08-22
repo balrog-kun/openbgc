@@ -42,7 +42,8 @@ static void motor_pwm_loop(struct motor_pwm_s *motor) {
     motor->sfoc_motor->move();
 }
 
-sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, int pairs, sbgc_encoder *enc) {
+sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, int pairs, sbgc_encoder *enc,
+        const struct motor_pwm_calib_data_s *calib_data) {
     struct motor_pwm_s *motor = (struct motor_pwm_s *) malloc(sizeof(struct motor_pwm_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -62,10 +63,17 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, i
     motor->sfoc_motor->voltage_limit = 5;
     motor->sfoc_motor->voltage_sensor_align = 5;
     motor->sfoc_motor->velocity_limit = 60 * D2R;
-    motor->sfoc_motor->PID_velocity.P = 0.2;
-    motor->sfoc_motor->PID_velocity.I = 1.0;
-    motor->sfoc_motor->PID_velocity.D = 0.0;
-    motor->sfoc_motor->LPF_velocity.Tf = 0.01;
+    motor->sfoc_motor->PID_velocity.P = 0.5;
+    motor->sfoc_motor->PID_velocity.I = 0.2;
+    motor->sfoc_motor->PID_velocity.D = 0.001;
+    motor->sfoc_motor->LPF_velocity.Tf = 0.0f;
+    motor->sfoc_motor->modulation_centered = 1;
+
+    if (calib_data) {
+        motor->sfoc_motor->zero_electric_angle = calib_data->zero_electric_offset;
+        motor->sfoc_motor->sensor_direction = (enum Direction) calib_data->sensor_direction;
+    }
+
     if (!motor->sfoc_motor->init())
         goto error;
     motor_pwm_class.off(&motor->obj);
@@ -118,7 +126,7 @@ static int motor_pwm_on(struct motor_pwm_s *motor) {
 static void motor_pwm_off(struct motor_pwm_s *motor) {
     if (motor->sfoc_motor->driver)
         motor->sfoc_motor->disable();
-    else
+    else /* Fallback if the constructor didn't finish */
         motor->sfoc_driver->disable();
     motor->on = false;
 }
@@ -140,3 +148,38 @@ sbgc_motor_class motor_pwm_class = {
     .off          = (void (*)(sbgc_motor *)) motor_pwm_off,
     .free         = (void (*)(sbgc_motor *)) motor_pwm_free,
 };
+
+bool sbgc_motor_pwm_recalibrate(sbgc_motor *motor) {
+    struct motor_pwm_s *motor_pwm = (struct motor_pwm_s *) motor;
+    int ret;
+
+    if (motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_ready &&
+            motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_calib_failed &&
+            motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_uncalibrated)
+        return false;
+
+    if (motor_pwm->on) /* Must be off */
+        return false;
+
+    motor_pwm->sfoc_motor->zero_electric_angle = NOT_SET;
+    motor_pwm->sfoc_motor->sensor_direction = Direction::UNKNOWN;
+
+    motor_pwm->sfoc_motor->enable();
+    delay(5);
+    ret = motor_pwm->sfoc_motor->initFOC();
+    motor_pwm->sfoc_motor->disable();
+
+    motor_pwm->obj.ready = !ret;
+    return !ret;
+}
+
+bool sbgc_motor_pwm_get_calibration(sbgc_motor *motor, struct motor_pwm_calib_data_s *out_data) {
+    struct motor_pwm_s *motor_pwm = (struct motor_pwm_s *) motor;
+
+    if (motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_ready)
+        return false;
+
+    out_data->zero_electric_offset = motor_pwm->sfoc_motor->zero_electric_angle;
+    out_data->sensor_direction = motor_pwm->sfoc_motor->sensor_direction;
+    return true;
+}
