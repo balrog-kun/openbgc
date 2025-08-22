@@ -323,9 +323,37 @@ void setup(void) {
 }
 void setup_end(void) {}
 
+static void motors_on_off(bool on) {
+    if (motors_on == on)
+        return;
+
+    for (int i = 0; i < 3; i++) {
+        if (!motors[i])
+            continue;
+
+        if (on) {
+            if (!motors[i]->ready || motors[i]->cls->on(motors[i]) != 0) {
+                for (int j = 0; j < i; j++)
+                    if (motors[j])
+                        motors[j]->cls->off(motors[j]);
+                serial->print("Motor ");
+                serial->print(i);
+                serial->println(" power on failed!");
+                return;
+            }
+        } else
+            motors[i]->cls->off(motors[i]);
+    }
+
+    motors_on = on;
+    /* TODO: beep */
+}
+
 static void shutdown_to_bl(void) __attribute__((noreturn));
 static void shutdown_to_bl(void) {
     int i;
+
+    motors_on_off(false);
 
     /* Things we set up explicitly (TODO: steal_ptr() syntax) */
     ahrs_free(main_ahrs);
@@ -333,6 +361,9 @@ static void shutdown_to_bl(void) {
     for (i = 0; i < 3; i++)
         if (encoders[i])
             encoders[i]->cls->free(encoders[i]);
+    for (i = 0; i < 3; i++)
+        if (motors[i])
+            motors[i]->cls->free(motors[i]);
     i2c->end();
     serial->end();
     digitalWrite(SBGC_LED_GREEN, 0);
@@ -361,32 +392,6 @@ static void shutdown_to_bl(void) {
     __set_PSP(*(uint32_t *) 0x1fffd800);
     ((void (*)(void)) *(uint32_t *) 0x1fffd804)();
     while (1); /* Silence warning */
-}
-
-static void motors_on_off(bool on) {
-    if (motors_on == on)
-        return;
-
-    for (int i = 0; i < 3; i++) {
-        if (!motors[i])
-            continue;
-
-        if (on) {
-            if (!motors[i]->ready || motors[i]->cls->on(motors[i]) != 0) {
-                for (int j = 0; j < i; j++)
-                    if (motors[j])
-                        motors[j]->cls->off(motors[j]);
-                serial->print("Motor ");
-                serial->print(i);
-                serial->println(" power on failed!");
-                return;
-            }
-        } else
-            motors[i]->cls->off(motors[i]);
-    }
-
-    motors_on = on;
-    /* TODO: beep */
 }
 
 static void powered_init(void) {
