@@ -1,7 +1,6 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-/* Probably have to remove encoder- from file name later if we stick the driver class here too */
-#ifndef ENCODER_SBGC32_I2C_DRV_H
-#define ENCODER_SBGC32_I2C_DRV_H
+#ifndef SBGC32_I2C_DRV_H
+#define SBGC32_I2C_DRV_H
 
 #include <Wire.h>
 
@@ -21,6 +20,10 @@ enum sbgc32_i2c_drv_encoder_type {
     SBGC32_I2C_DRV_ENC_TYPE_AS5055A   = 9,
 };
 
-sbgc_encoder *sbgc32_i2c_drv_encoder_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ);
+typedef struct sbgc32_i2c_drv_s sbgc32_i2c_drv;
 
-#endif /* ENCODER_SBGC32_I2C_DRV_H */
+sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ);
+void sbgc32_i2c_drv_free(sbgc32_i2c_drv *dev);
+sbgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev);
+
+#endif /* SBGC32_I2C_DRV_H */

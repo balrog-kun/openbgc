@@ -4,8 +4,8 @@
 #include <SimpleFOC.h>
 
 #include "imu-mpu6050.h"
+#include "sbgc32_i2c_drv.h"
 #include "encoder-as5600.h"
-#include "encoder-sbgc32_i2c_drv.h"
 extern "C" {
 #include "motor-pwm.h"
 #include "ahrs.h"
@@ -39,6 +39,7 @@ static sbgc_imu *main_imu;
 static sbgc_ahrs *main_ahrs;
 static sbgc_imu *frame_imu;
 static sbgc_ahrs *frame_ahrs;
+static sbgc32_i2c_drv *drv_modules[2];
 static sbgc_encoder *encoders[3];
 static sbgc_motor *motors[3];
 static TwoWire *i2c;
@@ -307,9 +308,16 @@ void setup(void) {
 
     /* TODO: frame_ahrs */
 
+    drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    if (drv_modules[0] && drv_modules[1])
+        serial->println("SBGC32_I2C_Drv initialized");
+    else
+        serial->println("SBGC32_I2C_Drv init failed");
+
     encoders[0] = sbgc_as5600_new(i2c);
-    encoders[1] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(1), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-    encoders[2] = sbgc32_i2c_drv_encoder_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
+    encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
 
 #define MOTOR_DEBUG
@@ -366,6 +374,9 @@ static void shutdown_to_bl(void) {
     for (i = 0; i < 3; i++)
         if (motors[i])
             motors[i]->cls->free(motors[i]);
+    for (i = 0; i < 2; i++)
+        if (drv_modules[i])
+            sbgc32_i2c_drv_free(drv_modules[i]);
     i2c->end();
     serial->end();
     digitalWrite(SBGC_LED_GREEN, 0);
