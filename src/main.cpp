@@ -329,6 +329,9 @@ void setup(void) {
     if (!motors[0])
         serial->println("Motor 0 early init failed!");
 
+    motors[1] = sbgc32_i2c_drv_get_motor(drv_modules[0]);
+    motors[2] = sbgc32_i2c_drv_get_motor(drv_modules[1]);
+
     serial->println("Motors early init done");
 }
 void setup_end(void) {}
@@ -720,18 +723,30 @@ void loop(void) {
                     motors[0]->cls->set_velocity(motors[0], 5 * D2R);
                 break;
             case 'A': /* Cursor Up or up arrow, param is modifier */
+                if (motors[1])
+                    motors[1]->cls->set_velocity(motors[1], -5 * D2R);
+                break;
             case 'B': /* Cursor Down or down arrow, param is modifier */
+                if (motors[1])
+                    motors[1]->cls->set_velocity(motors[1], 5 * D2R);
+                break;
             case 'H': /* Cursor Position or Home */
             case 'F': /* Cursos Previous Line or End */
                 break;
             case '~': /* Private sequence: xterm keycode sequence, param is keycode */
                 switch (param) {
+                case 5: /* Page Up */
+                    if (motors[2])
+                        motors[2]->cls->set_velocity(motors[2], 5 * D2R);
+                    break;
+                case 6: /* Page Down */
+                    if (motors[2])
+                        motors[2]->cls->set_velocity(motors[2], -5 * D2R);
+                    break;
                 case 1: /* Home */
                 case 7: /* Home */
                 case 4: /* End */
                 case 8: /* End */
-                case 5: /* Page Up */
-                case 6: /* Page Down */
                     break;
                 default:
                     serial->print("Unknown xterm keycode ");

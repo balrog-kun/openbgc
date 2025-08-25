@@ -30,8 +30,10 @@
 
 struct sbgc32_i2c_drv_s {
     sbgc_encoder enc_obj;
+    sbgc_motor motor_obj;
     uint8_t addr;
     TwoWire *i2c;
+    bool motor_on;
 };
 
 static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
@@ -56,14 +58,73 @@ sbgc_encoder_class sbgc32_i2c_drv_encoder_class = {
     .scale = 0x4000 / 360, /* LSBs per 1deg */
 };
 
+static int sbgc32_i2c_drv_motor_init(sbgc_motor *motor) {
+    return 0;
+}
+
+static void sbgc32_i2c_drv_motor_set(sbgc_motor *motor, float vel) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
+    uint16_t power = 0x1000;
+    uint16_t angle = vel * (0x10000 / 2 / M_PI);
+
+    dev->i2c->beginTransmission(dev->addr);
+    dev->i2c->write(I2C_DRV_REG_SET_POWER_ANGLE);
+    dev->i2c->write((uint8_t) (power >> 0));
+    dev->i2c->write((uint8_t) (power >> 8));
+    dev->i2c->write((uint8_t) (angle >> 0));
+    dev->i2c->write((uint8_t) (angle >> 8));
+    dev->i2c->endTransmission();
+}
+
+static int sbgc32_i2c_drv_motor_on(sbgc_motor *motor) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
+
+    if (!dev->motor_obj.ready)
+        return -1;
+
+    dev->motor_on = true;
+
+    dev->i2c->beginTransmission(dev->addr);
+    dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
+    dev->i2c->write((uint8_t) 1);
+    dev->i2c->endTransmission();
+
+    return 0;
+}
+
+static void sbgc32_i2c_drv_motor_off(sbgc_motor *motor) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
+
+    dev->i2c->beginTransmission(dev->addr);
+    dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
+    dev->i2c->write((uint8_t) 0);
+    dev->i2c->endTransmission();
+
+    dev->motor_on = false;
+}
+
+static void sbgc32_i2c_drv_motor_free(sbgc_motor *motor) {
+    sbgc32_i2c_drv_motor_off(motor);
+}
+
+sbgc_motor_class sbgc32_i2c_drv_motor_class = {
+    .set_velocity = sbgc32_i2c_drv_motor_set,
+    .powered_init = sbgc32_i2c_drv_motor_init,
+    .on           = sbgc32_i2c_drv_motor_on,
+    .off          = sbgc32_i2c_drv_motor_off,
+    .free         = sbgc32_i2c_drv_motor_free,
+};
+
 sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ) {
     struct sbgc32_i2c_drv_s *dev = (struct sbgc32_i2c_drv_s *) malloc(sizeof(struct sbgc32_i2c_drv_s));
     int i;
 
     memset(dev, 0, sizeof(*dev));
     dev->enc_obj.cls = &sbgc32_i2c_drv_encoder_class;
+    dev->motor_obj.cls = &sbgc32_i2c_drv_motor_class;
     dev->i2c = i2c;
     dev->addr = addr;
+    dev->motor_on = true; /* For safety assume it's on until sbgc32_i2c_drv_motor_off() */
 
     /* Check device identity */
     if (dev->i2c->requestFrom(dev->addr, (uint8_t) 1, I2C_DRV_REG_DEVICE_ID, 1, true) != 1 ||
@@ -94,6 +155,9 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_d
     dev->i2c->write((uint8_t) 0);
     dev->i2c->endTransmission();
 
+    sbgc32_i2c_drv_motor_off(&dev->motor_obj);
+    dev->motor_obj.ready = true;
+
     return dev;
 
 err:
@@ -107,4 +171,8 @@ void sbgc32_i2c_drv_free(sbgc32_i2c_drv *dev) {
 
 sbgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev) {
     return &dev->enc_obj;
+}
+
+sbgc_motor *sbgc32_i2c_drv_get_motor(sbgc32_i2c_drv *dev) {
+    return &dev->motor_obj;
 }
