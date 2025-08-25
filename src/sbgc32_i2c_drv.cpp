@@ -1,6 +1,8 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <Wire.h>
 
+#include "util.h"
+
 #include "sbgc32_i2c_drv.h"
 
 /* Register definitions from I2C_Drv.h (SBGC32_I2C_Drv Reference Manual.pdf v0.5) */
@@ -32,11 +34,8 @@ struct sbgc32_i2c_drv_s {
     TwoWire *i2c;
 };
 
-static void sbgc32_i2c_drv_encoder_free(struct sbgc32_i2c_drv_s *dev) {
-    /* refcount? */
-}
-
-static int32_t sbgc32_i2c_drv_encoder_read(struct sbgc32_i2c_drv_s *dev) {
+static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
+    struct sbgc32_i2c_drv_s *dev = container_of(enc, struct sbgc32_i2c_drv_s, enc_obj);
     uint8_t lo;
 
     if (dev->i2c->requestFrom(dev->addr, (uint8_t) 2, I2C_DRV_REG_ENC_ANGLE, 1, true) != 2) {
@@ -47,9 +46,13 @@ static int32_t sbgc32_i2c_drv_encoder_read(struct sbgc32_i2c_drv_s *dev) {
     return (uint32_t) (dev->i2c->read() << 8) | lo;
 }
 
+static void sbgc32_i2c_drv_encoder_free(sbgc_encoder *enc) {
+    /* refcount? */
+}
+
 sbgc_encoder_class sbgc32_i2c_drv_encoder_class = {
-    .read  = (int32_t (*)(sbgc_encoder *enc)) sbgc32_i2c_drv_encoder_read,
-    .free  = (void (*)(sbgc_encoder *enc)) sbgc32_i2c_drv_encoder_free,
+    .read  = sbgc32_i2c_drv_encoder_read,
+    .free  = sbgc32_i2c_drv_encoder_free,
     .scale = 0x4000 / 360, /* LSBs per 1deg */
 };
 
