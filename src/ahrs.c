@@ -1,5 +1,5 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Arduino.h> /* For delay() */
+#include <Arduino.h> /* For delay(), micros() */
 #include <stdio.h>
 #include <math.h>
 
@@ -97,9 +97,8 @@ static void madgwick_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
 }
 
 static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
-    float p[4], p2[4], qdot[4];
-    float *omega = p + 1;
-    float *error = p2 + 1;
+    float omega[3];
+    float error[3] = {}, *error_scaled = omega;
     float mbeta;
     float norm;
 
@@ -138,29 +137,25 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     omega[1] = ahrs->gyro_lpf[1] * mbeta + gyr[1] * ahrs->beta;
     omega[2] = ahrs->gyro_lpf[2] * mbeta + gyr[2] * ahrs->beta;
 
-    p[0] = 0.0f;
+    memcpy(ahrs->gyro_lpf, omega, 3 * sizeof(float));
 
+//#define APPLY_GYRO_FIRST
+#ifdef APPLY_GYRO_FIRST
     /*
      * Apply the new weighted gyro data before calculating errors from other sources.
      * This is a little wasteful but hopefully worth it.
      */
-//#define APPLY_GYRO_FIRST
-#ifdef APPLY_GYRO_FIRST
-    quaternion_mult_to(ahrs->q, omega - 1, qdot);
-
-    ahrs->q[0] += qdot[0] * (dt / 2);
-    ahrs->q[1] += qdot[1] * (dt / 2);
-    ahrs->q[2] += qdot[2] * (dt / 2);
-    ahrs->q[3] += qdot[3] * (dt / 2);
+    vector_mult_scalar(omega, dt / 2);
+    quaternion_mult_add_xyz(ahrs->q, omega);
     quaternion_normalize(ahrs->q);
 
-    /* See if we have any useful values from other sensors to contrast the gyro based angles and limit drift */
-    memset(p2, 0, sizeof(p2));
+    ahrs->gyr_contrib += vector_norm(omega);
+    memset(&error_scaled, 0, sizeof(error_scaled));
 #else
-    error = omega;
+    ahrs->gyr_contrib += vector_norm(omega) * (dt / 2); /* omega components are multiplied later */
 #endif
 
-    ahrs->gyr_contrib += vector_norm(omega) * dt;
+    /* See if we have any useful values from other sensors to contrast the gyro based angles and limit drift */
 
     norm = vector_norm(acc);
     if (norm > 0.1f && norm < 1.9f) { /* acc is already scaled to 1g unit */
@@ -172,9 +167,11 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         acc_error[0] = acc[1] * g_local[2] - acc[2] * g_local[1];
         acc_error[1] = acc[2] * g_local[0] - acc[0] * g_local[2];
         acc_error[2] = acc[0] * g_local[1] - acc[1] * g_local[0];
-        sin_angle = vector_norm(acc_error) / norm;
-        vector_mult_scalar(acc_error, ahrs->acc_kp / norm);
+        vector_mult_scalar(acc_error, 1.0f / norm);
+        sin_angle = vector_norm(acc_error);
         vector_add(error, acc_error);
+        vector_mult_scalar(acc_error, ahrs->acc_kp);
+        vector_add(error_scaled, acc_error);
 
         ahrs->acc_contrib += sin_angle * ahrs->acc_kp * dt;
         ahrs->acc_error_avg += sin_angle;
@@ -221,8 +218,10 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         /* TODO: probably also need to take into account encoder stddev due to noise */
 #       define MIN_ENC_ERROR (1.5f * ahrs->encoder_step)
         if (norm >= MIN_ENC_ERROR) { /* sin(x) ~= x in this range */
-            vector_mult_scalar(enc_error, (norm - MIN_ENC_ERROR) / norm * ahrs->enc_kp);
+            vector_mult_scalar(enc_error, (norm - MIN_ENC_ERROR) / norm);
             vector_add(error, enc_error);
+            vector_mult_scalar(enc_error, ahrs->enc_kp);
+            vector_add(error_scaled, enc_error);
 
             ahrs->enc_contrib += (norm - MIN_ENC_ERROR) * ahrs->enc_kp * dt;
             ahrs->enc_error_avg += norm;
@@ -232,18 +231,20 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     }
 
     /* Finally apply the error and rotate again */
-    quaternion_mult_to(ahrs->q, error - 1, qdot);
-
-    ahrs->q[0] += qdot[0] * (dt / 2);
-    ahrs->q[1] += qdot[1] * (dt / 2);
-    ahrs->q[2] += qdot[2] * (dt / 2);
-    ahrs->q[3] += qdot[3] * (dt / 2);
+    vector_mult_scalar(error_scaled, dt / 2);
+    quaternion_mult_add_xyz(ahrs->q, error_scaled);
     quaternion_normalize(ahrs->q);
 
-#ifdef APPLY_GYRO_FIRST
-    vector_add(omega, error);
-#endif
-    memcpy(ahrs->gyro_lpf, omega, 3 * sizeof(float));
+    /* TODO: calc the error integral too? if so we need to remove omega from error_scaled (or use "error"?) */
+    /*
+     * if so, apply the spin_rate_limit as in https://github.com/cleanflight/cleanflight/blob/master/src/main/flight/imu.c
+     *   but does the lpf kindof cover the same needs as the integral?
+     *
+     *   also can we autocalibrate not only the offset but scale variations??
+     *   we'd have to be sure we know the sign. if sign is different, we skip this cycle?
+     *   in any case, we shouldn't be calculating it only based on the single latest reading but on the lpf of gyro and lpf or error data
+     */
+
     /* TODO: do we want to consider the error magnitude in updating beta, too? */
     /* TODO: do we want to update ahrs->gyro_bias using the error * ahrs->ki? */
 }

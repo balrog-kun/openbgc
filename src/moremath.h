@@ -54,6 +54,16 @@ static inline void quaternion_mult_to(const float *q0, const float *q1, float *q
     q_out[3] = q0[0] * q1[3] + q0[1] * q1[2] - q0[2] * q1[1] + q0[3] * q1[0];
 }
 
+static inline void quaternion_mult_add_xyz(float *q, const float *q1xyz) {
+    float q0[4] = INIT_Q(q);
+
+    /* Same as quaternion_mult_to but q1[0] is 0, q1[1] is q1xyz[0], etc. */
+    q[0] += -q [1] * q1xyz[0] - q [2] * q1xyz[1] - q [3] * q1xyz[2];
+    q[1] +=  q0[0] * q1xyz[0] + q [2] * q1xyz[2] - q [3] * q1xyz[1];
+    q[2] +=  q0[0] * q1xyz[1] - q0[1] * q1xyz[2] + q [3] * q1xyz[0];
+    q[3] +=  q0[0] * q1xyz[2] + q0[1] * q1xyz[1] - q0[2] * q1xyz[0];
+}
+
 static inline void quaternion_mult_scalar(float *q, float factor) {
     q[0] *= factor;
     q[1] *= factor;
