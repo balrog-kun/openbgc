@@ -45,7 +45,7 @@ static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
     }
 
     lo = dev->i2c->read();
-    return (uint32_t) (dev->i2c->read() << 8) | lo;
+    return ((uint32_t) (dev->i2c->read() << 8) | lo) << 13;
 }
 
 static void sbgc32_i2c_drv_encoder_free(sbgc_encoder *enc) {
@@ -55,7 +55,7 @@ static void sbgc32_i2c_drv_encoder_free(sbgc_encoder *enc) {
 sbgc_encoder_class sbgc32_i2c_drv_encoder_class = {
     .read  = sbgc32_i2c_drv_encoder_read,
     .free  = sbgc32_i2c_drv_encoder_free,
-    .scale = 0x4000 / 360, /* LSBs per 1deg */
+    .scale = (0x4000 << 13) / 360, /* LSBs per 1deg */
 };
 
 static int sbgc32_i2c_drv_motor_init(sbgc_motor *motor) {
