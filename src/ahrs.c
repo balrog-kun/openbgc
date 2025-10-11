@@ -462,6 +462,12 @@ void ahrs_update(sbgc_ahrs *ahrs) {
     dt = (now - ahrs->last_update) * 1e-6f;
     ahrs->last_update = now;
 
+    /* TODO: wait for movement to stop when forcing reset based on accelerometer? maybe move to main loop */
+    if (dt > 0.1f) {
+        ahrs_reset_orientation(ahrs);
+        return;
+    }
+
     /* Read sensor data */
     ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
 
