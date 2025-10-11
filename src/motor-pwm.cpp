@@ -3,6 +3,7 @@
 extern "C" {
 #include "main.h"
 #include "moremath.h"
+#include "util.h"
 
 #include "motor-pwm.h"
 }
@@ -32,7 +33,99 @@ struct motor_pwm_s {
     bool on;
 };
 
-extern sbgc_motor_class motor_pwm_class;
+static int motor_pwm_init(struct motor_pwm_s *motor) {
+    int ret;
+
+    if (motor->obj.ready)
+        return 0;
+
+    motor->sfoc_motor->enable();
+    delay(5);
+    ret = motor->sfoc_motor->initFOC(); /* These things can actually fail so handle errors */
+    motor->sfoc_motor->disable();
+    if (!ret)
+        return -1;
+
+    motor->obj.ready = true;
+    return 0;
+}
+
+static void motor_pwm_set(struct motor_pwm_s *motor, float vel) {
+    motor->sfoc_motor->target = vel;
+}
+
+static void motor_pwm_set_phase_voltage(struct motor_pwm_s *motor, float v_q, float v_d, float theta) {
+    motor->sfoc_motor->setPhaseVoltage(v_q, v_d, theta * D2R);
+}
+
+static int motor_pwm_on(struct motor_pwm_s *motor) {
+    //if (!motor->obj.ready)
+    //    return -1;
+
+    motor->on = true;
+    motor->sfoc_motor->enable();
+    return 0;
+}
+
+static void motor_pwm_off(struct motor_pwm_s *motor) {
+    if (motor->sfoc_motor->driver)
+        motor->sfoc_motor->disable();
+    else /* Fallback if the constructor didn't finish */
+        motor->sfoc_driver->disable();
+    motor->on = false;
+}
+
+static void motor_pwm_free(struct motor_pwm_s *motor) {
+    if (motor->on)
+        motor_pwm_off(motor);
+    main_loop_cb_remove(&motor->loop_cb);
+    delete motor->sfoc_motor;
+    delete motor->sfoc_encoder;
+    delete motor->sfoc_driver;
+    free(motor);
+}
+
+static int motor_pwm_recalibrate(struct motor_pwm_s *motor) {
+    int ret;
+
+    if (!IN_SET(motor->sfoc_motor->motor_status,
+            FOCMotorStatus::motor_ready, FOCMotorStatus::motor_calib_failed, FOCMotorStatus::motor_uncalibrated))
+        return -1;
+
+    if (motor->on) /* Must be off */
+        return -1;
+
+    motor->sfoc_motor->zero_electric_angle = NOT_SET;
+    motor->sfoc_motor->sensor_direction = Direction::UNKNOWN;
+
+    motor->sfoc_motor->enable();
+    delay(5);
+    ret = motor->sfoc_motor->initFOC();
+    motor->sfoc_motor->disable();
+
+    motor->obj.ready = !!ret;
+    return ret ? 0 : 1;
+}
+
+static int motor_pwm_get_calibration(struct motor_pwm_s *motor, struct sbgc_motor_calib_data_s *out_data) {
+    if (motor->sfoc_motor->motor_status != FOCMotorStatus::motor_ready)
+        return -1;
+
+    out_data->zero_electric_offset = motor->sfoc_motor->zero_electric_angle;
+    out_data->sensor_direction = motor->sfoc_motor->sensor_direction;
+    return 0;
+}
+
+sbgc_motor_class motor_pwm_class = {
+    .set_velocity      = (void (*)(sbgc_motor *, float)) motor_pwm_set,
+    .set_phase_voltage = (void (*)(sbgc_motor *, float, float, float)) motor_pwm_set_phase_voltage,
+    .powered_init      = (int (*)(sbgc_motor *)) motor_pwm_init,
+    .on                = (int (*)(sbgc_motor *)) motor_pwm_on,
+    .off               = (void (*)(sbgc_motor *)) motor_pwm_off,
+    .free              = (void (*)(sbgc_motor *)) motor_pwm_free,
+    .recalibrate       = (int (*)(sbgc_motor *motor)) motor_pwm_recalibrate,
+    .get_calibration   = (int (*)(sbgc_motor *motor, sbgc_motor_calib_data *out_data)) motor_pwm_get_calibration,
+};
 
 static void motor_pwm_loop(struct motor_pwm_s *motor) {
     if (!motor->obj.ready || !motor->on)
@@ -42,8 +135,8 @@ static void motor_pwm_loop(struct motor_pwm_s *motor) {
     motor->sfoc_motor->move();
 }
 
-sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, int pairs, sbgc_encoder *enc,
-        const struct motor_pwm_calib_data_s *calib_data) {
+sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, sbgc_encoder *enc,
+        const struct sbgc_motor_calib_data_s *calib_data) {
     struct motor_pwm_s *motor = (struct motor_pwm_s *) malloc(sizeof(struct motor_pwm_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -57,10 +150,11 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, i
     if (!motor->sfoc_driver->init())
         goto error;
 
-    motor->sfoc_motor = new BLDCMotor(11);
+    motor->sfoc_motor = new BLDCMotor(calib_data ? calib_data->pole_pairs : 11);
     motor->sfoc_motor->linkDriver(motor->sfoc_driver);
     motor->sfoc_motor->linkSensor(motor->sfoc_encoder);
-    motor->sfoc_motor->voltage_limit = 5;
+    motor->sfoc_motor->controller = MotionControlType::velocity;
+    motor->sfoc_motor->voltage_limit = 12;
     motor->sfoc_motor->voltage_sensor_align = 5;
     motor->sfoc_motor->velocity_limit = 60 * D2R;
     motor->sfoc_motor->PID_velocity.P = 0.5;
@@ -91,95 +185,4 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, i
 error:
     motor_pwm_class.free(&motor->obj);
     return NULL;
-}
-
-static int motor_pwm_init(struct motor_pwm_s *motor) {
-    int ret;
-
-    if (motor->obj.ready)
-        return 0;
-
-    motor->sfoc_motor->enable();
-    delay(5);
-    ret = motor->sfoc_motor->initFOC(); /* These things can actually fail so handle errors */
-    motor->sfoc_motor->disable();
-    if (!ret)
-        return -1;
-
-    motor->obj.ready = true;
-    return 0;
-}
-
-static void motor_pwm_set(struct motor_pwm_s *motor, float vel) {
-    motor->sfoc_motor->target = vel;
-}
-
-static int motor_pwm_on(struct motor_pwm_s *motor) {
-    if (!motor->obj.ready)
-        return -1;
-
-    motor->on = true;
-    motor->sfoc_motor->enable();
-    return 0;
-}
-
-static void motor_pwm_off(struct motor_pwm_s *motor) {
-    if (motor->sfoc_motor->driver)
-        motor->sfoc_motor->disable();
-    else /* Fallback if the constructor didn't finish */
-        motor->sfoc_driver->disable();
-    motor->on = false;
-}
-
-static void motor_pwm_free(struct motor_pwm_s *motor) {
-    if (motor->on)
-        motor_pwm_off(motor);
-    main_loop_cb_remove(&motor->loop_cb);
-    delete motor->sfoc_motor;
-    delete motor->sfoc_encoder;
-    delete motor->sfoc_driver;
-    free(motor);
-}
-
-sbgc_motor_class motor_pwm_class = {
-    .set_velocity = (void (*)(sbgc_motor *, float)) motor_pwm_set,
-    .powered_init = (int (*)(sbgc_motor *)) motor_pwm_init,
-    .on           = (int (*)(sbgc_motor *)) motor_pwm_on,
-    .off          = (void (*)(sbgc_motor *)) motor_pwm_off,
-    .free         = (void (*)(sbgc_motor *)) motor_pwm_free,
-};
-
-bool sbgc_motor_pwm_recalibrate(sbgc_motor *motor) {
-    struct motor_pwm_s *motor_pwm = (struct motor_pwm_s *) motor;
-    int ret;
-
-    if (motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_ready &&
-            motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_calib_failed &&
-            motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_uncalibrated)
-        return false;
-
-    if (motor_pwm->on) /* Must be off */
-        return false;
-
-    motor_pwm->sfoc_motor->zero_electric_angle = NOT_SET;
-    motor_pwm->sfoc_motor->sensor_direction = Direction::UNKNOWN;
-
-    motor_pwm->sfoc_motor->enable();
-    delay(5);
-    ret = motor_pwm->sfoc_motor->initFOC();
-    motor_pwm->sfoc_motor->disable();
-
-    motor_pwm->obj.ready = !ret;
-    return !ret;
-}
-
-bool sbgc_motor_pwm_get_calibration(sbgc_motor *motor, struct motor_pwm_calib_data_s *out_data) {
-    struct motor_pwm_s *motor_pwm = (struct motor_pwm_s *) motor;
-
-    if (motor_pwm->sfoc_motor->motor_status != FOCMotorStatus::motor_ready)
-        return false;
-
-    out_data->zero_electric_offset = motor_pwm->sfoc_motor->zero_electric_angle;
-    out_data->sensor_direction = motor_pwm->sfoc_motor->sensor_direction;
-    return true;
 }

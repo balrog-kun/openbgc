@@ -11,12 +11,21 @@ typedef struct sbgc_motor_s {
     bool ready;
 } sbgc_motor;
 
+typedef struct sbgc_motor_calib_data_s {
+    uint16_t pole_pairs;
+    float zero_electric_offset;
+    int8_t sensor_direction;
+} sbgc_motor_calib_data;
+
 typedef struct sbgc_motor_class_s {
-    void (*set_velocity)(sbgc_motor *motor, float velocity);
+    void (*set_velocity)(sbgc_motor *motor, float omega);
+    void (*set_phase_voltage)(sbgc_motor *motor, float v_q, float v_d, float theta);
     int (*powered_init)(sbgc_motor *motor);
     int (*on)(sbgc_motor *motor);
     void (*off)(sbgc_motor *motor);
     void (*free)(sbgc_motor *motor);
+    int (*recalibrate)(sbgc_motor *motor);
+    int (*get_calibration)(sbgc_motor *motor, sbgc_motor_calib_data *out_data);
 } sbgc_motor_class;
 
 #endif /* MOTOR_H */

@@ -62,10 +62,28 @@ static int sbgc32_i2c_drv_motor_init(sbgc_motor *motor) {
     return 0;
 }
 
-static void sbgc32_i2c_drv_motor_set(sbgc_motor *motor, float vel) {
+static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_motor *motor, float v_q, float v_d, float theta) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
-    uint16_t power = 0x1000;
-    uint16_t angle = vel * (0x10000 / 2 / M_PI);
+
+    uint16_t power;
+    uint16_t angle;
+
+    /* Only handle v_q or v_d but not both at once, for now, since there are no users and it will involve complex trig */
+    if (v_d != 0.0f) {
+        if (v_d < 0.0f)
+            theta += 180.0f;
+    } else {
+        v_d = v_q;
+        theta += v_q > 0.0f ? 90.0f : -90.0f;
+    }
+
+    power = fabsf(v_d) * 0xffff;
+    angle = (uint16_t) (uint32_t) lroundf(theta * (0x10000 / 360.0f));
+    /*
+     * Instead of lroundf we could cast to int32_t then uint32_t then uint16_t.  The float to int32_t
+     * cast is implementation-defined though and likely rounds towards 0 which is not ideal and could
+     * cause a minuscule inconsistency if calib_data->sensor_direction is -1.
+     */
 
     dev->i2c->beginTransmission(dev->addr);
     dev->i2c->write(I2C_DRV_REG_SET_POWER_ANGLE);
@@ -78,9 +96,6 @@ static void sbgc32_i2c_drv_motor_set(sbgc_motor *motor, float vel) {
 
 static int sbgc32_i2c_drv_motor_on(sbgc_motor *motor) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
-
-    if (!dev->motor_obj.ready)
-        return -1;
 
     dev->motor_on = true;
 
@@ -108,11 +123,11 @@ static void sbgc32_i2c_drv_motor_free(sbgc_motor *motor) {
 }
 
 sbgc_motor_class sbgc32_i2c_drv_motor_class = {
-    .set_velocity = sbgc32_i2c_drv_motor_set,
-    .powered_init = sbgc32_i2c_drv_motor_init,
-    .on           = sbgc32_i2c_drv_motor_on,
-    .off          = sbgc32_i2c_drv_motor_off,
-    .free         = sbgc32_i2c_drv_motor_free,
+    .set_phase_voltage = sbgc32_i2c_drv_motor_set_phase_voltage,
+    .powered_init      = sbgc32_i2c_drv_motor_init,
+    .on                = sbgc32_i2c_drv_motor_on,
+    .off               = sbgc32_i2c_drv_motor_off,
+    .free              = sbgc32_i2c_drv_motor_free,
 };
 
 sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ) {
