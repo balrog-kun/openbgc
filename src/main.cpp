@@ -55,6 +55,10 @@ static sbgc_motor *motors[3];
 static TwoWire *i2c;
 static HardwareSerial *serial;
 
+static bool use_motor[3], set_use_motor;
+static sbgc_motor_bldc_param set_param = __BLDC_PARAM_MAX;
+static int set_param_power = -1;
+
 static struct axes_data_s axes;
 static bool have_axes;
 static float home_q[4];
@@ -364,7 +368,7 @@ static void motors_on_off(bool on) {
         return;
 
     for (int i = 0; i < 3; i++) {
-        if (!motors[i])
+        if (!motors[i] || !use_motor[i])
             continue;
 
         if (on) {
@@ -439,7 +443,7 @@ static void shutdown_to_bl(void) {
 
 static void powered_init(void) {
     for (int i = 0; i < 3; i++) {
-        if (!motors[i] || motors[i]->ready)
+        if (!motors[i] || !use_motor[i] || motors[i]->ready)
             continue;
 
         if (motors[i]->cls->powered_init(motors[i]) != 0) {
@@ -548,6 +552,22 @@ void loop(void) {
             *(uint8_t *) -1 = 5;
             break;
         case '0' ... '5':
+            if (set_use_motor) {
+                set_use_motor = false;
+
+                if (cmd >= '3')
+                    break;
+
+                use_motor[cmd - '0'] ^= 1;
+                /* TODO: could ensure motors[cmd - '0'] is non-NULL so we could skip checks everywhere else */
+                serial->print("use_motor = { ");
+                serial->print(use_motor[0]);
+                serial->print(use_motor[1]);
+                serial->print(use_motor[2]);
+                serial->println(" }");
+                break;
+            }
+
             motors_on_off(false);
             serial->println("Setting new MPU6050 clksource");
             mpu6050_set_clksrc(main_imu, cmd - '0');
@@ -674,6 +694,9 @@ void loop(void) {
             memcpy(home_q, main_ahrs->q, sizeof(home_q));
             have_home = 1;
             break;
+        case 't':
+            set_use_motor = true;
+            break;
         case 'S':
             /* TODO: also ensure have_axes before we power anything on */
             if (!motors[0] && !motors[1] && !motors[2]) {
@@ -682,7 +705,7 @@ void loop(void) {
             }
 
             for (i = 0; i < 3; i++)
-                if (motors[i] && !motors[i]->ready) {
+                if (motors[i] && use_motor[i] && !motors[i]->ready) {
                     serial->print("Motor ");
                     serial->print(i);
                     serial->println(" not ready");
@@ -693,7 +716,7 @@ void loop(void) {
 
             /* TODO: move to control */
             for (i = 0; i < 3; i++)
-                if (motors[i])
+                if (motors[i] && use_motor[i])
                     motors[i]->cls->set_velocity(motors[i], 0);
 
             motors_on_off(true);
@@ -712,7 +735,7 @@ void loop(void) {
             for (i = 0; i < 3; i++) {
                 struct sbgc_motor_calib_data_s data;
 
-                if (!motors[i])
+                if (!motors[i] || !use_motor[i])
                     continue;
 
                 if (motors[i]->cls->recalibrate(motors[i]) != 0)
