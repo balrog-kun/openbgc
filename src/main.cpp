@@ -568,12 +568,43 @@ void loop(void) {
                 break;
             }
 
+            if (set_param < __BLDC_PARAM_MAX) {
+                float val;
+handle_set_param:
+
+                if (set_param_power == -1) {
+                    set_param_power = cmd - '0';
+                    break;
+                }
+
+                /*
+                 * Type 'P', 'I' or 'D' followed by a power/exponent value (0 to 9) and a multiplier (0 to 9).
+                 * For now the result is multiplier * (10 ^ (-power / 2)).  E.g. P05 sets the Kp to 5.0.
+                 * P25 sets it to 0.5, P45 to 0.05 and so on.  There's some redundancy here but we don't care.
+                 */
+                val = powf(10, set_param_power * -0.5f) * (cmd - '0');
+
+                for (i = 0; i < 3; i++)
+                    if (motors[i] && use_motor[i]) {
+                        sbgc_motor_bldc_set_param(motors[i], set_param, val);
+                        serial->print("Param set to ");
+                        serial->println(val);
+                    }
+
+                set_param = __BLDC_PARAM_MAX;
+                set_param_power = -1;
+                break;
+            }
+
             motors_on_off(false);
             serial->println("Setting new MPU6050 clksource");
             mpu6050_set_clksrc(main_imu, cmd - '0');
             delay(100);
             break;
         case '6' ... '9':
+            if (set_param < __BLDC_PARAM_MAX)
+                goto handle_set_param;
+
             motors_on_off(false);
             serial->println("Setting new MPU6050 sample rate");
             /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
@@ -725,6 +756,15 @@ void loop(void) {
         case 's':
             motors_on_off(false);
             serial->println("Motors off");
+            break;
+        case 'P':
+            set_param = BLDC_PARAM_KP;
+            break;
+        case 'I':
+            set_param = BLDC_PARAM_KI;
+            break;
+        case 'D':
+            set_param = BLDC_PARAM_KD;
             break;
         case 'm':
             if (motors_on && vbat_ok) {
