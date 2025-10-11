@@ -8,6 +8,7 @@
 #include "encoder-as5600.h"
 extern "C" {
 #include "motor-pwm.h"
+#include "motor-bldc.h"
 #include "ahrs.h"
 #include "axes.h"
 #include "moremath.h"
@@ -31,9 +32,17 @@ extern "C" {
 #define SBGC_DRV8313_IN3   PA3   /* TIM2 */
 #define SBGC_DRV8313_EN123 PB10
 
-#define SBGC_MOTOR0_PAIRS  11
+#define SBGC_MOTOR0_PAIRS  11    /* We need this becasue SimpleFOC requires it */
 /* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
-/* TODO: current and temperature sensing for yaw motor */
+/* TODO: current and temperature sensing per motor */
+
+/* TODO: save in flash */
+/* 'm' to autocalibrate and print new values.  Zero pole_pairs will trigger calibration on power-on */
+static const sbgc_motor_calib_data motor_calib[3] = {
+    { .pole_pairs = 11, .zero_electric_offset = 146.7, .sensor_direction = 1 },  /* Yaw   (axis 0) */
+    { .pole_pairs = 11, .zero_electric_offset = 91.11, .sensor_direction = -1 }, /* Pitch (axis 2) */
+    { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 },  /* Roll  (axis 1) */
+};
 
 static sbgc_imu *main_imu;
 static sbgc_ahrs *main_ahrs;
@@ -41,6 +50,7 @@ static sbgc_imu *frame_imu;
 static sbgc_ahrs *frame_ahrs;
 static sbgc32_i2c_drv *drv_modules[2];
 static sbgc_encoder *encoders[3];
+static sbgc_motor *motor_drivers[3];
 static sbgc_motor *motors[3];
 static TwoWire *i2c;
 static HardwareSerial *serial;
@@ -54,9 +64,9 @@ static int vbat;
 static int vbat_ok;
 static bool motors_on;
 
-static struct motor_pwm_calib_data_s motor0_calib = { 3.7, 1 }; /* 'm' to autocalibrate and print new values */
-
 static struct main_loop_cb_s *cbs;
+
+static struct sbgc_motor_calib_data_s motor0_calib = { SBGC_MOTOR0_PAIRS, 3.7, 1 }; /* 'm' to autocalibrate and print new values */ /////
 
 #define TARGET_LOOP_RATE 128
 
@@ -264,6 +274,8 @@ void main_loop_sleep(void) {
 extern HardwareSerial *error_serial;
 
 void setup(void) {
+    int i;
+
     error_serial = serial = new HardwareSerial(USART1);
     serial->begin(115200);
     while (!*serial); /* Wait for serial port connection */
@@ -324,13 +336,24 @@ void setup(void) {
 #ifdef MOTOR_DEBUG
     SimpleFOCDebug::enable(serial);
 #endif
-    motors[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
-            SBGC_MOTOR0_PAIRS, encoders[0], &motor0_calib); /* Pass NULL to always auto-calibrate */
-    if (!motors[0])
-        serial->println("Motor 0 early init failed!");
+    motor_drivers[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
+            encoders[0], &motor0_calib);
+    if (!motor_drivers[0])
+        serial->println("Motor 0 driver init failed!");
 
-    motors[1] = sbgc32_i2c_drv_get_motor(drv_modules[0]);
-    motors[2] = sbgc32_i2c_drv_get_motor(drv_modules[1]);
+    motor_drivers[1] = sbgc32_i2c_drv_get_motor(drv_modules[0]);
+    motor_drivers[2] = sbgc32_i2c_drv_get_motor(drv_modules[1]);
+
+    for (i = 0; i < 3; i++) {
+        motors[i] = sbgc_motor_bldc_new(encoders[i], motor_drivers[i],
+                motor_calib[i].pole_pairs ? &motor_calib[i] : NULL);
+
+        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
+        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
+        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
+        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
+        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, i ? 0.3f : 1.0f); /* Limit to 0.3 x VBAT */
+    }
 
     serial->println("Motors early init done");
 }
@@ -369,14 +392,18 @@ static void shutdown_to_bl(void) {
     motors_on_off(false);
 
     /* Things we set up explicitly (TODO: steal_ptr() syntax) */
+    /* TODO: refcounting would be nice too */
     ahrs_free(main_ahrs);
     main_imu->cls->free(main_imu);
+    for (i = 0; i < 3; i++)
+        if (motors[i])
+            motors[i]->cls->free(motors[i]);
     for (i = 0; i < 3; i++)
         if (encoders[i])
             encoders[i]->cls->free(encoders[i]);
     for (i = 0; i < 3; i++)
-        if (motors[i])
-            motors[i]->cls->free(motors[i]);
+        if (motor_drivers[i])
+            motor_drivers[i]->cls->free(motor_drivers[i]);
     for (i = 0; i < 2; i++)
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
@@ -665,8 +692,9 @@ void loop(void) {
                 break;
 
             /* TODO: move to control */
-            if (motors[0])
-                motors[0]->cls->set_velocity(motors[0], 0);
+            for (i = 0; i < 3; i++)
+                if (motors[i])
+                    motors[i]->cls->set_velocity(motors[i], 0);
 
             motors_on_off(true);
             serial->println("Motors on");
@@ -676,19 +704,25 @@ void loop(void) {
             serial->println("Motors off");
             break;
         case 'm':
-            if (motors[0]) {
-                struct motor_pwm_calib_data_s data;
+            if (motors_on && vbat_ok) {
+                serial->println("Motors must be off and VBAT good");
+                break;
+            }
 
-                if (motors_on && vbat_ok)
-                    serial->println("Motors must be off and VBAT good");
-                else if (!sbgc_motor_pwm_recalibrate(motors[0]))
-                    serial->println("Motor 0 calibration failed");
-                else if (!sbgc_motor_pwm_get_calibration(motors[0], &data))
-                    serial->println("Motor 0 calibration no data");
+            for (i = 0; i < 3; i++) {
+                struct sbgc_motor_calib_data_s data;
+
+                if (!motors[i])
+                    continue;
+
+                if (motors[i]->cls->recalibrate(motors[i]) != 0)
+                    serial->println("Motor calibration failed");
+                else if (motors[i]->cls->get_calibration(motors[i], &data) != 0)
+                    serial->println("Motor calibration no data");
                 else {
                     char msg[200];
-                    sprintf(msg, "Motor 0 calibration = { .zero_electric_offset = %f, .sensor_direction = %i }",
-                            data.zero_electric_offset, data.sensor_direction);
+                    sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
+                            i, data.pole_pairs, data.zero_electric_offset, data.sensor_direction);
                     serial->println(msg);
                 }
             }
@@ -716,19 +750,19 @@ void loop(void) {
             switch (cmd) {
             case 'D': /* Cursor Back or left arrow, param is modifier */
                 if (motors[0])
-                    motors[0]->cls->set_velocity(motors[0], -5 * D2R);
+                    motors[0]->cls->set_velocity(motors[0], -5);
                 break;
             case 'C': /* Cursor Forward or right arrow, param is modifier */
                 if (motors[0])
-                    motors[0]->cls->set_velocity(motors[0], 5 * D2R);
+                    motors[0]->cls->set_velocity(motors[0], 5);
                 break;
             case 'A': /* Cursor Up or up arrow, param is modifier */
                 if (motors[1])
-                    motors[1]->cls->set_velocity(motors[1], -5 * D2R);
+                    motors[1]->cls->set_velocity(motors[1], -5);
                 break;
             case 'B': /* Cursor Down or down arrow, param is modifier */
                 if (motors[1])
-                    motors[1]->cls->set_velocity(motors[1], 5 * D2R);
+                    motors[1]->cls->set_velocity(motors[1], 5);
                 break;
             case 'H': /* Cursor Position or Home */
             case 'F': /* Cursos Previous Line or End */
@@ -737,11 +771,11 @@ void loop(void) {
                 switch (param) {
                 case 5: /* Page Up */
                     if (motors[2])
-                        motors[2]->cls->set_velocity(motors[2], 5 * D2R);
+                        motors[2]->cls->set_velocity(motors[2], 5);
                     break;
                 case 6: /* Page Down */
                     if (motors[2])
-                        motors[2]->cls->set_velocity(motors[2], -5 * D2R);
+                        motors[2]->cls->set_velocity(motors[2], -5);
                     break;
                 case 1: /* Home */
                 case 7: /* Home */
