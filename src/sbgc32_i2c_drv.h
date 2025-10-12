@@ -25,7 +25,7 @@ typedef struct sbgc32_i2c_drv_s sbgc32_i2c_drv;
 
 sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ);
 void sbgc32_i2c_drv_free(sbgc32_i2c_drv *dev);
-sbgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev);
-sbgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev);
+obgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev);
+obgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev);
 
 #endif /* SBGC32_I2C_DRV_H */

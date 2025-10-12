@@ -16,6 +16,11 @@ extern "C" {
 #include "main.h"
 }
 
+/*
+ * SBGC_ prefix for these because most of them seem to be part of the SBGC32 reference design
+ * and not user configurable.
+ */
+
 #define SBGC_LED_GREEN     PB12
 /* Red LED apparently always-on, not software controllable */
 
@@ -37,7 +42,7 @@ extern "C" {
 
 /* TODO: save in flash */
 /* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
-static const struct sbgc_motor_calib_data_s motor_calib[3] = {
+static const struct obgc_motor_calib_data_s motor_calib[3] = {
     { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 146.7, .sensor_direction = 1 } },  /* Yaw   (axis 0) */
     { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 91.11, .sensor_direction = -1 } }, /* Pitch (axis 2) */
     { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 } },  /* Roll  (axis 1) */
@@ -45,21 +50,21 @@ static const struct sbgc_motor_calib_data_s motor_calib[3] = {
 
 /* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
 #define SBGC_MOTOR0_PAIRS  11
-static const struct sbgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
+static const struct obgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
 
-static sbgc_imu *main_imu;
-static sbgc_ahrs *main_ahrs;
-static sbgc_imu *frame_imu;
-static sbgc_ahrs *frame_ahrs;
+static obgc_imu *main_imu;
+static obgc_ahrs *main_ahrs;
+static obgc_imu *frame_imu;
+static obgc_ahrs *frame_ahrs;
 static sbgc32_i2c_drv *drv_modules[3];
-static sbgc_encoder *encoders[3];
-static sbgc_foc_driver *motor_drivers[3];
-static sbgc_motor *motors[3];
+static obgc_encoder *encoders[3];
+static obgc_foc_driver *motor_drivers[3];
+static obgc_motor *motors[3];
 static TwoWire *i2c;
 static HardwareSerial *serial;
 
 static bool use_motor[3], set_use_motor;
-static sbgc_motor_bldc_param set_param = __BLDC_PARAM_MAX;
+static obgc_motor_bldc_param set_param = __BLDC_PARAM_MAX;
 static int set_param_power = -1;
 
 static struct axes_data_s axes;
@@ -301,7 +306,7 @@ void setup(void) {
     pinMode(SBGC_VBAT, INPUT);
 
     /* Initialize IMUs */
-    main_imu = sbgc_mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);
+    main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);
     if (!main_imu) {
         serial->println("Main MPU6050 initialization failed!");
         while (1);
@@ -332,7 +337,7 @@ void setup(void) {
     else
         serial->println("SBGC32_I2C_Drv init failed");
 
-    encoders[0] = sbgc_as5600_new(i2c);
+    encoders[0] = as5600_new(i2c);
     encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
     encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
@@ -354,12 +359,12 @@ void setup(void) {
     SimpleFOCDebug::enable(serial);
 # endif
     /* SimpleFOC as a full motor object */
-    motors[0] = sbgc_motor_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
+    motors[0] = motor_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
             encoders[0], &sfoc_motor0_calib);
 #endif
 
     /* SimpleFOC as a PWM output driver only */
-    motor_drivers[0] = sbgc_motor_drv_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123);
+    motor_drivers[0] = motor_drv_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123);
     if (!motor_drivers[0])
         serial->println("Motor 0 driver init failed!");
 
@@ -367,14 +372,14 @@ void setup(void) {
     motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
 
     for (i = 0; i < 3; i++) {
-        motors[i] = sbgc_motor_bldc_new(encoders[i], motor_drivers[i],
+        motors[i] = motor_bldc_new(encoders[i], motor_drivers[i],
                 motor_calib[i].bldc_with_encoder.pole_pairs ? &motor_calib[i] : NULL);
 
-        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
-        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
-        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
-        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
-        sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, i ? 0.3f : 1.0f); /* Limit to 0.3 x VBAT */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, i ? 0.3f : 1.0f); /* Limit to 0.3 x VBAT */
     }
 
     serial->println("Motors early init done");
@@ -604,7 +609,7 @@ handle_set_param:
 
                 for (i = 0; i < 3; i++)
                     if (motors[i] && use_motor[i]) {
-                        sbgc_motor_bldc_set_param(motors[i], set_param, val);
+                        motor_bldc_set_param(motors[i], set_param, val);
                         serial->print("Param set to ");
                         serial->println(val);
                     }
@@ -791,7 +796,7 @@ handle_set_param:
             }
 
             for (i = 0; i < 3; i++) {
-                struct sbgc_motor_calib_data_s data;
+                struct obgc_motor_calib_data_s data;
 
                 if (!motors[i] || !use_motor[i])
                     continue;

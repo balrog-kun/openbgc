@@ -29,13 +29,13 @@
 #define I2C_DRV_REG_RESET_MODE      8
 
 struct sbgc32_i2c_drv_s {
-    sbgc_encoder enc_obj;
-    sbgc_foc_driver motor_drv_obj;
+    obgc_encoder enc_obj;
+    obgc_foc_driver motor_drv_obj;
     uint8_t addr;
     TwoWire *i2c;
 };
 
-static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
+static int32_t sbgc32_i2c_drv_encoder_read(obgc_encoder *enc) {
     struct sbgc32_i2c_drv_s *dev = container_of(enc, struct sbgc32_i2c_drv_s, enc_obj);
     uint8_t lo;
 
@@ -47,17 +47,17 @@ static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
     return ((uint32_t) (dev->i2c->read() << 8) | lo) << 13;
 }
 
-static void sbgc32_i2c_drv_encoder_free(sbgc_encoder *enc) {
+static void sbgc32_i2c_drv_encoder_free(obgc_encoder *enc) {
     /* refcount? */
 }
 
-sbgc_encoder_class sbgc32_i2c_drv_encoder_class = {
+obgc_encoder_class sbgc32_i2c_drv_encoder_class = {
     .read  = sbgc32_i2c_drv_encoder_read,
     .free  = sbgc32_i2c_drv_encoder_free,
     .scale = (0x4000 << 13) / 360, /* LSBs per 1deg */
 };
 
-static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_foc_driver *motor_drv, float v_q, float v_d, float theta) {
+static void sbgc32_i2c_drv_motor_set_phase_voltage(obgc_foc_driver *motor_drv, float v_q, float v_d, float theta) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     uint16_t power;
@@ -89,7 +89,7 @@ static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_foc_driver *motor_drv, f
     dev->i2c->endTransmission();
 }
 
-static int sbgc32_i2c_drv_motor_on(sbgc_foc_driver *motor_drv) {
+static int sbgc32_i2c_drv_motor_on(obgc_foc_driver *motor_drv) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
@@ -100,7 +100,7 @@ static int sbgc32_i2c_drv_motor_on(sbgc_foc_driver *motor_drv) {
     return 0;
 }
 
-static void sbgc32_i2c_drv_motor_off(sbgc_foc_driver *motor_drv) {
+static void sbgc32_i2c_drv_motor_off(obgc_foc_driver *motor_drv) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
@@ -109,11 +109,11 @@ static void sbgc32_i2c_drv_motor_off(sbgc_foc_driver *motor_drv) {
     dev->i2c->endTransmission();
 }
 
-static void sbgc32_i2c_drv_motor_free(sbgc_foc_driver *motor_drv) {
+static void sbgc32_i2c_drv_motor_free(obgc_foc_driver *motor_drv) {
     sbgc32_i2c_drv_motor_off(motor_drv);
 }
 
-sbgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
+obgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
     .set_phase_voltage = sbgc32_i2c_drv_motor_set_phase_voltage,
     .on                = sbgc32_i2c_drv_motor_on,
     .off               = sbgc32_i2c_drv_motor_off,
@@ -173,10 +173,10 @@ void sbgc32_i2c_drv_free(sbgc32_i2c_drv *dev) {
     free(dev);
 }
 
-sbgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev) {
+obgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev) {
     return &dev->enc_obj;
 }
 
-sbgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev) {
+obgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev) {
     return &dev->motor_drv_obj;
 }

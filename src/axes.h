@@ -23,9 +23,9 @@ struct axes_data_s {
 };
 
 struct calibrate_data_s {
-    struct sbgc_ahrs_s *main_ahrs;
-    struct sbgc_ahrs_s *frame_ahrs;
-    struct sbgc_encoder_s **encoders;
+    struct obgc_ahrs_s *main_ahrs;
+    struct obgc_ahrs_s *frame_ahrs;
+    struct obgc_encoder_s **encoders;
     void (*print)(const char *msg);
 
     struct axes_data_s *out;

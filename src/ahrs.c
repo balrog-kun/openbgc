@@ -36,7 +36,7 @@ static void get_ref_gravity(const float *q, float *g) {
         } \
     }
 
-static void madgwick_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
+static void madgwick_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     float q1 = ahrs->q[0], q2 = ahrs->q[1], q3 = ahrs->q[2], q4 = ahrs->q[3];
     float beta, norm;
     float s[3];
@@ -96,7 +96,7 @@ static void madgwick_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     DBG_PRINT("magdwick: q recip norm %.2f dt %f", norm, dt);
 }
 
-static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
+static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     float omega[3];
     float error[3] = {}, *error_scaled = omega;
     float mbeta;
@@ -249,7 +249,7 @@ static void mahony_update(sbgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     /* TODO: do we want to update ahrs->gyro_bias using the error * ahrs->ki? */
 }
 
-static void remap_axes(sbgc_ahrs *ahrs, float *vec) {
+static void remap_axes(obgc_ahrs *ahrs, float *vec) {
     float input[3] = { vec[0], vec[1], vec[2] };
 
     vec[0] = ahrs->axis_sign[0] == 1 ? input[ahrs->axis_map[0]] : -input[ahrs->axis_map[0]];
@@ -270,10 +270,10 @@ static void compute_y_axis(uint8_t x_map, uint8_t *y_map, uint8_t z_map,
     }
 }
 
-sbgc_ahrs *ahrs_new(sbgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right) {
-    sbgc_ahrs *ahrs = malloc(sizeof(sbgc_ahrs));
+obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right) {
+    obgc_ahrs *ahrs = malloc(sizeof(obgc_ahrs));
 
-    memset(ahrs, 0, sizeof(sbgc_ahrs));
+    memset(ahrs, 0, sizeof(obgc_ahrs));
     ahrs->imu = imu;
 
     /* Convert axis_right to X mapping */
@@ -299,12 +299,12 @@ sbgc_ahrs *ahrs_new(sbgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_ri
     return ahrs;
 }
 
-void ahrs_free(sbgc_ahrs *ahrs) {
+void ahrs_free(obgc_ahrs *ahrs) {
     free(ahrs);
 }
 
 /* TODO: add parameter to keep yaw from before or from encoder readings */
-static void ahrs_init_q_with_a(sbgc_ahrs *ahrs, const float *a) {
+static void ahrs_init_q_with_a(obgc_ahrs *ahrs, const float *a) {
     float lensq = vector_normsq(a);
 
     /* Initialize quaternion */
@@ -339,7 +339,7 @@ static void ahrs_init_q_with_a(sbgc_ahrs *ahrs, const float *a) {
     }
 }
 
-void ahrs_calibrate(sbgc_ahrs *ahrs) {
+void ahrs_calibrate(obgc_ahrs *ahrs) {
 #define SAMPLES_NUM 512
     int32_t acc_raw[3], gyr_raw[SAMPLES_NUM][3];
     int64_t sum[3] = { 0, 0, 0 };
@@ -412,7 +412,7 @@ void ahrs_calibrate(sbgc_ahrs *ahrs) {
     }
 }
 
-void ahrs_reset_orientation(sbgc_ahrs *ahrs) {
+void ahrs_reset_orientation(obgc_ahrs *ahrs) {
     int32_t acc_raw[3], gyr_raw[3];
     float acc[3], gyr[3];
     float factor = M_PI / (180.0f * ahrs->imu->cls->gyro_scale);
@@ -451,7 +451,7 @@ void ahrs_reset_orientation(sbgc_ahrs *ahrs) {
     }
 }
 
-void ahrs_update(sbgc_ahrs *ahrs) {
+void ahrs_update(obgc_ahrs *ahrs) {
     int32_t acc_raw[3], gyr_raw[3];
     float acc[3], gyr[3];
     float dt;
@@ -577,17 +577,17 @@ void ahrs_update(sbgc_ahrs *ahrs) {
     }
 }
 
-void ahrs_set_encoder_q(sbgc_ahrs *ahrs, const float *encoder_q) {
+void ahrs_set_encoder_q(obgc_ahrs *ahrs, const float *encoder_q) {
     ahrs->encoder_q = encoder_q;
 }
 
-void ahrs_set_weights(sbgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step) {
+void ahrs_set_weights(obgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step) {
     ahrs->beta = beta;
     ahrs->acc_kp = acc_kp;
     ahrs->enc_kp = enc_kp;
     ahrs->encoder_step = encoder_step;
 }
 
-void ahrs_set_debug(sbgc_ahrs *ahrs, void (*fn)(const char *)) {
+void ahrs_set_debug(obgc_ahrs *ahrs, void (*fn)(const char *)) {
     ahrs->debug_print = fn;
 }

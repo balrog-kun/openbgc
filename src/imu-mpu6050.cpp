@@ -17,15 +17,15 @@
 #define MPU6050_REG_DATA_START   0x3b
 
 struct mpu6050_s {
-    sbgc_imu obj;
+    obgc_imu obj;
     uint8_t i2c_addr;
     TwoWire *i2c;
     int16_t last_temp;
 };
 
-extern sbgc_imu_class mpu6050_imu_class;
+extern obgc_imu_class mpu6050_imu_class;
 
-sbgc_imu *sbgc_mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
+obgc_imu *mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
     struct mpu6050_s *dev = (struct mpu6050_s *) malloc(sizeof(struct mpu6050_s));
 
     dev->obj.cls = &mpu6050_imu_class;
@@ -180,15 +180,15 @@ static void mpu6050_read_temp(struct mpu6050_s *dev, int32_t *temp) {
     *temp = ((int32_t) dev->last_temp << 16) / 340 + (int32_t) (36.53f * 65536);
 }
 
-sbgc_imu_class mpu6050_imu_class = {
-    .read_main   = (void (*)(sbgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpu6050_read_main,
-    .read_temp   = (void (*)(sbgc_imu *imu, int32_t *temp_out)) mpu6050_read_temp,
-    .free        = (void (*)(sbgc_imu *imu)) mpu6050_free,
+obgc_imu_class mpu6050_imu_class = {
+    .read_main   = (void (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpu6050_read_main,
+    .read_temp   = (void (*)(obgc_imu *imu, int32_t *temp_out)) mpu6050_read_temp,
+    .free        = (void (*)(obgc_imu *imu)) mpu6050_free,
     .accel_scale = 65536, /* LSBs per 1g */
     .gyro_scale  = 131,   /* LSBs per 1deg/s */
 };
 
-void mpu6050_set_clksrc(sbgc_imu *imu, uint8_t val) {
+void mpu6050_set_clksrc(obgc_imu *imu, uint8_t val) {
     struct mpu6050_s *dev = (struct mpu6050_s *) imu;
 
     dev->i2c->beginTransmission(dev->i2c_addr);
@@ -197,7 +197,7 @@ void mpu6050_set_clksrc(sbgc_imu *imu, uint8_t val) {
     dev->i2c->endTransmission();
 }
 
-void mpu6050_set_srate(sbgc_imu *imu, uint8_t smplrt_div, uint8_t dlpf_cfg) {
+void mpu6050_set_srate(obgc_imu *imu, uint8_t smplrt_div, uint8_t dlpf_cfg) {
     struct mpu6050_s *dev = (struct mpu6050_s *) imu;
 
     dev->i2c->beginTransmission(dev->i2c_addr);

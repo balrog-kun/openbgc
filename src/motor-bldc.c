@@ -8,12 +8,12 @@
 #include "motor-bldc.h"
 
 struct motor_bldc_s {
-    sbgc_motor obj;
-    sbgc_foc_driver *driver;
-    sbgc_encoder *enc;
+    obgc_motor obj;
+    obgc_foc_driver *driver;
+    obgc_encoder *enc;
     struct main_loop_cb_s loop_cb;
     bool on;
-    struct sbgc_bldc_with_encoder_calib_data_s calib_data;
+    struct obgc_bldc_with_encoder_calib_data_s calib_data;
     float electric_scale;
     float target_omega;
     float v_max;
@@ -176,7 +176,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
     return 0;
 }
 
-static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct sbgc_motor_calib_data_s *out_data) {
+static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct obgc_motor_calib_data_s *out_data) {
     if (!motor->obj.ready)
         return -1;
 
@@ -184,14 +184,14 @@ static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct sbgc_mo
     return 0;
 }
 
-sbgc_motor_class motor_bldc_class = {
-    .set_velocity    = (void (*)(sbgc_motor *, float)) motor_bldc_set,
-    .powered_init    = (int (*)(sbgc_motor *)) motor_bldc_init,
-    .on              = (int (*)(sbgc_motor *)) motor_bldc_on,
-    .off             = (void (*)(sbgc_motor *)) motor_bldc_off,
-    .free            = (void (*)(sbgc_motor *)) motor_bldc_free,
-    .recalibrate     = (int (*)(sbgc_motor *)) motor_bldc_recalibrate,
-    .get_calibration = (int (*)(sbgc_motor *, sbgc_motor_calib_data *)) motor_bldc_get_calibration,
+obgc_motor_class motor_bldc_class = {
+    .set_velocity    = (void (*)(obgc_motor *, float)) motor_bldc_set,
+    .powered_init    = (int (*)(obgc_motor *)) motor_bldc_init,
+    .on              = (int (*)(obgc_motor *)) motor_bldc_on,
+    .off             = (void (*)(obgc_motor *)) motor_bldc_off,
+    .free            = (void (*)(obgc_motor *)) motor_bldc_free,
+    .recalibrate     = (int (*)(obgc_motor *)) motor_bldc_recalibrate,
+    .get_calibration = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
 };
 
 static void motor_bldc_loop(struct motor_bldc_s *motor) {
@@ -262,8 +262,8 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     motor->driver->cls->set_phase_voltage(motor->driver, vq * motor->calib_data.sensor_direction, vd, theta);
 }
 
-sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_foc_driver *driver,
-        const struct sbgc_motor_calib_data_s *calib_data) {
+obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver,
+        const struct obgc_motor_calib_data_s *calib_data) {
     struct motor_bldc_s *motor = (struct motor_bldc_s *) malloc(sizeof(struct motor_bldc_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -289,7 +289,7 @@ error:
     return NULL;
 }
 
-void sbgc_motor_bldc_set_param(sbgc_motor *motor, sbgc_motor_bldc_param param,
+void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         float val) {
     struct motor_bldc_s *bldc = (struct motor_bldc_s *) motor;
 

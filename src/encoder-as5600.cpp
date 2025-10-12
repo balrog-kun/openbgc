@@ -17,15 +17,15 @@
 #define AS5600_REG_BURN      0xff
 
 struct as5600_s {
-    sbgc_encoder obj;
+    obgc_encoder obj;
     uint8_t i2c_addr;
     TwoWire *i2c;
     bool i2c_err;
 };
 
-extern sbgc_encoder_class as5600_encoder_class;
+extern obgc_encoder_class as5600_encoder_class;
 
-sbgc_encoder *sbgc_as5600_new(TwoWire *i2c) {
+obgc_encoder *as5600_new(TwoWire *i2c) {
     struct as5600_s *dev = (struct as5600_s *) malloc(sizeof(struct as5600_s));
 
     memset(dev, 0, sizeof(*dev));
@@ -76,13 +76,13 @@ static int32_t as5600_read(struct as5600_s *dev) {
     return ((uint32_t) (hi << 8) | dev->i2c->read()) << 15;
 }
 
-sbgc_encoder_class as5600_encoder_class = {
-    .read  = (int32_t (*)(sbgc_encoder *enc)) as5600_read,
-    .free  = (void (*)(sbgc_encoder *enc)) as5600_free,
+obgc_encoder_class as5600_encoder_class = {
+    .read  = (int32_t (*)(obgc_encoder *enc)) as5600_read,
+    .free  = (void (*)(obgc_encoder *enc)) as5600_free,
     .scale = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
 };
 
-const char *as5600_get_error(sbgc_encoder *enc) {
+const char *as5600_get_error(obgc_encoder *enc) {
     struct as5600_s *dev = (struct as5600_s *) enc;
     uint8_t b;
 

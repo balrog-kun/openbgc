@@ -8,8 +8,8 @@
 
 /* Only one I2C address is defined in the spec so no need for a parameter */
 
-sbgc_encoder *sbgc_as5600_new(TwoWire *i2c);
+obgc_encoder *as5600_new(TwoWire *i2c);
 
-const char *as5600_get_error(sbgc_encoder *enc);
+const char *as5600_get_error(obgc_encoder *enc);
 
 #endif /* AS5600_H */

@@ -19,8 +19,8 @@ typedef enum {
     SBGC_IMU_MINUS_Z = -3,
 } sbgc_imu_axis;
 
-typedef struct sbgc_ahrs_s {
-    sbgc_imu *imu;
+typedef struct obgc_ahrs_s {
+    obgc_imu *imu;
     float q[4];           /* Quaternion (w, x, y, z) */
     float beta;           /* Should map to SBGC gyro trust param? used differently with Mahony, user setting ignored */
     float acc_kp;
@@ -42,7 +42,7 @@ typedef struct sbgc_ahrs_s {
     float enc_contrib;
     float enc_error_avg;
     float enc_error_max;
-} sbgc_ahrs;
+} obgc_ahrs;
 
 /*
  * TODO: make the calibration non-blocking, only save a flag in calibrate(), do the actual maths in update()
@@ -50,13 +50,13 @@ typedef struct sbgc_ahrs_s {
  * components and only enable motors when all are ready, disable them again when something becomes not ready
  */
 
-sbgc_ahrs *ahrs_new(sbgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right);
-void ahrs_free(sbgc_ahrs *ahrs);
-void ahrs_calibrate(sbgc_ahrs *ahrs);
-void ahrs_reset_orientation(sbgc_ahrs *agrs);
-void ahrs_update(sbgc_ahrs *ahrs);
-void ahrs_set_encoder_q(sbgc_ahrs *ahrs, const float *encoder_q);
-void ahrs_set_weights(sbgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step);
-void ahrs_set_debug(sbgc_ahrs *ahrs, void (*fn)(const char *));
+obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right);
+void ahrs_free(obgc_ahrs *ahrs);
+void ahrs_calibrate(obgc_ahrs *ahrs);
+void ahrs_reset_orientation(obgc_ahrs *agrs);
+void ahrs_update(obgc_ahrs *ahrs);
+void ahrs_set_encoder_q(obgc_ahrs *ahrs, const float *encoder_q);
+void ahrs_set_weights(obgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step);
+void ahrs_set_debug(obgc_ahrs *ahrs, void (*fn)(const char *));
 
 #endif /* AHRS_H */

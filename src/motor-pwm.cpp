@@ -12,19 +12,19 @@ struct motor_pwm_s;
 
 class SFOCEncoder : public Sensor {
 public:
-    sbgc_encoder *enc;
+    obgc_encoder *enc;
     SFOCEncoder() {}
-    SFOCEncoder(sbgc_encoder *_enc) : enc(_enc) {}
+    SFOCEncoder(obgc_encoder *_enc) : enc(_enc) {}
     /* TODO: possibly just use what we've already read in main? also pre-multiply */
     float getSensorAngle() { return (float) enc->cls->read(enc) * (D2R / enc->cls->scale); }
 };
 
 struct motor_pwm_s {
-    sbgc_motor motor_obj;
-    sbgc_foc_driver drv_obj;
+    obgc_motor motor_obj;
+    obgc_foc_driver drv_obj;
     /*
      * TODO: allocate the objects statically here instead of using a pointer+new+delete.
-     * In testing doing motor->sfoc_driver = BLDCDriver3PWM(...) in sbgc_motor_pwm_new()
+     * In testing doing motor->sfoc_driver = BLDCDriver3PWM(...) in motor_3pwm_new()
      * was causing crashes in init() though, may a compiler problem or something else.
      */
     BLDCMotor *sfoc_motor;
@@ -34,7 +34,7 @@ struct motor_pwm_s {
     bool on;
 };
 
-static int motor_pwm_init(struct sbgc_motor_s *motor_obj) {
+static int motor_pwm_init(struct obgc_motor_s *motor_obj) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
     int ret;
 
@@ -52,12 +52,12 @@ static int motor_pwm_init(struct sbgc_motor_s *motor_obj) {
     return 0;
 }
 
-static void motor_pwm_set(struct sbgc_motor_s *motor_obj, float vel) {
+static void motor_pwm_set(struct obgc_motor_s *motor_obj, float vel) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
     motor->sfoc_motor->target = vel;
 }
 
-static int motor_pwm_on(struct sbgc_motor_s *motor_obj) {
+static int motor_pwm_on(struct obgc_motor_s *motor_obj) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
 
     if (!motor->motor_obj.ready)
@@ -68,7 +68,7 @@ static int motor_pwm_on(struct sbgc_motor_s *motor_obj) {
     return 0;
 }
 
-static void motor_pwm_off(struct sbgc_motor_s *motor_obj) {
+static void motor_pwm_off(struct obgc_motor_s *motor_obj) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
 
     if (motor->sfoc_motor->driver)
@@ -78,7 +78,7 @@ static void motor_pwm_off(struct sbgc_motor_s *motor_obj) {
     motor->on = false;
 }
 
-static void motor_pwm_free(struct sbgc_motor_s *motor_obj) {
+static void motor_pwm_free(struct obgc_motor_s *motor_obj) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
 
     if (motor->on)
@@ -90,7 +90,7 @@ static void motor_pwm_free(struct sbgc_motor_s *motor_obj) {
     free(motor);
 }
 
-static int motor_pwm_recalibrate(struct sbgc_motor_s *motor_obj) {
+static int motor_pwm_recalibrate(struct obgc_motor_s *motor_obj) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
     int ret;
 
@@ -113,7 +113,7 @@ static int motor_pwm_recalibrate(struct sbgc_motor_s *motor_obj) {
     return ret ? 0 : 1;
 }
 
-static int motor_pwm_get_calibration(struct sbgc_motor_s *motor_obj, struct sbgc_motor_calib_data_s *out_data) {
+static int motor_pwm_get_calibration(struct obgc_motor_s *motor_obj, struct obgc_motor_calib_data_s *out_data) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
 
     if (motor->sfoc_motor->motor_status != FOCMotorStatus::motor_ready)
@@ -125,7 +125,7 @@ static int motor_pwm_get_calibration(struct sbgc_motor_s *motor_obj, struct sbgc
     return 0;
 }
 
-sbgc_motor_class motor_pwm_class = {
+obgc_motor_class motor_pwm_class = {
     .set_velocity    = motor_pwm_set,
     .powered_init    = motor_pwm_init,
     .on              = motor_pwm_on,
@@ -135,32 +135,32 @@ sbgc_motor_class motor_pwm_class = {
     .get_calibration = motor_pwm_get_calibration,
 };
 
-static void motor_drv_pwm_set_phase_voltage(struct sbgc_foc_driver_s *drv_obj, float v_q, float v_d, float theta) {
+static void motor_drv_pwm_set_phase_voltage(struct obgc_foc_driver_s *drv_obj, float v_q, float v_d, float theta) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
     motor->sfoc_motor->setPhaseVoltage(v_q, v_d, theta * D2R);
 }
 
-static int motor_drv_pwm_on(struct sbgc_foc_driver_s *drv_obj) {
+static int motor_drv_pwm_on(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
     motor->sfoc_motor->driver->enable();
     return 0;
 }
 
-static void motor_drv_pwm_off(struct sbgc_foc_driver_s *drv_obj) {
+static void motor_drv_pwm_off(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
     motor->sfoc_motor->driver->disable();
 }
 
-static void motor_drv_pwm_free(struct sbgc_foc_driver_s *drv_obj) {
+static void motor_drv_pwm_free(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
     motor_pwm_free(&motor->motor_obj);
 }
 
-sbgc_foc_driver_class motor_drv_pwm_class = {
+obgc_foc_driver_class motor_drv_pwm_class = {
     .set_phase_voltage = motor_drv_pwm_set_phase_voltage,
     .on                = motor_drv_pwm_on,
     .off               = motor_drv_pwm_off,
@@ -176,7 +176,7 @@ static void motor_pwm_loop(struct motor_pwm_s *motor) {
 }
 
 struct motor_pwm_s *sfoc_3pwm_new(bool is_motor, int pin_uh, int pin_vh, int pin_wh, int pin_en,
-        sbgc_encoder *enc, const struct sbgc_motor_calib_data_s *calib_data) {
+        obgc_encoder *enc, const struct obgc_motor_calib_data_s *calib_data) {
     struct motor_pwm_s *motor = (struct motor_pwm_s *) malloc(sizeof(struct motor_pwm_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -234,14 +234,14 @@ error:
     return NULL;
 }
 
-sbgc_motor *sbgc_motor_3pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en,
-        sbgc_encoder *enc, const struct sbgc_motor_calib_data_s *calib_data) {
+obgc_motor *motor_3pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en,
+        obgc_encoder *enc, const struct obgc_motor_calib_data_s *calib_data) {
     struct motor_pwm_s *motor = sfoc_3pwm_new(true, pin_uh, pin_vh, pin_wh, pin_en, enc, calib_data);
 
     return motor ? &motor->motor_obj : NULL;
 }
 
-sbgc_foc_driver *sbgc_motor_drv_3pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en) {
+obgc_foc_driver *motor_drv_3pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en) {
     struct motor_pwm_s *motor = sfoc_3pwm_new(false, pin_uh, pin_vh, pin_wh, pin_en, NULL, NULL);
 
     return motor ? &motor->drv_obj : NULL;
