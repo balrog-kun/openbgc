@@ -9,7 +9,7 @@
 
 struct motor_bldc_s {
     sbgc_motor obj;
-    sbgc_motor *driver;
+    sbgc_foc_driver *driver;
     sbgc_encoder *enc;
     struct main_loop_cb_s loop_cb;
     bool on;
@@ -262,7 +262,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     motor->driver->cls->set_phase_voltage(motor->driver, vq * motor->calib_data.sensor_direction, vd, theta);
 }
 
-sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_motor *driver,
+sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_foc_driver *driver,
         const struct sbgc_motor_calib_data_s *calib_data) {
     struct motor_bldc_s *motor = (struct motor_bldc_s *) malloc(sizeof(struct motor_bldc_s));
 

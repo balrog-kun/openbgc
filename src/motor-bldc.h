@@ -18,7 +18,7 @@ typedef enum sbgc_motor_bldc_param_e {
     __BLDC_PARAM_MAX
 } sbgc_motor_bldc_param;
 
-sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_motor *driver,
+sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_foc_driver *driver,
         const struct sbgc_motor_calib_data_s *calib_data);
 void sbgc_motor_bldc_set_param(sbgc_motor *motor, sbgc_motor_bldc_param param,
         float val);

@@ -30,10 +30,9 @@
 
 struct sbgc32_i2c_drv_s {
     sbgc_encoder enc_obj;
-    sbgc_motor motor_obj;
+    sbgc_foc_driver motor_drv_obj;
     uint8_t addr;
     TwoWire *i2c;
-    bool motor_on;
 };
 
 static int32_t sbgc32_i2c_drv_encoder_read(sbgc_encoder *enc) {
@@ -58,12 +57,8 @@ sbgc_encoder_class sbgc32_i2c_drv_encoder_class = {
     .scale = (0x4000 << 13) / 360, /* LSBs per 1deg */
 };
 
-static int sbgc32_i2c_drv_motor_init(sbgc_motor *motor) {
-    return 0;
-}
-
-static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_motor *motor, float v_q, float v_d, float theta) {
-    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
+static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_foc_driver *motor_drv, float v_q, float v_d, float theta) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     uint16_t power;
     uint16_t angle;
@@ -94,10 +89,8 @@ static void sbgc32_i2c_drv_motor_set_phase_voltage(sbgc_motor *motor, float v_q,
     dev->i2c->endTransmission();
 }
 
-static int sbgc32_i2c_drv_motor_on(sbgc_motor *motor) {
-    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
-
-    dev->motor_on = true;
+static int sbgc32_i2c_drv_motor_on(sbgc_foc_driver *motor_drv) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
     dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
@@ -107,24 +100,21 @@ static int sbgc32_i2c_drv_motor_on(sbgc_motor *motor) {
     return 0;
 }
 
-static void sbgc32_i2c_drv_motor_off(sbgc_motor *motor) {
-    struct sbgc32_i2c_drv_s *dev = container_of(motor, struct sbgc32_i2c_drv_s, motor_obj);
+static void sbgc32_i2c_drv_motor_off(sbgc_foc_driver *motor_drv) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
     dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
     dev->i2c->write((uint8_t) 0);
     dev->i2c->endTransmission();
-
-    dev->motor_on = false;
 }
 
-static void sbgc32_i2c_drv_motor_free(sbgc_motor *motor) {
-    sbgc32_i2c_drv_motor_off(motor);
+static void sbgc32_i2c_drv_motor_free(sbgc_foc_driver *motor_drv) {
+    sbgc32_i2c_drv_motor_off(motor_drv);
 }
 
-sbgc_motor_class sbgc32_i2c_drv_motor_class = {
+sbgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
     .set_phase_voltage = sbgc32_i2c_drv_motor_set_phase_voltage,
-    .powered_init      = sbgc32_i2c_drv_motor_init,
     .on                = sbgc32_i2c_drv_motor_on,
     .off               = sbgc32_i2c_drv_motor_off,
     .free              = sbgc32_i2c_drv_motor_free,
@@ -136,15 +126,17 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_d
 
     memset(dev, 0, sizeof(*dev));
     dev->enc_obj.cls = &sbgc32_i2c_drv_encoder_class;
-    dev->motor_obj.cls = &sbgc32_i2c_drv_motor_class;
+    dev->motor_drv_obj.cls = &sbgc32_i2c_drv_motor_drv_class;
     dev->i2c = i2c;
     dev->addr = addr;
-    dev->motor_on = true; /* For safety assume it's on until sbgc32_i2c_drv_motor_off() */
 
     /* Check device identity */
     if (dev->i2c->requestFrom(dev->addr, (uint8_t) 1, I2C_DRV_REG_DEVICE_ID, 1, true) != 1 ||
             dev->i2c->read() != 0x14)
         goto err;
+
+    /* Safety: power off motor ASAP */
+    sbgc32_i2c_drv_motor_off(&dev->motor_drv_obj);
 
     /* Set encoder type */
     dev->i2c->beginTransmission(dev->addr);
@@ -170,9 +162,6 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_d
     dev->i2c->write((uint8_t) 0);
     dev->i2c->endTransmission();
 
-    sbgc32_i2c_drv_motor_off(&dev->motor_obj);
-    dev->motor_obj.ready = true;
-
     return dev;
 
 err:
@@ -188,6 +177,6 @@ sbgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev) {
     return &dev->enc_obj;
 }
 
-sbgc_motor *sbgc32_i2c_drv_get_motor(sbgc32_i2c_drv *dev) {
-    return &dev->motor_obj;
+sbgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev) {
+    return &dev->motor_drv_obj;
 }

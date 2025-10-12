@@ -25,7 +25,6 @@ typedef struct sbgc_motor_calib_data_s {
 
 typedef struct sbgc_motor_class_s {
     void (*set_velocity)(sbgc_motor *motor, float omega);
-    void (*set_phase_voltage)(sbgc_motor *motor, float v_q, float v_d, float theta);
     int (*powered_init)(sbgc_motor *motor);
     int (*on)(sbgc_motor *motor);
     void (*off)(sbgc_motor *motor);
@@ -33,5 +32,18 @@ typedef struct sbgc_motor_class_s {
     int (*recalibrate)(sbgc_motor *motor);
     int (*get_calibration)(sbgc_motor *motor, sbgc_motor_calib_data *out_data);
 } sbgc_motor_class;
+
+struct sbgc_foc_driver_class_s;
+
+typedef struct sbgc_foc_driver_s {
+    struct sbgc_foc_driver_class_s *cls;
+} sbgc_foc_driver;
+
+typedef struct sbgc_foc_driver_class_s {
+    void (*set_phase_voltage)(sbgc_foc_driver *drv, float v_q, float v_d, float theta);
+    int (*on)(sbgc_foc_driver *drv);
+    void (*off)(sbgc_foc_driver *drv);
+    void (*free)(sbgc_foc_driver *drv);
+} sbgc_foc_driver_class;
 
 #endif /* MOTOR_H */

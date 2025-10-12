@@ -32,7 +32,6 @@ extern "C" {
 #define SBGC_DRV8313_IN3   PA3   /* TIM2 */
 #define SBGC_DRV8313_EN123 PB10
 
-#define SBGC_MOTOR0_PAIRS  11    /* We need this becasue SimpleFOC requires it */
 /* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
 /* TODO: current and temperature sensing per motor */
 
@@ -44,15 +43,17 @@ static const struct sbgc_motor_calib_data_s motor_calib[3] = {
     { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 } },  /* Roll  (axis 1) */
 };
 
+/* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
+#define SBGC_MOTOR0_PAIRS  11
 static const struct sbgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
 
 static sbgc_imu *main_imu;
 static sbgc_ahrs *main_ahrs;
 static sbgc_imu *frame_imu;
 static sbgc_ahrs *frame_ahrs;
-static sbgc32_i2c_drv *drv_modules[2];
+static sbgc32_i2c_drv *drv_modules[3];
 static sbgc_encoder *encoders[3];
-static sbgc_motor *motor_drivers[3];
+static sbgc_foc_driver *motor_drivers[3];
 static sbgc_motor *motors[3];
 static TwoWire *i2c;
 static HardwareSerial *serial;
@@ -336,17 +337,34 @@ void setup(void) {
     encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
 
-#define MOTOR_DEBUG
-#ifdef MOTOR_DEBUG
+    /*
+     * We stopped using the SimpleFOC high-level motor abstraction so that we can use common code for
+     * both the on-board motor driver (which SimpleFOC can handle), if any, and the motors connected to
+     * SBGC32_I2C_Drv extension boards (which SimpleFOC cannot handle out of the box), again, if any.
+     *
+     * For the on-board driver we still use SimpleFOC's low-level abstraction to give us the following:
+     *   * STM32 PWM output timer setup,
+     *   * the PWM output sine modulation, or one of the other 3 modes available.
+     *
+     * Keep the code below in case we need to cross check something against SimpleFOC.
+     */
+#if 0
+# define MOTOR_DEBUG
+# ifdef MOTOR_DEBUG
     SimpleFOCDebug::enable(serial);
+# endif
+    /* SimpleFOC as a full motor object */
+    motors[0] = sbgc_motor_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
+            encoders[0], &sfoc_motor0_calib);
 #endif
-    motor_drivers[0] = sbgc_motor_pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
-            encoders[0], &motor0_calib);
+
+    /* SimpleFOC as a PWM output driver only */
+    motor_drivers[0] = sbgc_motor_drv_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123);
     if (!motor_drivers[0])
         serial->println("Motor 0 driver init failed!");
 
-    motor_drivers[1] = sbgc32_i2c_drv_get_motor(drv_modules[0]);
-    motor_drivers[2] = sbgc32_i2c_drv_get_motor(drv_modules[1]);
+    motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
+    motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
 
     for (i = 0; i < 3; i++) {
         motors[i] = sbgc_motor_bldc_new(encoders[i], motor_drivers[i],
@@ -408,7 +426,7 @@ static void shutdown_to_bl(void) {
     for (i = 0; i < 3; i++)
         if (motor_drivers[i])
             motor_drivers[i]->cls->free(motor_drivers[i]);
-    for (i = 0; i < 2; i++)
+    for (i = 0; i < 3; i++)
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
     i2c->end();
