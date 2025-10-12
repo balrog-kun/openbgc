@@ -111,8 +111,9 @@ static int motor_pwm_get_calibration(struct motor_pwm_s *motor, struct sbgc_moto
     if (motor->sfoc_motor->motor_status != FOCMotorStatus::motor_ready)
         return -1;
 
-    out_data->zero_electric_offset = motor->sfoc_motor->zero_electric_angle;
-    out_data->sensor_direction = motor->sfoc_motor->sensor_direction;
+    out_data->bldc_with_encoder.pole_pairs = motor->sfoc_motor->pole_pairs;
+    out_data->bldc_with_encoder.zero_electric_offset = motor->sfoc_motor->zero_electric_angle;
+    out_data->bldc_with_encoder.sensor_direction = motor->sfoc_motor->sensor_direction;
     return 0;
 }
 
@@ -150,7 +151,7 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, s
     if (!motor->sfoc_driver->init())
         goto error;
 
-    motor->sfoc_motor = new BLDCMotor(calib_data ? calib_data->pole_pairs : 11);
+    motor->sfoc_motor = new BLDCMotor(calib_data ? calib_data->bldc_with_encoder.pole_pairs : 11);
     motor->sfoc_motor->linkDriver(motor->sfoc_driver);
     motor->sfoc_motor->linkSensor(motor->sfoc_encoder);
     motor->sfoc_motor->controller = MotionControlType::velocity;
@@ -164,8 +165,8 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, s
     motor->sfoc_motor->modulation_centered = 1;
 
     if (calib_data) {
-        motor->sfoc_motor->zero_electric_angle = calib_data->zero_electric_offset;
-        motor->sfoc_motor->sensor_direction = (enum Direction) calib_data->sensor_direction;
+        motor->sfoc_motor->zero_electric_angle = calib_data->bldc_with_encoder.zero_electric_offset;
+        motor->sfoc_motor->sensor_direction = (enum Direction) calib_data->bldc_with_encoder.sensor_direction;
     }
 
     if (!motor->sfoc_motor->init())
@@ -174,7 +175,6 @@ sbgc_motor *sbgc_motor_pwm_new(int pin_uh, int pin_vh, int pin_wh, int pin_en, s
 
     /* TODO: eventually switch to torque control so we can let the user override position by hand like the official firmware does?
      * maybe we just need to monitor the torque but can still use velocity control loop */
-    /* TODO: save zero_electric_offset and sensor_direction for re-use */
 
     motor->loop_cb.cb = (void (*)(void *)) motor_pwm_loop;
     motor->loop_cb.data = motor;

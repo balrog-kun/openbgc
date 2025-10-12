@@ -37,12 +37,14 @@ extern "C" {
 /* TODO: current and temperature sensing per motor */
 
 /* TODO: save in flash */
-/* 'm' to autocalibrate and print new values.  Zero pole_pairs will trigger calibration on power-on */
-static const sbgc_motor_calib_data motor_calib[3] = {
-    { .pole_pairs = 11, .zero_electric_offset = 146.7, .sensor_direction = 1 },  /* Yaw   (axis 0) */
-    { .pole_pairs = 11, .zero_electric_offset = 91.11, .sensor_direction = -1 }, /* Pitch (axis 2) */
-    { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 },  /* Roll  (axis 1) */
+/* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
+static const struct sbgc_motor_calib_data_s motor_calib[3] = {
+    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 146.7, .sensor_direction = 1 } },  /* Yaw   (axis 0) */
+    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 91.11, .sensor_direction = -1 } }, /* Pitch (axis 2) */
+    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 } },  /* Roll  (axis 1) */
 };
+
+static const struct sbgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
 
 static sbgc_imu *main_imu;
 static sbgc_ahrs *main_ahrs;
@@ -69,8 +71,6 @@ static int vbat_ok;
 static bool motors_on;
 
 static struct main_loop_cb_s *cbs;
-
-static struct sbgc_motor_calib_data_s motor0_calib = { SBGC_MOTOR0_PAIRS, 3.7, 1 }; /* 'm' to autocalibrate and print new values */ /////
 
 #define TARGET_LOOP_RATE 128
 
@@ -350,7 +350,7 @@ void setup(void) {
 
     for (i = 0; i < 3; i++) {
         motors[i] = sbgc_motor_bldc_new(encoders[i], motor_drivers[i],
-                motor_calib[i].pole_pairs ? &motor_calib[i] : NULL);
+                motor_calib[i].bldc_with_encoder.pole_pairs ? &motor_calib[i] : NULL);
 
         sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
         sbgc_motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
@@ -785,7 +785,8 @@ handle_set_param:
                 else {
                     char msg[200];
                     sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
-                            i, data.pole_pairs, data.zero_electric_offset, data.sensor_direction);
+                            i, data.bldc_with_encoder.pole_pairs, data.bldc_with_encoder.zero_electric_offset,
+                            data.bldc_with_encoder.sensor_direction);
                     serial->println(msg);
                 }
             }

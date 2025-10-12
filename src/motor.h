@@ -11,10 +11,16 @@ typedef struct sbgc_motor_s {
     bool ready;
 } sbgc_motor;
 
-typedef struct sbgc_motor_calib_data_s {
+typedef struct sbgc_bldc_with_encoder_calib_data_s {
     uint16_t pole_pairs;
     float zero_electric_offset;
     int8_t sensor_direction;
+} sbgc_bldc_with_encoder_calib_data;
+
+typedef struct sbgc_motor_calib_data_s {
+    union {
+        struct sbgc_bldc_with_encoder_calib_data_s bldc_with_encoder;
+    };
 } sbgc_motor_calib_data;
 
 typedef struct sbgc_motor_class_s {

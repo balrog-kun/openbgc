@@ -13,7 +13,7 @@ struct motor_bldc_s {
     sbgc_encoder *enc;
     struct main_loop_cb_s loop_cb;
     bool on;
-    sbgc_motor_calib_data calib_data;
+    struct sbgc_bldc_with_encoder_calib_data_s calib_data;
     float electric_scale;
     float target_omega;
     float v_max;
@@ -180,7 +180,7 @@ static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct sbgc_mo
     if (!motor->obj.ready)
         return -1;
 
-    memcpy(out_data, &motor->calib_data, sizeof(struct sbgc_motor_calib_data_s));
+    memcpy(&out_data->bldc_with_encoder, &motor->calib_data, sizeof(motor->calib_data));
     return 0;
 }
 
@@ -273,9 +273,7 @@ sbgc_motor *sbgc_motor_bldc_new(sbgc_encoder *enc, sbgc_motor *driver,
     motor->driver = driver;
 
     if (calib_data) {
-        motor->calib_data.pole_pairs = calib_data->pole_pairs;
-        motor->calib_data.zero_electric_offset = calib_data->zero_electric_offset;
-        motor->calib_data.sensor_direction = calib_data->sensor_direction;
+        memcpy(&motor->calib_data, &calib_data->bldc_with_encoder, sizeof(motor->calib_data));
         motor->electric_scale = (float) motor->calib_data.pole_pairs * motor->calib_data.sensor_direction;
         motor->obj.ready = true;
     }
