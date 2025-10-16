@@ -230,6 +230,26 @@ static inline void quaternion_to_rotvec(const float *q, float *v) {
     v[2] = factor * q[3];
 }
 
+/* Returns only positive angles from 0 to pi/2, again removes the double-cover but not reversible.  q must be normalized.  */
+static inline void quaternion_to_axis_angle(const float *q, float *axis, float *angle) {
+    float sin_half_angle = vector_norm(q + 1);
+    float factor = 1.0f / sin_half_angle; /* Should not cause a crash since this is floating-point (C standard Annex F recommendation) */
+    float half_angle = atan2f(sin_half_angle, q[0]);
+
+    if (!isnormal(factor))
+        factor = 0.0f;
+    else if (half_angle >= M_PI_2) {
+        half_angle = M_PI - half_angle;
+        factor = -factor;
+    }
+
+    *angle = 2 * half_angle;
+    axis[0] = factor * q[1];
+    axis[1] = factor * q[2];
+    axis[2] = factor * q[3];
+}
+
+/* Axis must be normalized, no restrictions on angle */
 static inline void quaternion_from_axis_angle(float *q, const float *axis, float angle) {
     float sina = sinf(angle * 0.5f);
 

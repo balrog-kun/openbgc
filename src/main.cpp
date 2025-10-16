@@ -70,7 +70,10 @@ static int set_param_power = -1;
 static struct axes_data_s axes;
 static bool have_axes;
 static float home_q[4];
+static float home_frame_q[4];
 static bool have_home;
+static float forward_vec[3], forward_az;
+static bool have_forward;
 
 static int vbat;
 static int vbat_ok;
@@ -744,9 +747,58 @@ handle_set_param:
             serial->println(axes.main_imu_mount_q[3]);////
             break;
         case 'k':
-            serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)");
+            serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)"); /* And 0-yaw if not following */
             memcpy(home_q, main_ahrs->q, sizeof(home_q));
             have_home = 1;
+            break;
+        case 'K':
+            if (!have_home) {
+                serial->println("Set home orientation first ('k')");
+                break;
+            }
+
+            /*
+             * Here we expect the user (TODO: document/print this to user somewhere) to roll the camera anywhere between 30 and 120 deg
+             * to the *right* after setting the home orientation ('k') and then send 'K' to set a "forward" direction.  None of the other data
+             * we have available so far really tells us what the user considers the forward/front direction and consequently the pitch vs.
+             * the roll axis.  Yaw is easy because it's aligned with gravity.  Roll and pitch axes are perpendicular to yaw axis (i.e.
+             * within horizontal plane) but since we don't assume anything about the order of joint axes or the orientation of either IMU,
+             * there's just no way to know where camera's front is, or whatever device/tool we're orienting.
+             *
+             * So we ask for a roll motion.  The axis of rotation is going to be the forward-back axis (camera lens axis) and if the roll is
+             * to the right, the axis will point forward due to the right-hand rule.  We save that and now we know how to decompose any
+             * orientation into a camera yaw+pitch+roll, or compose a set of camera yaw+pitch+roll values into a specific main IMU orientation.
+             *
+             * The camera should point in the exact same direction as when home orientation was set, only rolled.  The user can perhaps
+             * have the camera on and confirm on live view with OSD crosshair or similar, even zoomed in.
+             */
+            have_forward = 0;
+
+            {
+                float angle;
+                float conj_q0[4] = INIT_CONJ_Q(home_q);
+                float roll_q[4];
+
+                quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
+                quaternion_to_axis_angle(roll_q, forward_vec, &angle);
+
+                if (angle < M_PI / 12 || angle > M_PI / 3) {
+                    serial->println("No rotation within 30-120 deg detected");
+                    break;
+                }
+            }
+
+            if (fabsf(forward_vec[0]) + fabsf(forward_vec[1]) < 0.001f)
+                break;
+
+            if (fabsf(forward_vec[2]) > 0.1f)
+                serial->println("WARN: rotation axis not very level");
+
+            serial->println("Saving the rotation axis as the forward direction");
+            forward_vec[2] = 0.0f;
+            vector_normalize(forward_vec);
+            forward_az = atan2f(forward_vec[1], forward_vec[0]);
+            have_forward = 1;
             break;
         case 't':
             set_use_motor = true;
