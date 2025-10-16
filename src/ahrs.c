@@ -249,6 +249,12 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     /* TODO: do we want to update ahrs->gyro_bias using the error * ahrs->ki? */
 }
 
+static void velocity_update(obgc_ahrs *ahrs, float *gyr, float dt) {
+    /* Should we try to calculate new_q * prev_q^-1 / dt instead? */
+    memcpy(ahrs->velocity_vec, gyr, 3 * sizeof(float));
+    vector_rotate_by_quaternion(ahrs->velocity_vec, ahrs->q); /* New and old ahrs->q are probably equally good/bad here */
+}
+
 static void remap_axes(obgc_ahrs *ahrs, float *vec) {
     float input[3] = { vec[0], vec[1], vec[2] };
 
@@ -434,6 +440,8 @@ void ahrs_reset_orientation(obgc_ahrs *ahrs) {
 
     ahrs_init_q_with_a(ahrs, acc);
 
+    velocity_update(ahrs, gyr, 1.0f);
+
     memcpy(ahrs->gyro_lpf, gyr, 3 * sizeof(float));
     ahrs->beta = 1.0f;
 
@@ -491,6 +499,8 @@ void ahrs_update(obgc_ahrs *ahrs) {
     /* Remap axes */
     remap_axes(ahrs, acc);
     remap_axes(ahrs, gyr);
+
+    velocity_update(ahrs, gyr, dt);
 
     /*
      * TODO: online-recalibrate gyro_bias? basic version would be just a very slow LPF on gyro

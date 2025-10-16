@@ -22,12 +22,13 @@ typedef enum {
 typedef struct obgc_ahrs_s {
     obgc_imu *imu;
     float q[4];           /* Quaternion (w, x, y, z) */
+    float velocity_vec[3];
     float beta;           /* Should map to SBGC gyro trust param? used differently with Mahony, user setting ignored */
     float acc_kp;
     float enc_kp;
     uint32_t last_update; /* in micros */
-    uint8_t axis_map[3];  /* 0:X, 1:Y, 2:Z */
-    int8_t axis_sign[3];  /* 1 or -1 */
+    uint8_t axis_map[3];  /* 0:X, 1:Y, 2:Z (Deprecated) */
+    int8_t axis_sign[3];  /* 1 or -1 (Deprecated) */
     float gyro_bias[3];
     float gyro_stddev;
     float gyro_lpf[3];
