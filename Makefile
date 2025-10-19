@@ -26,3 +26,6 @@ stm32ld: utils/stm32ld.patch
 	[ -d stm32ld.git ] || git clone https://github.com/jsnyder/stm32ld.git stm32ld.git
 	cd stm32ld.git && (patch --forward -p1 < ../utils/stm32ld.patch; make)
 	ln -s stm32ld.git/stm32ld $@
+
+tags:
+	ctags src/*.{c,h,cpp}
