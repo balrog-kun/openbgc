@@ -29,3 +29,5 @@ stm32ld: utils/stm32ld.patch
 
 tags:
 	ctags src/*.{c,h,cpp}
+gdb:
+	gdb-multiarch .pio/build/simplebgc32_regular/firmware.elf
