@@ -74,7 +74,10 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
 }
 
 static void mpu6050_free(struct mpu6050_s *dev) {
-    /* TODO: power chip down? */
+    dev->i2c->beginTransmission(dev->i2c_addr);
+    dev->i2c->write(MPU6050_REG_PWR_MGMT_1);
+    dev->i2c->write(0x87); /* DEVICE_RESET and stop the clk */
+    dev->i2c->endTransmission();
     free(dev);
 }
 
