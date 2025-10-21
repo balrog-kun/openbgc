@@ -40,6 +40,7 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
     }
 
 #define USE_FIFO
+#define BLOCK_UNTIL_NEW_DATA
 
     /* Initialization sequence */
     static uint8_t init_sequence[] = {
@@ -63,7 +64,11 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
         dev->i2c->endTransmission();
     }
 
-    /* TODO: for the gyro we probably want to enable the FIFO mode, read all the samples available, integrate/average them and report the result, clear the fifo */
+    /* TODO: do we need to wait for FIFO_RESET to clear befor setting FIFO_EN?  Do we even want to do it here
+     * rather than lazily in read_main()? */
+
+    /* TODO: do we need the MPU60x0 revision vs. accelerometer resolution logic as seen in Android and cleanflight?
+     * https://github.com/cleanflight/cleanflight/blob/master/src/main/drivers/accgyro/accgyro_mpu.c#L78 */
 
     return &dev->obj;
 }
@@ -85,7 +90,11 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
     uint8_t buffer[DATA_SIZE];
 
 #ifdef USE_FIFO
+# ifdef BLOCK_UNTIL_NEW_DATA
+    while (gyro && byte_cnt < SAMPLE_SIZE) {
+# else
     if (gyro) {
+# endif
         if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
             /* TODO: report error */
             return;
