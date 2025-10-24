@@ -360,7 +360,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
  * axis[1] rotated by the previous rotation and one around axis[2] rotated by the two
  * earlier rotations.
  */
-void axes_q_to_angles(struct axes_data_s *data, float *to_q, float *out_angles) {
+void axes_q_to_angles(const struct axes_data_s *data, float *to_q, float *out_angles) {
     float r[3][3], q_axes[4], q_mount[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
     bool invert;
 
@@ -436,7 +436,7 @@ void axes_q_to_angles(struct axes_data_s *data, float *to_q, float *out_angles) 
  * The formula is delta theta = (J^T * J + lambda * I)^-1 * J^T * omega
  * With lambda == 0 it becomes delta theta = J^T * omega
  */
-void axes_q_to_step(struct axes_data_s *data, const float *from_q, const float *to_q,
+void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
         float *angles, float damp_factor, float *out_steps) {
     float omega[3];
     float j[3][3], jtj[3][3];
