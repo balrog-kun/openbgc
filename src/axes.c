@@ -17,8 +17,7 @@ static void get_enc(struct calibrate_data_s *data, float *enc) {
 
     for (i = 0; i < 3; i++)
         if (data->encoders[i])
-            enc[i] = (float) data->encoders[i]->cls->read(data->encoders[i]) /
-                data->encoders[i]->cls->scale * D2R;
+            enc[i] = data->encoders[i]->reading_rad;
 }
 
 static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
@@ -52,8 +51,7 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
         if (num < 0 || !data->encoders[num])
             return;
 
-        angle2 = (float) data->encoders[num]->cls->read(data->encoders[num]) /
-            data->encoders[num]->cls->scale * D2R * data->out->encoder_scale[num] * 0.5f;
+        angle2 = data->encoders[num]->reading_rad * data->out->encoder_scale[num] * 0.5f;
         sin_angle2 = sinf(angle2);
 
         memcpy(q_main, q, sizeof(q_main));
@@ -157,6 +155,9 @@ int axes_calibrate(struct calibrate_data_s *data) {
         if (data->frame_ahrs)
             ahrs_update(data->frame_ahrs);
 
+        for (i = 0; i < 3; i++)
+            encoder_update(data->encoders[i]);
+
         /* Get new orientation, calc difference from prev as q x conj(prev_q) */
         get_q(data, q, naxis);
         quaternion_mult_to(q, conj_prev_q, diff_q); /* We could delay the other terms calc but this is not a hot path */
@@ -209,7 +210,7 @@ int axes_calibrate(struct calibrate_data_s *data) {
 
         /*
          * If we already have some samples, align the sign of the axis with previous samples so we
-         * can accumulate them, and change angle to accordingly.  We could align the signs of the
+         * can accumulate them, and change angle sign accordingly.  We could align the signs of the
          * angles and accumulate the raw axes per encoder with the longest accumulated axis wins but
          * that complicates some things.
          */

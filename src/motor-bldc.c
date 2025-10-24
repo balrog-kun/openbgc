@@ -48,7 +48,7 @@ struct motor_bldc_s {
  */
 
 static void motor_bldc_update_theta(struct motor_bldc_s *motor) {
-    motor->prev_theta = (float) motor->enc->cls->read(motor->enc) / motor->enc->cls->scale; /* TODO: only read once in main loop? and convert the division to mult */
+    motor->prev_theta = motor->enc->reading;
     motor->prev_ts = micros();
 }
 

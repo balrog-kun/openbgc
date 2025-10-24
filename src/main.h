@@ -3,7 +3,7 @@
 #define MAIN_H
 
 struct main_loop_cb_s {
-    void *data;
+    void *data; /* Just a favor to the users, they could as well use container_of() if space was an issue */
     void (*cb)(void *data);
     struct main_loop_cb_s *next;
 };

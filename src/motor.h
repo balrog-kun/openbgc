@@ -31,6 +31,7 @@ typedef struct obgc_motor_class_s {
     void (*free)(obgc_motor *motor);
     int (*recalibrate)(obgc_motor *motor);
     int (*get_calibration)(obgc_motor *motor, obgc_motor_calib_data *out_data);
+    /* TODO: void (*set_torque_threshold)(motor, float threshold, void (*torque_callback)(motor, data), void *data) for manual override */
 } obgc_motor_class;
 
 struct obgc_foc_driver_class_s;
@@ -44,6 +45,8 @@ typedef struct obgc_foc_driver_class_s {
     int (*on)(obgc_foc_driver *drv);
     void (*off)(obgc_foc_driver *drv);
     void (*free)(obgc_foc_driver *drv);
+    /* TODO: void beep_on(drv) */
+    /* TODO: void beep_off(drv) */
 } obgc_foc_driver_class;
 
 #endif /* MOTOR_H */

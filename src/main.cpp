@@ -240,17 +240,17 @@ static void main_ahrs_from_encoders_debug(void) {
          if (!encoders[i])
               continue;
 
-         angles[i] = copysign((float) encoders[i]->cls->read(encoders[i]) / encoders[i]->cls->scale, axes.encoder_scale[i]);
+         angles[i] = copysign(encoders[i]->reading_rad, axes.encoder_scale[i]);
     }
 
-    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]] * D2R);
+    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]]);
     quaternion_mult_to(q_axis, axes.main_imu_mount_q, q_tmp);
     quaternion_normalize(q_tmp);
-    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]] * D2R);
+    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]]);
     quaternion_mult_to(q_axis, q_tmp, q_est);
     quaternion_normalize(q_est);
     memcpy(q_tmp, q_est, sizeof(q_tmp));
-    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]] * D2R);
+    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]]);
     quaternion_mult_to(q_axis, q_tmp, q_est);
     quaternion_normalize(q_est);
 
@@ -542,11 +542,48 @@ print_update:
 }
 
 void loop(void) {
+    int i;
+
     main_loop_sleep();
+
+    /* Run all the update functions here in the right order.  Each one calculates something that one of the other
+     * functions that follows it needs.  Eventually the final result of all the calculations is what gets output
+     * to the motor drivers.  The motor-bldc.c code uses main_loop_cb_add() to schedule its update functions to
+     * be called so we call them indirectly through the callback list.
+     *
+     * It might sound like a good idea to move all of these steps here to the callback list.  The problem with
+     * this is that main_loop_cb_add() would need to either be called in a very specific order, or take an extra
+     * parameter to tell it when each callback is expected to run, which would be a mess because the values would
+     * need to be very specific.  So don't do that, let only the motors and any extra, non-critical tasks use the
+     * callback list.
+     *
+     * The alternative would be to just have a (probably static) array of functions to call, which is basically
+     * the same thing as calling all of them directly in a long flat function like we do here.  Nevertheless it
+     * would be good to document what each function requires/depends on (this quaternion, that quaternion,
+     * a sensor reading) and what it provides.
+     *
+     * Another idea is, instead of a simple main loop -- which forces all of the update functions to run at the
+     * same frequency -- let's have a queue of callbacks that need to happen where things are added or re-added
+     * every time they're needed instead of once in setup().  It would also have to allow for something to be
+     * waited on, like I2C transfers.  This would allow some of the noisy sensors, like the VBAT ADC, to be
+     * sampled more often for resampling, and the critical feedback loops, like the one in motor-bldc.c, to run
+     * more frequently.  At the same time it would be synchronous and not have the issues of timer interrupts
+     * where HW access would need locking.
+     *
+     * Our single I2C bus is really the single bottle-neck resource that everyone needs on the SimpleBGC
+     * reference gimbal and is the factor deciding who can run and who has to wait if we add any type of
+     * asynchronicity or queuing.
+     */
+
+    /* These are the only users of the IMUs so they perform the reading internally */
     ahrs_update(main_ahrs);
 
     if (frame_ahrs)
         ahrs_update(frame_ahrs);
+
+    /* Read the encoders for everyone, there are multiple users */
+    for (i = 0; i < 3; i++)
+        encoder_update(encoders[i]);
 
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
@@ -554,11 +591,11 @@ void loop(void) {
     blink(); /* TODO: convert to cbs */
     vbat_update();
 
-    for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
-        entry->cb(entry->data);
-
     // imu_debug_update();
     // probe_pins_update();
+
+    for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
+        entry->cb(entry->data);
 
     if (serial->available()) {
         uint8_t cmd = serial->read();
@@ -654,8 +691,8 @@ handle_set_param:
                     if (!encoders[i])
                         continue;
 
-                    scale = (have_axes ? axes.encoder_scale[i] : 1.0f) / encoders[i]->cls->scale;
-                    angles[i] = (float) encoders[i]->cls->read(encoders[i]) * scale + (scale < 0 ? 360 : 0);
+                    scale = have_axes ? axes.encoder_scale[i] : 1.0f;
+                    angles[i] = encoders[i]->reading * scale + (scale < 0 ? 360 : 0);
 
                     serial->print("Encoder ");
                     serial->print(i);

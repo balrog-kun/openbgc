@@ -15,8 +15,7 @@ public:
     obgc_encoder *enc;
     SFOCEncoder() {}
     SFOCEncoder(obgc_encoder *_enc) : enc(_enc) {}
-    /* TODO: possibly just use what we've already read in main? also pre-multiply */
-    float getSensorAngle() { return (float) enc->cls->read(enc) * (D2R / enc->cls->scale); }
+    float getSensorAngle() { return enc->reading_rad; }
 };
 
 struct motor_pwm_s {
