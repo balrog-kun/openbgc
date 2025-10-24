@@ -438,13 +438,17 @@ void axes_q_to_angles(struct axes_data_s *data, float *to_q, float *out_angles) 
  */
 void axes_q_to_step(struct axes_data_s *data, const float *from_q, const float *to_q,
         float *angles, float damp_factor, float *out_steps) {
-    float q_rel[4];
-    float from_q_inv[4] = INIT_CONJ_Q(from_q);
     float omega[3];
     float j[3][3], jtj[3][3];
 
-    quaternion_mult_to(to_q, from_q_inv, q_rel);         /* 16 multiplications */
-    quaternion_to_rotvec(q_rel, omega);                  /* ~5 multiplications */
+    if (from_q) {
+        float from_q_inv[4] = INIT_CONJ_Q(from_q);
+        float q_rel[4];
+
+        quaternion_mult_to(to_q, from_q_inv, q_rel);     /* 16 multiplications */
+        quaternion_to_rotvec(q_rel, omega);              /* ~5 multiplications */
+    } else
+        quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
 
     /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
     memcpy(j, data->axes, sizeof(j));
