@@ -820,7 +820,7 @@ handle_set_param:
                 quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
                 quaternion_to_axis_angle(roll_q, forward_vec, &angle);
 
-                if (angle < M_PI / 12 || angle > M_PI / 3) {
+                if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
                     serial->println("No rotation within 30-120 deg detected");
                     break;
                 }
