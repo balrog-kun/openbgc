@@ -600,7 +600,7 @@ void loop(void) {
     if (serial->available()) {
         uint8_t cmd = serial->read();
         int i, param;
-        struct calibrate_data_s cs;
+        struct axes_calibrate_data_s cs;
         static uint8_t dlpf = 0;
 
         switch (cmd) {

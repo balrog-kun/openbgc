@@ -12,7 +12,7 @@
 
 #include "axes.h"
 
-static void get_enc(struct calibrate_data_s *data, float *enc) {
+static void get_enc(struct axes_calibrate_data_s *data, float *enc) {
     int i;
 
     for (i = 0; i < 3; i++)
@@ -20,7 +20,7 @@ static void get_enc(struct calibrate_data_s *data, float *enc) {
             enc[i] = data->encoders[i]->reading_rad;
 }
 
-static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
+static void get_q(struct axes_calibrate_data_s *data, float *q, int naxis) {
     int i;
 
     /*
@@ -100,7 +100,7 @@ static void get_q(struct calibrate_data_s *data, float *q, int naxis) {
  *
  * In theory this can be easily changed for more than 3 joints.
  */
-int axes_calibrate(struct calibrate_data_s *data) {
+int axes_calibrate(struct axes_calibrate_data_s *data) {
     float prev_enc[3];
     float conj_prev_q[4];
     int naxis = 0, nsamples, enc_nsamples[3];

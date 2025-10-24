@@ -22,7 +22,7 @@ struct axes_data_s {
     float limit_min[3];
 };
 
-struct calibrate_data_s {
+struct axes_calibrate_data_s {
     struct obgc_ahrs_s *main_ahrs;
     struct obgc_ahrs_s *frame_ahrs;
     struct obgc_encoder_s **encoders;
@@ -31,7 +31,7 @@ struct calibrate_data_s {
     struct axes_data_s *out;
 };
 
-int axes_calibrate(struct calibrate_data_s *data);
+int axes_calibrate(struct axes_calibrate_data_s *data);
 void axes_q_to_angles(struct axes_data_s *data, float *q, float *out_angles);
 void axes_q_to_step(struct axes_data_s *data, const float *from_q, const float *to_q,
         float *angles, float damp_factor, float *out_steps);
