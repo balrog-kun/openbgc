@@ -259,6 +259,7 @@ static void main_ahrs_from_encoders_debug(void) {
     quaternion_to_rotvec(q_tmp, angles);
     memcpy(q_est_prev, q_est, sizeof(q_est));
 
+    /* (assuming frame_imu is stationary) */
     sprintf(buf, "est_gyr %.5f %.5f %.5f", angles[0] * R2D, angles[1] * R2D, angles[2] * R2D);
     main_ahrs_debug_print(buf);
 }
@@ -331,7 +332,7 @@ void setup(void) {
      * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions
      * from encoders?? */
 
-    /* TODO: frame_ahrs */
+    /* TODO: frame_ahrs -- not crucial though, we fill in for it with encoder data and forget about yaw drift */
 
     drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
@@ -706,7 +707,7 @@ handle_set_param:
 
                     if (frame_ahrs) {
                         float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
-                        quaternion_mult_to(main_ahrs->q, conj_frame_q, q);
+                        quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
                     } else
                         memcpy(q, main_ahrs->q, 4 * sizeof(float));
 

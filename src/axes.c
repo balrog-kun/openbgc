@@ -31,7 +31,7 @@ static void get_q(struct axes_calibrate_data_s *data, float *q, int naxis) {
         float conj_frame_q[4] = INIT_CONJ_Q(data->frame_ahrs->q);
 
         /* Compose the main IMU rotiation with the reverse of the frame IMU rotation */
-        quaternion_mult_to(data->main_ahrs->q, conj_frame_q, q);
+        quaternion_mult_to(conj_frame_q, data->main_ahrs->q, q);
     } else {
         /* Nothing to rotate */
         memcpy(q, data->main_ahrs->q, 4 * sizeof(float));
