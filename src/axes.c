@@ -482,3 +482,32 @@ void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const f
      */
     vector_solve(jtj, omega, out_steps);                 /* ~51 multiplications */
 }
+
+/* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
+void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
+        const float *main_q, float *out_rel_q, float *out_frame_q) {
+    float q_tmp1[4], q_tmp2[4], q_axis[4], angles[3];
+
+    /* Get encoder angles */
+    for (int i = 0; i < 3; i++) {
+        int num = data->axis_to_encoder[i];
+
+        if (encoders[num])
+            angles[i] = copysign(encoders[num]->reading_rad, data->encoder_scale[num]);
+        else
+            angles[i] = 0.0f;
+    }
+
+    quaternion_from_axis_angle(q_axis, data->axes[2], angles[2]);
+    quaternion_mult_to(q_axis, data->main_imu_mount_q, q_tmp1);
+    quaternion_from_axis_angle(q_axis, data->axes[1], angles[1]);
+    quaternion_mult_to(q_axis, q_tmp1, q_tmp2);
+    quaternion_from_axis_angle(q_axis, data->axes[0], angles[0]);
+    quaternion_mult_to(q_axis, q_tmp2, out_rel_q);
+    quaternion_normalize(out_rel_q);
+
+    memcpy(q_tmp1, out_rel_q, 4 * sizeof(float));
+    q_tmp1[0] = -q_tmp1[0];
+
+    quaternion_mult_to(main_q, q_tmp1, out_frame_q);
+}

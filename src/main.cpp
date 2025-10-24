@@ -75,6 +75,9 @@ static bool have_home;
 static float forward_vec[3], forward_az;
 static bool have_forward;
 
+static float rel_q[4];   /* aux: true or estimated (from encoders) expression of main_ahrs->q in frame_ahrs->q frame of ref */
+static float frame_q[4]; /* aux: frame_ahrs->q or its estimation from main_ahrs->q x rel_q^-1 */
+
 static int vbat;
 static int vbat_ok;
 static bool motors_on;
@@ -228,38 +231,26 @@ static void main_ahrs_debug_print(const char *str) {
 }
 
 static void main_ahrs_from_encoders_debug(void) {
-    float q_tmp[4], q_est[4], q_axis[4], angles[3];
+    float q[4], q_gyr[4], angles[3];
     char buf[128];
-    static float q_est_prev[4] = { 1, 0, 0, 0 };
+    static float q_prev[4] = { 1, 0, 0, 0 };
 
     if (quiet || !have_axes)
         return;
 
-    /* Read encoder angles */
-    for (int i = 0; i < 3; i++) {
-         if (!encoders[i])
-              continue;
+    /* We want the global main_ahrs->q estimated from frame_ahrs + rel_q (encoders).
+     * If no frame_ahrs assume it was stationary.
+     */
+    if (frame_ahrs)
+        quaternion_mult_to(frame_ahrs->q, rel_q, q);
+    else
+        memcpy(q, rel_q, 4 * sizeof(float));
 
-         angles[i] = copysign(encoders[i]->reading_rad, axes.encoder_scale[i]);
-    }
+    q_prev[0] = -q_prev[0];
+    quaternion_mult_to(q_prev, q, q_gyr);
+    quaternion_to_rotvec(q_gyr, angles);
+    memcpy(q_prev, q, 4 * sizeof(float));
 
-    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]]);
-    quaternion_mult_to(q_axis, axes.main_imu_mount_q, q_tmp);
-    quaternion_normalize(q_tmp);
-    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]]);
-    quaternion_mult_to(q_axis, q_tmp, q_est);
-    quaternion_normalize(q_est);
-    memcpy(q_tmp, q_est, sizeof(q_tmp));
-    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]]);
-    quaternion_mult_to(q_axis, q_tmp, q_est);
-    quaternion_normalize(q_est);
-
-    q_est_prev[0] = -q_est_prev[0];
-    quaternion_mult_to(q_est_prev, q_est, q_tmp);
-    quaternion_to_rotvec(q_tmp, angles);
-    memcpy(q_est_prev, q_est, sizeof(q_est));
-
-    /* (assuming frame_imu is stationary) */
     sprintf(buf, "est_gyr %.5f %.5f %.5f", angles[0] * R2D, angles[1] * R2D, angles[2] * R2D);
     main_ahrs_debug_print(buf);
 }
@@ -586,6 +577,9 @@ void loop(void) {
     for (i = 0; i < 3; i++)
         encoder_update(encoders[i]);
 
+    if (have_axes)
+        axes_precalc_rel_q(&axes, encoders, main_ahrs->q, rel_q, frame_q);
+
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
 
@@ -702,9 +696,10 @@ handle_set_param:
                 }
 
                 if (have_axes) {
-                    float q[4], q_est[4], q_axis[4], q_tmp[4];
+                    float q[4], conj_rel_q[4] = INIT_CONJ_Q(rel_q);
                     float angles_est[3], mapped[3];
 
+                    /* Only frame_ahrs->q, can't use frame_q instead because that is calculated from encoder info */
                     if (frame_ahrs) {
                         float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
                         quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
@@ -724,22 +719,9 @@ handle_set_param:
                     serial->println(mapped[2] * R2D);
 
                     /* Now try to estimate main_ahrs->q from encoder angles */
-                    quaternion_from_axis_angle(q_axis, axes.axes[2], angles[axes.axis_to_encoder[2]] * D2R);
-                    quaternion_mult_to(q_axis, axes.main_imu_mount_q, q_tmp);
-                    quaternion_normalize(q_tmp);
-                    quaternion_from_axis_angle(q_axis, axes.axes[1], angles[axes.axis_to_encoder[1]] * D2R);
-                    quaternion_mult_to(q_axis, q_tmp, q_est);
-                    quaternion_normalize(q_est);
-                    memcpy(q_tmp, q_est, sizeof(q_tmp));
-                    quaternion_from_axis_angle(q_axis, axes.axes[0], angles[axes.axis_to_encoder[0]] * D2R);
-                    quaternion_mult_to(q_axis, q_tmp, q_est);
-                    quaternion_normalize(q_est);
-
-                    q_est[0] = -q_est[0];
-                    quaternion_mult_to(main_ahrs->q, q_est, q_tmp);
-                    /* TODO: frame_ahrs */
-                    serial->print("Q x Q_est error angle = ");
-                    serial->println(2 * acosf(q_tmp[0]) * R2D);
+                    quaternion_mult_to(main_ahrs->q, conj_rel_q, q);
+                    serial->print("Q x Q_est^-1 error angle = ");
+                    serial->println(2 * acosf(q[0]) * R2D);
                 }
 
                 break;
@@ -787,6 +769,7 @@ handle_set_param:
         case 'k':
             serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)"); /* And 0-yaw if not following */
             memcpy(home_q, main_ahrs->q, sizeof(home_q));
+            memcpy(home_frame_q, frame_q, sizeof(home_frame_q));
             have_home = 1;
             break;
         case 'K':
