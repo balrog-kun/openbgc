@@ -16,7 +16,7 @@ void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_frame_home_q[4] = INIT_CONJ_Q(control->home_frame_q);
     float frame_rel_q[4], frame_rel_align_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4], target_q[4];
-    float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4], local_delta_q[4];
+    float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4];
     float v_vec[3], max_v, new_v, perp_vec[3], step_delta_vec[3];
     float joint_angles_current[3], joint_angles_to_target[3];
     int i;
@@ -146,12 +146,9 @@ void control_step(struct control_data_s *control) {
     }
 
     /* Convert the global delta_q to frame_q-local then to per-joint delta angles */
-    /* TODO: two full quaternion multiplications here, we could rotate the rotvec directly which is better optimized */
-    quaternion_mult_to(conj_frame_q, delta_q, tmp_q);
-    quaternion_mult_to(tmp_q, control->frame_q, local_delta_q);
-
-    axes_q_to_step(control->axes, NULL, local_delta_q,
-        joint_angles_current, 0.0f, joint_angles_to_target);
+    /* TODO: we could rotate the step_delta_vec directly and not even go through a quaternion */
+    vector_rotate_by_quaternion(delta_q + 1, conj_frame_q);
+    axes_q_to_step(control->axes, NULL, delta_q, joint_angles_current, 0.0f, joint_angles_to_target);
 
     /* Divide the deltas by dt to get velocities and request these directly from motors.
      *
