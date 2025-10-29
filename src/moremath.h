@@ -21,14 +21,6 @@ static inline float vector_norm(const float *v) {
     return sqrtf(vector_normsq(v));
 }
 
-static inline void vector_normalize(float *v) {
-    float norm = vector_norm(v);
-
-    v[0] /= norm;
-    v[1] /= norm;
-    v[2] /= norm;
-}
-
 static inline void vector_add(float *v, const float *dv) {
     v[0] += dv[0];
     v[1] += dv[1];
@@ -39,6 +31,10 @@ static inline void vector_mult_scalar(float *v, float factor) {
     v[0] *= factor;
     v[1] *= factor;
     v[2] *= factor;
+}
+
+static inline void vector_normalize(float *v) {
+    vector_mult_scalar(v, 1.0f / vector_norm(v));
 }
 
 #define INIT_VEC(v)    {  (v)[0], (v)[1], (v)[2] }
@@ -108,12 +104,7 @@ static inline float quaternion_norm(const float *q) {
 }
 
 static inline void quaternion_normalize(float *q) {
-    float norm = quaternion_norm(q);
-
-    q[0] /= norm;
-    q[1] /= norm;
-    q[2] /= norm;
-    q[3] /= norm;
+    quaternion_mult_scalar(q, 1.0f / quaternion_norm(q));
 }
 
 /*
@@ -163,28 +154,28 @@ static inline void quaternion_from_matrix(const float r[][3], float *q) {
 
     /* Shepherd's method */
     if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
-        s = sqrtf(1.0f + r[0][0] - r[1][1] - r[2][2]) * 0.5f;
+        s = sqrtf(1.0f + r[0][0] - r[1][1] - r[2][2]) / 2;
         d = 0.25f / s;
         q[0] = (r[2][1] - r[1][2]) * d;
         q[1] = s;
         q[2] = (r[1][0] + r[0][1]) * d;
         q[3] = (r[0][2] + r[2][0]) * d;
     } else if (r[1][1] > r[0][0] && r[1][1] > r[2][2]) {
-        s = sqrtf(1.0f - r[0][0] + r[1][1] - r[2][2]) * 0.5f;
+        s = sqrtf(1.0f - r[0][0] + r[1][1] - r[2][2]) / 2;
         d = 0.25f / s;
         q[0] = (r[0][2] - r[2][0]) * d;
         q[1] = (r[1][0] + r[0][1]) * d;
         q[2] = s;
         q[3] = (r[2][1] + r[1][2]) * d;
     } else if (r[2][2] > r[0][0] && r[2][2] > r[1][1]) {
-        s = sqrtf(1.0f - r[0][0] - r[1][1] + r[2][2]) * 0.5f;
+        s = sqrtf(1.0f - r[0][0] - r[1][1] + r[2][2]) / 2;
         d = 0.25f / s;
         q[0] = (r[1][0] - r[0][1]) * d;
         q[1] = (r[0][2] + r[2][0]) * d;
         q[2] = (r[2][1] + r[1][2]) * d;
         q[3] = s;
     } else {
-        s = sqrtf(1.0f + r[0][0] + r[1][1] + r[2][2]) * 0.5f;
+        s = sqrtf(1.0f + r[0][0] + r[1][1] + r[2][2]) / 2;
         d = 0.25f / s;
         q[0] = s;
         q[1] = (r[2][1] - r[1][2]) * d;
@@ -206,10 +197,10 @@ static inline void quaternion_to_matrix(const float *q, float r[][3]) {
 }
 
 static inline void quaternion_to_rotvec(const float *q, float *v) {
-    float sin_half_angle = vector_norm(q + 1);
+    float sin_half_angle = vector_norm(q + 1); /* q must be normalized */
     float factor = 0.0f;
 
-    if (fabsf(sin_half_angle) > 0.0001f) {
+    if (sin_half_angle > 0.0001f) {
         /* Could also use acosf(q[0]) then sinf(), may be less stable and not necessarily faster */
         /* Note the sign of half_angle is the same in both cases: always positive */
         float half_angle = atan2f(sin_half_angle, q[0]);
@@ -230,7 +221,7 @@ static inline void quaternion_to_rotvec(const float *q, float *v) {
     v[2] = factor * q[3];
 }
 
-/* Returns only positive angles from 0 to pi/2, again removes the double-cover but not reversible.  q must be normalized.  */
+/* Returns only positive angles from 0 to pi, again removes the double-cover but not reversible.  q must be normalized.  */
 static inline void quaternion_to_axis_angle(const float *q, float *axis, float *angle) {
     float sin_half_angle = vector_norm(q + 1);
     float factor = 1.0f / sin_half_angle; /* Should not cause a crash since this is floating-point (C standard Annex F recommendation) */
@@ -251,9 +242,9 @@ static inline void quaternion_to_axis_angle(const float *q, float *axis, float *
 
 /* Axis must be normalized, no restrictions on angle */
 static inline void quaternion_from_axis_angle(float *q, const float *axis, float angle) {
-    float sina = sinf(angle * 0.5f);
+    float sina = sinf(angle / 2);
 
-    q[0] = cosf(angle * 0.5f);
+    q[0] = cosf(angle / 2);
     q[1] = sina * axis[0];
     q[2] = sina * axis[1];
     q[3] = sina * axis[2];
