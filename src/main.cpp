@@ -12,6 +12,7 @@ extern "C" {
 #include "ahrs.h"
 #include "axes.h"
 #include "moremath.h"
+#include "control.h"
 
 #include "main.h"
 }
@@ -69,10 +70,10 @@ static int set_param_power = -1;
 
 static struct axes_data_s axes;
 static bool have_axes;
-static float home_q[4];
-static float home_frame_q[4];
+
+static struct control_data_s control;
+static bool control_enable;
 static bool have_home;
-static float forward_vec[3], forward_az;
 static bool have_forward;
 
 static float rel_q[4];   /* aux: true or estimated (from encoders) expression of main_ahrs->q in frame_ahrs->q frame of ref */
@@ -276,6 +277,61 @@ void main_loop_sleep(void) {
     next_update += TARGET_INTERVAL;
 }
 
+static void setup_control(void) {
+    control.main_ahrs = main_ahrs;
+    control.frame_ahrs = frame_ahrs;
+    control.encoders = encoders;
+    control.motors = motors;
+    control.axes = &axes;
+
+    control.dt = 1.0f / TARGET_LOOP_RATE;
+    control.rel_q = rel_q;
+    control.frame_q = frame_q;
+
+    /* Setting defaults */
+    control.keep_yaw = true;
+    control.follow[0] = true;  /* Yaw only */
+    control.follow[1] = false;
+    control.follow[2] = false;
+    control.max_accel = 30 * D2R; /* rad/s/s */
+    control.max_vel = 60 * D2R;   /* rad/s */
+
+    /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
+     * rotational speed we need to get from current camera orientation to the desired one (target),
+     * we depend on the whole feedback look through the motor PID up to the IMU and AHRS to
+     * propagate and reflect the speed changes we command with little delay.  If there's any delay,
+     * we'll be applying the acceleration limit to a velocity we commanded some iterations ago and
+     * effectively the rate of acceleration will be much lower than what is requested.  And there's
+     * an inherent delay in the sensors.  And a delay in that the current omega the AHRS sees is
+     * the difference between the current and the last iteration i.e. the average speed over this
+     * period (if we use the IMU FIFO), and this short period is the time the motor PID has only
+     * started to apply the new torque so it cannot immediately show the speed we commanded.
+     *
+     * So depending on how well the loop is tuned, set this higher (up to 1.0) to fully depend on
+     * the current physical rotiation rate from the gyro or lower and especially low when in
+     * development or tuning.  control.c will replace the remaining portion of the velocity from
+     * the gyro with the velocity it itself has most recently commanded, at the cost of responding
+     * more slowly to speed changes due to outside physical forces.  This may even be desired but
+     * consider things like mechanical limits on some joints.
+     */
+    control.ahrs_velocity_kp = 0.05;
+}
+
+static void stop_control(void) {
+    int i;
+
+    if (!control_enable)
+        return;
+
+    control_enable = false;
+
+    for (i = 0; i < 3; i++)
+        if (motors[i] && use_motor[i])
+            motors[i]->cls->set_velocity(motors[i], 0);
+
+    serial->println("Control off");
+}
+
 extern HardwareSerial *error_serial;
 
 void setup(void) {
@@ -378,12 +434,17 @@ void setup(void) {
     }
 
     serial->println("Motors early init done");
+
+    setup_control();
 }
 void setup_end(void) {}
 
 static void motors_on_off(bool on) {
     if (motors_on == on)
         return;
+
+    if (!on)
+        stop_control();
 
     for (int i = 0; i < 3; i++) {
         if (!motors[i] || !use_motor[i])
@@ -580,14 +641,17 @@ void loop(void) {
     if (have_axes)
         axes_precalc_rel_q(&axes, encoders, main_ahrs->q, rel_q, frame_q);
 
-    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
-        main_ahrs_from_encoders_debug();
+    if (control_enable)
+        control_step(&control);
 
     blink(); /* TODO: convert to cbs */
     vbat_update();
 
     // imu_debug_update();
     // probe_pins_update();
+
+    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
+        main_ahrs_from_encoders_debug();
 
     for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
         entry->cb(entry->data);
@@ -768,8 +832,8 @@ handle_set_param:
             break;
         case 'k':
             serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)"); /* And 0-yaw if not following */
-            memcpy(home_q, main_ahrs->q, sizeof(home_q));
-            memcpy(home_frame_q, frame_q, sizeof(home_frame_q));
+            memcpy(control.home_q, main_ahrs->q, sizeof(control.home_q));
+            memcpy(control.home_frame_q, frame_q, sizeof(control.home_frame_q));
             have_home = 1;
             break;
         case 'K':
@@ -797,11 +861,11 @@ handle_set_param:
 
             {
                 float angle;
-                float conj_q0[4] = INIT_CONJ_Q(home_q);
+                float conj_q0[4] = INIT_CONJ_Q(control.home_q);
                 float roll_q[4];
 
                 quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
-                quaternion_to_axis_angle(roll_q, forward_vec, &angle);
+                quaternion_to_axis_angle(roll_q, control.forward_vec, &angle);
 
                 if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
                     serial->println("No rotation within 30-120 deg detected");
@@ -809,16 +873,16 @@ handle_set_param:
                 }
             }
 
-            if (fabsf(forward_vec[0]) + fabsf(forward_vec[1]) < 0.001f)
+            if (fabsf(control.forward_vec[0]) + fabsf(control.forward_vec[1]) < 0.001f)
                 break;
 
-            if (fabsf(forward_vec[2]) > 0.1f)
+            if (fabsf(control.forward_vec[2]) > 0.1f)
                 serial->println("WARN: rotation axis not very level");
 
             serial->println("Saving the rotation axis as the forward direction");
-            forward_vec[2] = 0.0f;
-            vector_normalize(forward_vec);
-            forward_az = atan2f(forward_vec[1], forward_vec[0]);
+            control.forward_vec[2] = 0.0f;
+            vector_normalize(control.forward_vec);
+            control.forward_az = atan2f(control.forward_vec[1], control.forward_vec[0]);
             have_forward = 1;
             break;
         case 't':
@@ -841,7 +905,6 @@ handle_set_param:
             if (i < 3)
                 break;
 
-            /* TODO: move to control */
             for (i = 0; i < 3; i++)
                 if (motors[i] && use_motor[i])
                     motors[i]->cls->set_velocity(motors[i], 0);
@@ -863,7 +926,7 @@ handle_set_param:
             set_param = BLDC_PARAM_KD;
             break;
         case 'm':
-            if (motors_on && vbat_ok) {
+            if (motors_on || !vbat_ok) {
                 serial->println("Motors must be off and VBAT good");
                 break;
             }
@@ -887,6 +950,20 @@ handle_set_param:
                 }
             }
 
+            break;
+        case ' ':
+            if (control_enable) {
+                stop_control();
+                break;
+            }
+
+            if (!have_axes || !have_home || !have_forward || !motors_on || !vbat_ok) {
+                serial->println("Motors must be on and calibration complete");
+                break;
+            }
+
+            control_enable = true;
+            serial->println("Control on");
             break;
         case 27:
             if (!serial->available())
