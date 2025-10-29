@@ -33,8 +33,18 @@ static inline void vector_mult_scalar(float *v, float factor) {
     v[2] *= factor;
 }
 
+static inline void vector_weighted_sum(const float *v0, float w0, const float *v1, float w1, float *v_out) {
+    v_out[0] = v0[0] * w0 + v1[0] * w1;
+    v_out[1] = v0[1] * w0 + v1[1] * w1;
+    v_out[2] = v0[2] * w0 + v1[2] * w1;
+}
+
 static inline void vector_normalize(float *v) {
     vector_mult_scalar(v, 1.0f / vector_norm(v));
+}
+
+static inline float vector_dot(float *v0, float *v1) {
+    return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
 }
 
 #define INIT_VEC(v)    {  (v)[0], (v)[1], (v)[2] }
@@ -248,6 +258,24 @@ static inline void quaternion_from_axis_angle(float *q, const float *axis, float
     q[1] = sina * axis[0];
     q[2] = sina * axis[1];
     q[3] = sina * axis[2];
+}
+
+static inline void quaternion_from_rotvec(float *q, const float *v) {
+    float angle = vector_norm(v);
+    float factor = angle > 0.0f ? sinf(angle / 2) / angle : 0;
+
+    q[0] = cosf(angle / 2);
+    q[1] = factor * v[0];
+    q[2] = factor * v[1];
+    q[3] = factor * v[2];
+}
+
+/* Shortcut for quaternion_mult(quaternion_from_axis_angle([0, 0, 1], a), q) */
+static inline void quaternion_rotate_z_to(const float *q, float cosa, float sina, float *q_out) {
+    q_out[0] = cosa * q[0] - sina * q[3];
+    q_out[1] = cosa * q[1] - sina * q[2];
+    q_out[2] = cosa * q[2] + sina * q[1];
+    q_out[3] = cosa * q[3] + sina * q[0];
 }
 
 static inline bool vector_solve(const float A[][3], const float *b, float *x) {
