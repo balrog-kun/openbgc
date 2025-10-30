@@ -124,14 +124,13 @@ void control_step(struct control_data_s *control) {
     else
         new_v = min(control->max_vel, current_v + control->max_accel * control->dt);
 
-    /* Recalculate delta_q based on what we want to see one step from now */
+    /* Recalculate delta_q based on what we want to see one step from now (actually skip going back to quaternion) */
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
             max((vector_norm(perp_vec) - control->max_accel * control->dt), 0),
             control->velocity_vec);
     memcpy(step_delta_vec, control->velocity_vec, 3 * sizeof(float));
     vector_mult_scalar(step_delta_vec, control->dt);
-    quaternion_from_rotvec(delta_q, step_delta_vec);
 
     /* TODO: add gradual transition to the vertical check.  Switch the ref vector to pitch axis when roll axis is too vertical */
     /* TODO: do we want to further complicate this by adding 1-motor and/or 2-motor modes?
@@ -145,15 +144,14 @@ void control_step(struct control_data_s *control) {
         joint_angles_current[i] = control->encoders[num]->reading_rad * control->axes->encoder_scale[num];
     }
 
-    /* Convert the global delta_q to frame_q-local then to per-joint delta angles */
-    /* TODO: we could rotate the step_delta_vec directly and not even go through a quaternion */
-    vector_rotate_by_quaternion(delta_q + 1, conj_frame_q);
-    axes_q_to_step(control->axes, NULL, delta_q, joint_angles_current, 0.0f, joint_angles_to_target);
+    /* Convert the global step_delta_vec to frame_q-local then to per-joint delta angles */
+    vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
+    axes_rotvec_to_step(control->axes, step_delta_vec, joint_angles_current, 0.0f, joint_angles_to_target);
 
     /* Divide the deltas by dt to get velocities and request these directly from motors.
      *
      * Note we just went from velocities (change /s) to deltas (change per step) but that's ok,
-     * our limits are in unit time terms while axes_q_to_step() has to operate on actual angles
+     * our limits are in unit time terms while axes_rotvec_to_step() has to operate on actual angles
      * because for if the target orientation is farther away it might in theory take a completely
      * different trajectory (although it doesn't now).
      */

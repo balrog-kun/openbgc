@@ -439,7 +439,6 @@ void axes_q_to_angles(const struct axes_data_s *data, float *to_q, float *out_an
 void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
         float *angles, float damp_factor, float *out_steps) {
     float omega[3];
-    float j[3][3], jtj[3][3];
 
     if (from_q) {
         float from_q_inv[4] = INIT_CONJ_Q(from_q);
@@ -449,6 +448,13 @@ void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const f
         quaternion_to_rotvec(q_rel, omega);              /* ~5 multiplications */
     } else
         quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
+
+    axes_rotvec_to_step(data, omega, angles, damp_factor, out_steps);
+}
+
+void axes_rotvec_to_step(const struct axes_data_s *data, float *omega, /* Note: modifies omega */
+        float *angles, float damp_factor, float *out_steps) {
+    float j[3][3], jtj[3][3];
 
     /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
     memcpy(j, data->axes, sizeof(j));
@@ -493,7 +499,7 @@ void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **
         int num = data->axis_to_encoder[i];
 
         if (encoders[num])
-            angles[i] = copysign(encoders[num]->reading_rad, data->encoder_scale[num]);
+            angles[i] = encoders[num]->reading_rad * data->encoder_scale[num];
         else
             angles[i] = 0.0f;
     }
