@@ -816,6 +816,15 @@ handle_set_param:
             have_axes = !axes_calibrate(&cs);
             quiet = 0;
 
+            /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
+             * the encoders (i.e. trust whatever scale is documented in the spec and applied in encoder_update())
+             * and so far this seems to work well.  The scales from axes_calibrate() inherently include some
+             * amount of noise so for now we'll bet on the 1.0 scale giving lower error and override the scales.
+             */
+            axes.encoder_scale[0] = copysignf(1.0f, axes.encoder_scale[0]);
+            axes.encoder_scale[1] = copysignf(1.0f, axes.encoder_scale[1]);
+            axes.encoder_scale[2] = copysignf(1.0f, axes.encoder_scale[2]);
+
             serial->println(axes.axes[0][0]);////
             serial->println(axes.axes[0][1]);
             serial->println(axes.axes[0][2]);
