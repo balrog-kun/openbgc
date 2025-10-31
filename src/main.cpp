@@ -461,6 +461,102 @@ static void stop_control(void) {
     serial->println("Control off");
 }
 
+static void motors_on_off(bool on) {
+    if (motors_on == on)
+        return;
+
+    if (!on)
+        stop_control();
+
+    for (int i = 0; i < 3; i++) {
+        if (!motors[i] || !use_motor[i])
+            continue;
+
+        if (on) {
+            if (!motors[i]->ready || motors[i]->cls->on(motors[i]) != 0) {
+                for (int j = 0; j < i; j++)
+                    if (motors[j])
+                        motors[j]->cls->off(motors[j]);
+                serial->print("Motor ");
+                serial->print(i);
+                serial->println(" power on failed!");
+                return;
+            }
+        } else
+            motors[i]->cls->off(motors[i]);
+    }
+
+    motors_on = on;
+    /* TODO: beep */
+}
+
+static void shutdown_to_bl(void) __attribute__((noreturn));
+static void shutdown_to_bl(void) {
+    int i;
+
+    motors_on_off(false);
+
+    /* Things we set up explicitly (TODO: steal_ptr() syntax) */
+    /* TODO: refcounting would be nice too */
+    ahrs_free(main_ahrs);
+    main_imu->cls->free(main_imu);
+    for (i = 0; i < 3; i++)
+        if (motors[i])
+            motors[i]->cls->free(motors[i]);
+    for (i = 0; i < 3; i++)
+        if (encoders[i])
+            encoders[i]->cls->free(encoders[i]);
+    for (i = 0; i < 3; i++)
+        if (motor_drivers[i])
+            motor_drivers[i]->cls->free(motor_drivers[i]);
+    for (i = 0; i < 3; i++)
+        if (drv_modules[i])
+            sbgc32_i2c_drv_free(drv_modules[i]);
+    i2c->end();
+    serial->end();
+    digitalWrite(SBGC_LED_GREEN, 0);
+    pinMode(SBGC_LED_GREEN, INPUT);
+
+    /* Things arduino, PlatformIO, framework, CMSIS, etc. may have set up */
+    __disable_irq();
+    USB->CNTR = 0x0003; /* Reset USB in case it is used (not on PilotFly H2) */
+    HAL_RCC_DeInit();
+    SysTick->CTRL = 0;  /* Stop clock after DeInit which may have used it */
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
+
+    /* Reset interrupts */
+    for (int i = 0; i < sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0]); i++) {
+        NVIC->ICER[i] = 0xffffffff;
+        NVIC->ICPR[i] = 0xffffffff;
+    }
+
+    /*
+     * STM32F303xB bootloader System Memory start address according to Section 23 in ST Application Note AN2606, Table 28.
+     * Same for all F3 series but not most other STM32s.  For other models, look at the same doc, all models summarized in
+     * Section 92, Table 209.
+     */
+    __set_MSP(*(uint32_t *) 0x1fffd800);
+    __set_PSP(*(uint32_t *) 0x1fffd800);
+    ((void (*)(void)) *(uint32_t *) 0x1fffd804)();
+    while (1); /* Silence warning */
+}
+
+static void powered_init(void) {
+    for (int i = 0; i < 3; i++) {
+        if (!motors[i] || !use_motor[i] || motors[i]->ready)
+            continue;
+
+        if (motors[i]->cls->powered_init(motors[i]) != 0) {
+            serial->print("Motor ");
+            serial->print(i);
+            serial->println(" powered init failed!");
+        }
+    }
+
+    serial->println("Motors powered init done");
+}
+
 static void process_rc_input(void *) {
     /* Rate-limit printing */
     static uint16_t cnt;
@@ -497,6 +593,456 @@ static void process_rc_input(void *) {
     }
 }
 static struct main_loop_cb_s rc_input_cb = { .cb = process_rc_input };
+
+static void blink(void *) {
+    static uint8_t led_val = 0;
+
+    led_val ^= 1;
+    digitalWrite(SBGC_LED_GREEN, led_val);
+}
+static struct main_loop_cb_s blink_cb = { .cb = blink };
+
+static void vbat_update(void *) {
+    uint16_t raw = analogRead(SBGC_VBAT); /* TODO: noisy, use multiple samples */
+    static int vbat_prev = 0;
+    static int lvco = 0;
+    static unsigned long vbat_ts = 0;
+    static unsigned long msg_ts = 0;
+    unsigned long now = millis();
+
+    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND) * SBGC_VBAT_SCALE;
+    vbat_ok = lvco > 0 && vbat > lvco;
+
+    /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
+    /* TODO: scale calibration? */
+    if (!lvco) {
+        if (vbat > 3000) {
+            if (!vbat_ts)
+                vbat_ts = now;
+            else if (now - vbat_ts >= 10000) {
+                /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
+                int cells = vbat / (vbat < 10000 ? 4500 : 4400) + 1;
+                lvco = cells * 3300;
+                vbat_ts = 0;
+                serial->print("VBAT low-voltage cutoff set at ");
+                serial->print((lvco / 100) * 0.1f);
+                serial->println("V (guessed)");
+                powered_init();
+                goto print_update;
+            }
+        } else
+            vbat_ts = 0;
+    } else if (vbat <= lvco) {
+        lvco = -1; /* Only do this once */
+        serial->println("VBAT low, disabling motors!");
+        motors_on_off(false);
+        /* TODO: play a sound? is there any data to save? */
+        goto print_update;
+    }
+
+    if (now - msg_ts < 2000)
+        return;
+
+    if (abs(vbat - vbat_prev) < 400)
+        return;
+
+print_update:
+    vbat_prev = vbat;
+    msg_ts = now;
+    serial->print("VBAT now at ");
+    serial->print((vbat / 100) * 0.1f);
+    serial->println("V");
+}
+static struct main_loop_cb_s vbat_cb = { .cb = vbat_update };
+
+static void misc_debug_update(void *) {
+    // imu_debug_update();
+    // probe_out_pins_update();
+    // probe_in_pins_update();
+
+    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
+        main_ahrs_from_encoders_debug();
+}
+static struct main_loop_cb_s misc_debug_cb = { .cb = misc_debug_update };
+
+static void serial_ui_run(void *) {
+    uint8_t cmd;
+    int i, param;
+    struct axes_calibrate_data_s cs;
+    static uint8_t dlpf = 0;
+
+    if (!serial->available())
+        return;
+
+    cmd = serial->read();
+    switch (cmd) {
+    case 'q':
+        serial->println("Shutting down and jumping to bootloader");
+        shutdown_to_bl();
+        break;
+    case 'Q':
+        motors_on_off(false);
+        serial->println("Crashing in loop()"); /* Crash handler test */
+        delay(100);
+        *(uint8_t *) -1 = 5;
+        break;
+    case '0' ... '5':
+        if (set_use_motor) {
+            set_use_motor = false;
+
+            if (cmd >= '3')
+                break;
+
+            use_motor[cmd - '0'] ^= 1;
+            /* TODO: could ensure motors[cmd - '0'] is non-NULL so we could skip checks everywhere else */
+            serial->print("use_motor = { ");
+            serial->print(use_motor[0]);
+            serial->print(use_motor[1]);
+            serial->print(use_motor[2]);
+            serial->println(" }");
+            break;
+        }
+
+        if (set_param < __BLDC_PARAM_MAX) {
+            float val;
+handle_set_param:
+
+            if (set_param_power == -1) {
+                set_param_power = cmd - '0';
+                break;
+            }
+
+            /*
+             * Type 'P', 'I' or 'D' followed by a power/exponent value (0 to 9) and a multiplier (0 to 9).
+             * For now the result is multiplier * (10 ^ (-power / 2)).  E.g. P05 sets the Kp to 5.0.
+             * P25 sets it to 0.5, P45 to 0.05 and so on.  There's some redundancy here but we don't care.
+             */
+            val = powf(10, set_param_power * -0.5f) * (cmd - '0');
+
+            for (i = 0; i < 3; i++)
+                if (motors[i] && use_motor[i]) {
+                    motor_bldc_set_param(motors[i], set_param, val);
+                    serial->print("Param set to ");
+                    serial->println(val);
+                }
+
+            set_param = __BLDC_PARAM_MAX;
+            set_param_power = -1;
+            break;
+        }
+
+        motors_on_off(false);
+        serial->println("Setting new MPU6050 clksource");
+        mpu6050_set_clksrc(main_imu, cmd - '0');
+        delay(100);
+        break;
+    case '6' ... '9':
+        if (set_param < __BLDC_PARAM_MAX)
+            goto handle_set_param;
+
+        motors_on_off(false);
+        serial->println("Setting new MPU6050 sample rate");
+        /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
+        mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
+        delay(100);
+        break;
+    case '*':
+        dlpf ^= 2;
+        serial->print("Will use MPU6050 DLPF setting ");
+        serial->print(dlpf);
+        serial->println(" on next sample rate change");
+        break;
+    case 'e':
+        {
+            float angles[3];
+
+            /* Read encoder angles */
+            for (i = 0; i < 3; i++) {
+                float scale;
+
+                if (!encoders[i])
+                    continue;
+
+                scale = have_axes ? axes.encoder_scale[i] : 1.0f;
+                angles[i] = encoders[i]->reading * scale + (scale < 0 ? 360 : 0);
+
+                serial->print("Encoder ");
+                serial->print(i);
+                serial->print(" angle = ");
+                serial->println(angles[i]);
+            }
+
+            if (have_axes) {
+                float q[4], conj_rel_q[4] = INIT_CONJ_Q(rel_q);
+                float angles_est[3], mapped[3];
+
+                /* Only frame_ahrs->q, can't use frame_q instead because that is calculated from encoder info */
+                if (frame_ahrs) {
+                    float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
+                    quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
+                } else
+                    memcpy(q, main_ahrs->q, 4 * sizeof(float));
+
+                /* Try to estimate the same angles from IMU data */
+                axes_q_to_angles(&axes, q, angles_est);
+                mapped[axes.axis_to_encoder[0]] = angles_est[0];
+                mapped[axes.axis_to_encoder[1]] = angles_est[1];
+                mapped[axes.axis_to_encoder[2]] = angles_est[2];
+                serial->print("Estimated = ");
+                serial->print(mapped[0] * R2D);
+                serial->print(", ");
+                serial->print(mapped[1] * R2D);
+                serial->print(", ");
+                serial->println(mapped[2] * R2D);
+
+                /* Now try to estimate main_ahrs->q from encoder angles */
+                quaternion_mult_to(main_ahrs->q, conj_rel_q, q);
+                serial->print("Q x Q_est^-1 error angle = ");
+                serial->println(2 * acosf(q[0]) * R2D);
+            }
+
+            break;
+        }
+    case 'c':
+        motors_on_off(false);
+        serial->println("Recalibrating main AHRS");
+        delay(100);
+        ahrs_calibrate(main_ahrs);
+        break;
+    case 'C':
+        motors_on_off(false);
+        /*
+         * (Re-)Detect/calibrate motor/encoder order, axes, neutral angles (offsets), directions and scales.
+         * We'll ask user to move the gimbal in a specific way so we can detect the exact orientation of each joint's axis
+         * with relation to the arm it's mounted on or to the base.  We'll also detect which of the three motors/encoders
+         * the software sees maps to which joint.
+         */
+        serial->println("Recalibrating arm/joint setup: motor/encoder order, axes, neutral angles, direction and scale");
+        cs.main_ahrs = main_ahrs;
+        cs.frame_ahrs = frame_ahrs;
+        cs.encoders = encoders;
+        cs.print = calibrate_print;
+        cs.out = &axes;
+
+        /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
+        quiet = 1;
+        have_axes = !axes_calibrate(&cs);
+        quiet = 0;
+
+        /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
+         * the encoders (i.e. trust whatever scale is documented in the spec and applied in encoder_update())
+         * and so far this seems to work well.  The scales from axes_calibrate() inherently include some
+         * amount of noise so for now we'll bet on the 1.0 scale giving lower error and override the scales.
+         */
+        axes.encoder_scale[0] = copysignf(1.0f, axes.encoder_scale[0]);
+        axes.encoder_scale[1] = copysignf(1.0f, axes.encoder_scale[1]);
+        axes.encoder_scale[2] = copysignf(1.0f, axes.encoder_scale[2]);
+        break;
+    case 'k':
+        serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)"); /* And 0-yaw if not following */
+        memcpy(control.home_q, main_ahrs->q, sizeof(control.home_q));
+        memcpy(control.home_frame_q, frame_q, sizeof(control.home_frame_q));
+        have_home = 1;
+        break;
+    case 'K':
+        if (!have_home) {
+            serial->println("Set home orientation first ('k')");
+            break;
+        }
+
+        /*
+         * Here we expect the user (TODO: document/print this to user somewhere) to roll the camera anywhere between 30 and 120 deg
+         * to the *right* after setting the home orientation ('k') and then send 'K' to set a "forward" direction.  None of the other data
+         * we have available so far really tells us what the user considers the forward/front direction and consequently the pitch vs.
+         * the roll axis.  Yaw is easy because it's aligned with gravity.  Roll and pitch axes are perpendicular to yaw axis (i.e.
+         * within horizontal plane) but since we don't assume anything about the order of joint axes or the orientation of either IMU,
+         * there's just no way to know where camera's front is, or whatever device/tool we're orienting.
+         *
+         * So we ask for a roll motion.  The axis of rotation is going to be the forward-back axis (camera lens axis) and if the roll is
+         * to the right, the axis will point forward due to the right-hand rule.  We save that and now we know how to decompose any
+         * orientation into a camera yaw+pitch+roll, or compose a set of camera yaw+pitch+roll values into a specific main IMU orientation.
+         *
+         * The camera should point in the exact same direction as when home orientation was set, only rolled.  The user can perhaps
+         * have the camera on and confirm on live view with OSD crosshair or similar, even zoomed in.
+         */
+        have_forward = 0;
+
+        {
+            float angle;
+            float conj_q0[4] = INIT_CONJ_Q(control.home_q);
+            float roll_q[4];
+
+            quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
+            quaternion_to_axis_angle(roll_q, control.forward_vec, &angle);
+
+            if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
+                serial->println("No rotation within 30-120 deg detected");
+                break;
+            }
+        }
+
+        if (fabsf(control.forward_vec[0]) + fabsf(control.forward_vec[1]) < 0.001f)
+            break;
+
+        if (fabsf(control.forward_vec[2]) > 0.1f)
+            serial->println("WARN: rotation axis not very level");
+
+        serial->println("Saving the rotation axis as the forward direction");
+        control.forward_vec[2] = 0.0f;
+        vector_normalize(control.forward_vec);
+        control.forward_az = atan2f(control.forward_vec[1], control.forward_vec[0]);
+        have_forward = 1;
+        break;
+    case 't':
+        set_use_motor = true;
+        break;
+    case 'S':
+        /* TODO: also ensure have_axes before we power anything on */
+        if (!motors[0] && !motors[1] && !motors[2]) {
+            serial->println("We have no motors");
+            break;
+        }
+
+        for (i = 0; i < 3; i++)
+            if (motors[i] && use_motor[i] && !motors[i]->ready) {
+                serial->print("Motor ");
+                serial->print(i);
+                serial->println(" not ready");
+                break;
+            }
+        if (i < 3)
+            break;
+
+        for (i = 0; i < 3; i++)
+            if (motors[i] && use_motor[i])
+                motors[i]->cls->set_velocity(motors[i], 0);
+
+        motors_on_off(true);
+        serial->println("Motors on");
+        break;
+    case 's':
+        motors_on_off(false);
+        serial->println("Motors off");
+        break;
+    case 'P':
+        set_param = BLDC_PARAM_KP;
+        break;
+    case 'I':
+        set_param = BLDC_PARAM_KI;
+        break;
+    case 'D':
+        set_param = BLDC_PARAM_KD;
+        break;
+    case 'm':
+        if (motors_on || !vbat_ok) {
+            serial->println("Motors must be off and VBAT good");
+            break;
+        }
+
+        for (i = 0; i < 3; i++) {
+            struct obgc_motor_calib_data_s data;
+
+            if (!motors[i] || !use_motor[i])
+                continue;
+
+            if (motors[i]->cls->recalibrate(motors[i]) != 0)
+                serial->println("Motor calibration failed");
+            else if (motors[i]->cls->get_calibration(motors[i], &data) != 0)
+                serial->println("Motor calibration no data");
+            else {
+                char msg[200];
+                sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
+                        i, data.bldc_with_encoder.pole_pairs, data.bldc_with_encoder.zero_electric_offset,
+                        data.bldc_with_encoder.sensor_direction);
+                serial->println(msg);
+            }
+        }
+
+        break;
+    case ' ':
+        if (control_enable) {
+            stop_control();
+            break;
+        }
+
+        if (!have_axes || !have_home || !have_forward || !motors_on || !vbat_ok) {
+            serial->println("Motors must be on and calibration complete");
+            break;
+        }
+
+        control_enable = true;
+        serial->println("Control on");
+        break;
+    case 27:
+        if (!serial->available())
+            delay(5);
+        if (!serial->available())
+            break;
+        if (serial->read() != '[') /* Not an ANSI CSI sequence */
+            break;
+        /* Parse first parameter */
+        param = 0;
+        while (1) {
+            cmd = serial->read();
+            if (cmd < '0' || cmd > '9')
+                break;
+            param = param * 10 + (cmd - '0');
+        }
+        /* Ignore everything until CSI command final byte */
+        while (cmd < 0x40 || cmd > 0x7e)
+            cmd = serial->read();
+
+        switch (cmd) {
+        case 'D': /* Cursor Back or left arrow, param is modifier */
+            if (motors[0])
+                motors[0]->cls->set_velocity(motors[0], -5);
+            break;
+        case 'C': /* Cursor Forward or right arrow, param is modifier */
+            if (motors[0])
+                motors[0]->cls->set_velocity(motors[0], 5);
+            break;
+        case 'A': /* Cursor Up or up arrow, param is modifier */
+            if (motors[1])
+                motors[1]->cls->set_velocity(motors[1], -5);
+            break;
+        case 'B': /* Cursor Down or down arrow, param is modifier */
+            if (motors[1])
+                motors[1]->cls->set_velocity(motors[1], 5);
+            break;
+        case 'H': /* Cursor Position or Home */
+        case 'F': /* Cursos Previous Line or End */
+            break;
+        case '~': /* Private sequence: xterm keycode sequence, param is keycode */
+            switch (param) {
+            case 5: /* Page Up */
+                if (motors[2])
+                    motors[2]->cls->set_velocity(motors[2], 5);
+                break;
+            case 6: /* Page Down */
+                if (motors[2])
+                    motors[2]->cls->set_velocity(motors[2], -5);
+                break;
+            case 1: /* Home */
+            case 7: /* Home */
+            case 4: /* End */
+            case 8: /* End */
+                break;
+            default:
+                serial->print("Unknown xterm keycode ");
+                serial->println(param);
+            }
+            break;
+        default:
+            serial->print("Unknown CSI seq ");
+            serial->println(cmd);
+        }
+        break;
+    default:
+        serial->print("Unknown cmd ");
+        serial->println(cmd);
+    }
+}
+static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
 
 extern HardwareSerial *error_serial;
 
@@ -609,164 +1155,16 @@ void setup(void) {
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
 
+    /* Add these low-priority callbacks at the very end after whatever the drivers may have added.
+     * These are called in the order they're added.
+     */
     main_loop_cb_add(&rc_input_cb);
+    main_loop_cb_add(&blink_cb);
+    main_loop_cb_add(&vbat_cb);
+    main_loop_cb_add(&misc_debug_cb);
+    main_loop_cb_add(&serial_ui_cb);
 }
 void setup_end(void) {}
-
-static void motors_on_off(bool on) {
-    if (motors_on == on)
-        return;
-
-    if (!on)
-        stop_control();
-
-    for (int i = 0; i < 3; i++) {
-        if (!motors[i] || !use_motor[i])
-            continue;
-
-        if (on) {
-            if (!motors[i]->ready || motors[i]->cls->on(motors[i]) != 0) {
-                for (int j = 0; j < i; j++)
-                    if (motors[j])
-                        motors[j]->cls->off(motors[j]);
-                serial->print("Motor ");
-                serial->print(i);
-                serial->println(" power on failed!");
-                return;
-            }
-        } else
-            motors[i]->cls->off(motors[i]);
-    }
-
-    motors_on = on;
-    /* TODO: beep */
-}
-
-static void shutdown_to_bl(void) __attribute__((noreturn));
-static void shutdown_to_bl(void) {
-    int i;
-
-    motors_on_off(false);
-
-    /* Things we set up explicitly (TODO: steal_ptr() syntax) */
-    /* TODO: refcounting would be nice too */
-    ahrs_free(main_ahrs);
-    main_imu->cls->free(main_imu);
-    for (i = 0; i < 3; i++)
-        if (motors[i])
-            motors[i]->cls->free(motors[i]);
-    for (i = 0; i < 3; i++)
-        if (encoders[i])
-            encoders[i]->cls->free(encoders[i]);
-    for (i = 0; i < 3; i++)
-        if (motor_drivers[i])
-            motor_drivers[i]->cls->free(motor_drivers[i]);
-    for (i = 0; i < 3; i++)
-        if (drv_modules[i])
-            sbgc32_i2c_drv_free(drv_modules[i]);
-    i2c->end();
-    serial->end();
-    digitalWrite(SBGC_LED_GREEN, 0);
-    pinMode(SBGC_LED_GREEN, INPUT);
-
-    /* Things arduino, PlatformIO, framework, CMSIS, etc. may have set up */
-    __disable_irq();
-    USB->CNTR = 0x0003; /* Reset USB in case it is used (not on PilotFly H2) */
-    HAL_RCC_DeInit();
-    SysTick->CTRL = 0;  /* Stop clock after DeInit which may have used it */
-    SysTick->LOAD = 0;
-    SysTick->VAL = 0;
-
-    /* Reset interrupts */
-    for (int i = 0; i < sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0]); i++) {
-        NVIC->ICER[i] = 0xffffffff;
-        NVIC->ICPR[i] = 0xffffffff;
-    }
-
-    /*
-     * STM32F303xB bootloader System Memory start address according to Section 23 in ST Application Note AN2606, Table 28.
-     * Same for all F3 series but not most other STM32s.  For other models, look at the same doc, all models summarized in
-     * Section 92, Table 209.
-     */
-    __set_MSP(*(uint32_t *) 0x1fffd800);
-    __set_PSP(*(uint32_t *) 0x1fffd800);
-    ((void (*)(void)) *(uint32_t *) 0x1fffd804)();
-    while (1); /* Silence warning */
-}
-
-static void powered_init(void) {
-    for (int i = 0; i < 3; i++) {
-        if (!motors[i] || !use_motor[i] || motors[i]->ready)
-            continue;
-
-        if (motors[i]->cls->powered_init(motors[i]) != 0) {
-            serial->print("Motor ");
-            serial->print(i);
-            serial->println(" powered init failed!");
-        }
-    }
-
-    serial->println("Motors powered init done");
-}
-
-static void blink(void) {
-    static uint8_t led_val = 0;
-
-    led_val ^= 1;
-    digitalWrite(SBGC_LED_GREEN, led_val);
-}
-
-static void vbat_update(void) {
-    uint16_t raw = analogRead(SBGC_VBAT); /* TODO: noisy, use multiple samples */
-    static int vbat_prev = 0;
-    static int lvco = 0;
-    static unsigned long vbat_ts = 0;
-    static unsigned long msg_ts = 0;
-    unsigned long now = millis();
-
-    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND) * SBGC_VBAT_SCALE;
-    vbat_ok = lvco > 0 && vbat > lvco;
-
-    /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
-    /* TODO: scale calibration? */
-    if (!lvco) {
-        if (vbat > 3000) {
-            if (!vbat_ts)
-                vbat_ts = now;
-            else if (now - vbat_ts >= 10000) {
-                /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
-                int cells = vbat / (vbat < 10000 ? 4500 : 4400) + 1;
-                lvco = cells * 3300;
-                vbat_ts = 0;
-                serial->print("VBAT low-voltage cutoff set at ");
-                serial->print((lvco / 100) * 0.1f);
-                serial->println("V (guessed)");
-                powered_init();
-                goto print_update;
-            }
-        } else
-            vbat_ts = 0;
-    } else if (vbat <= lvco) {
-        lvco = -1; /* Only do this once */
-        serial->println("VBAT low, disabling motors!");
-        motors_on_off(false);
-        /* TODO: play a sound? is there any data to save? */
-        goto print_update;
-    }
-
-    if (now - msg_ts < 2000)
-        return;
-
-    if (abs(vbat - vbat_prev) < 400)
-        return;
-
-print_update:
-    vbat_prev = vbat;
-    msg_ts = now;
-    serial->print("VBAT now at ");
-    serial->print((vbat / 100) * 0.1f);
-    serial->println("V");
-}
 
 void loop(void) {
     int i;
@@ -818,406 +1216,8 @@ void loop(void) {
     if (control_enable)
         control_step(&control);
 
-    blink(); /* TODO: convert to cbs */
-    vbat_update();
-
-    // imu_debug_update();
-    // probe_out_pins_update();
-    // probe_in_pins_update();
-
-    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
-        main_ahrs_from_encoders_debug();
-
     for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
         entry->cb(entry->data);
-
-    if (serial->available()) {
-        uint8_t cmd = serial->read();
-        int i, param;
-        struct axes_calibrate_data_s cs;
-        static uint8_t dlpf = 0;
-
-        switch (cmd) {
-        case 'q':
-            serial->println("Shutting down and jumping to bootloader");
-            shutdown_to_bl();
-            break;
-        case 'Q':
-            motors_on_off(false);
-            serial->println("Crashing in loop()"); /* Crash handler test */
-            delay(100);
-            *(uint8_t *) -1 = 5;
-            break;
-        case '0' ... '5':
-            if (set_use_motor) {
-                set_use_motor = false;
-
-                if (cmd >= '3')
-                    break;
-
-                use_motor[cmd - '0'] ^= 1;
-                /* TODO: could ensure motors[cmd - '0'] is non-NULL so we could skip checks everywhere else */
-                serial->print("use_motor = { ");
-                serial->print(use_motor[0]);
-                serial->print(use_motor[1]);
-                serial->print(use_motor[2]);
-                serial->println(" }");
-                break;
-            }
-
-            if (set_param < __BLDC_PARAM_MAX) {
-                float val;
-handle_set_param:
-
-                if (set_param_power == -1) {
-                    set_param_power = cmd - '0';
-                    break;
-                }
-
-                /*
-                 * Type 'P', 'I' or 'D' followed by a power/exponent value (0 to 9) and a multiplier (0 to 9).
-                 * For now the result is multiplier * (10 ^ (-power / 2)).  E.g. P05 sets the Kp to 5.0.
-                 * P25 sets it to 0.5, P45 to 0.05 and so on.  There's some redundancy here but we don't care.
-                 */
-                val = powf(10, set_param_power * -0.5f) * (cmd - '0');
-
-                for (i = 0; i < 3; i++)
-                    if (motors[i] && use_motor[i]) {
-                        motor_bldc_set_param(motors[i], set_param, val);
-                        serial->print("Param set to ");
-                        serial->println(val);
-                    }
-
-                set_param = __BLDC_PARAM_MAX;
-                set_param_power = -1;
-                break;
-            }
-
-            motors_on_off(false);
-            serial->println("Setting new MPU6050 clksource");
-            mpu6050_set_clksrc(main_imu, cmd - '0');
-            delay(100);
-            break;
-        case '6' ... '9':
-            if (set_param < __BLDC_PARAM_MAX)
-                goto handle_set_param;
-
-            motors_on_off(false);
-            serial->println("Setting new MPU6050 sample rate");
-            /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
-            mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
-            delay(100);
-            break;
-        case '*':
-            dlpf ^= 2;
-            serial->print("Will use MPU6050 DLPF setting ");
-            serial->print(dlpf);
-            serial->println(" on next sample rate change");
-            break;
-        case 'e':
-            {
-                float angles[3];
-
-                /* Read encoder angles */
-                for (i = 0; i < 3; i++) {
-                    float scale;
-
-                    if (!encoders[i])
-                        continue;
-
-                    scale = have_axes ? axes.encoder_scale[i] : 1.0f;
-                    angles[i] = encoders[i]->reading * scale + (scale < 0 ? 360 : 0);
-
-                    serial->print("Encoder ");
-                    serial->print(i);
-                    serial->print(" angle = ");
-                    serial->println(angles[i]);
-                }
-
-                if (have_axes) {
-                    float q[4], conj_rel_q[4] = INIT_CONJ_Q(rel_q);
-                    float angles_est[3], mapped[3];
-
-                    /* Only frame_ahrs->q, can't use frame_q instead because that is calculated from encoder info */
-                    if (frame_ahrs) {
-                        float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
-                        quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
-                    } else
-                        memcpy(q, main_ahrs->q, 4 * sizeof(float));
-
-                    /* Try to estimate the same angles from IMU data */
-                    axes_q_to_angles(&axes, q, angles_est);
-                    mapped[axes.axis_to_encoder[0]] = angles_est[0];
-                    mapped[axes.axis_to_encoder[1]] = angles_est[1];
-                    mapped[axes.axis_to_encoder[2]] = angles_est[2];
-                    serial->print("Estimated = ");
-                    serial->print(mapped[0] * R2D);
-                    serial->print(", ");
-                    serial->print(mapped[1] * R2D);
-                    serial->print(", ");
-                    serial->println(mapped[2] * R2D);
-
-                    /* Now try to estimate main_ahrs->q from encoder angles */
-                    quaternion_mult_to(main_ahrs->q, conj_rel_q, q);
-                    serial->print("Q x Q_est^-1 error angle = ");
-                    serial->println(2 * acosf(q[0]) * R2D);
-                }
-
-                break;
-            }
-        case 'c':
-            motors_on_off(false);
-            serial->println("Recalibrating main AHRS");
-            delay(100);
-            ahrs_calibrate(main_ahrs);
-            break;
-        case 'C':
-            motors_on_off(false);
-            /*
-             * (Re-)Detect/calibrate motor/encoder order, axes, neutral angles (offsets), directions and scales.
-             * We'll ask user to move the gimbal in a specific way so we can detect the exact orientation of each joint's axis
-             * with relation to the arm it's mounted on or to the base.  We'll also detect which of the three motors/encoders
-             * the software sees maps to which joint.
-             */
-            serial->println("Recalibrating arm/joint setup: motor/encoder order, axes, neutral angles, direction and scale");
-            cs.main_ahrs = main_ahrs;
-            cs.frame_ahrs = frame_ahrs;
-            cs.encoders = encoders;
-            cs.print = calibrate_print;
-            cs.out = &axes;
-
-            /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
-            quiet = 1;
-            have_axes = !axes_calibrate(&cs);
-            quiet = 0;
-
-            /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
-             * the encoders (i.e. trust whatever scale is documented in the spec and applied in encoder_update())
-             * and so far this seems to work well.  The scales from axes_calibrate() inherently include some
-             * amount of noise so for now we'll bet on the 1.0 scale giving lower error and override the scales.
-             */
-            axes.encoder_scale[0] = copysignf(1.0f, axes.encoder_scale[0]);
-            axes.encoder_scale[1] = copysignf(1.0f, axes.encoder_scale[1]);
-            axes.encoder_scale[2] = copysignf(1.0f, axes.encoder_scale[2]);
-
-            serial->println(axes.axes[0][0]);////
-            serial->println(axes.axes[0][1]);
-            serial->println(axes.axes[0][2]);
-            serial->println(axes.axes[1][0]);
-            serial->println(axes.axes[1][1]);
-            serial->println(axes.axes[1][2]);
-            serial->println(axes.axes[2][0]);
-            serial->println(axes.axes[2][1]);
-            serial->println(axes.axes[2][2]);
-            serial->println(axes.main_imu_mount_q[0]);
-            serial->println(axes.main_imu_mount_q[1]);
-            serial->println(axes.main_imu_mount_q[2]);
-            serial->println(axes.main_imu_mount_q[3]);////
-            break;
-        case 'k':
-            serial->println("Saving current camera head orientation as home orientation (0-pitch, 0-roll)"); /* And 0-yaw if not following */
-            memcpy(control.home_q, main_ahrs->q, sizeof(control.home_q));
-            memcpy(control.home_frame_q, frame_q, sizeof(control.home_frame_q));
-            have_home = 1;
-            break;
-        case 'K':
-            if (!have_home) {
-                serial->println("Set home orientation first ('k')");
-                break;
-            }
-
-            /*
-             * Here we expect the user (TODO: document/print this to user somewhere) to roll the camera anywhere between 30 and 120 deg
-             * to the *right* after setting the home orientation ('k') and then send 'K' to set a "forward" direction.  None of the other data
-             * we have available so far really tells us what the user considers the forward/front direction and consequently the pitch vs.
-             * the roll axis.  Yaw is easy because it's aligned with gravity.  Roll and pitch axes are perpendicular to yaw axis (i.e.
-             * within horizontal plane) but since we don't assume anything about the order of joint axes or the orientation of either IMU,
-             * there's just no way to know where camera's front is, or whatever device/tool we're orienting.
-             *
-             * So we ask for a roll motion.  The axis of rotation is going to be the forward-back axis (camera lens axis) and if the roll is
-             * to the right, the axis will point forward due to the right-hand rule.  We save that and now we know how to decompose any
-             * orientation into a camera yaw+pitch+roll, or compose a set of camera yaw+pitch+roll values into a specific main IMU orientation.
-             *
-             * The camera should point in the exact same direction as when home orientation was set, only rolled.  The user can perhaps
-             * have the camera on and confirm on live view with OSD crosshair or similar, even zoomed in.
-             */
-            have_forward = 0;
-
-            {
-                float angle;
-                float conj_q0[4] = INIT_CONJ_Q(control.home_q);
-                float roll_q[4];
-
-                quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
-                quaternion_to_axis_angle(roll_q, control.forward_vec, &angle);
-
-                if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
-                    serial->println("No rotation within 30-120 deg detected");
-                    break;
-                }
-            }
-
-            if (fabsf(control.forward_vec[0]) + fabsf(control.forward_vec[1]) < 0.001f)
-                break;
-
-            if (fabsf(control.forward_vec[2]) > 0.1f)
-                serial->println("WARN: rotation axis not very level");
-
-            serial->println("Saving the rotation axis as the forward direction");
-            control.forward_vec[2] = 0.0f;
-            vector_normalize(control.forward_vec);
-            control.forward_az = atan2f(control.forward_vec[1], control.forward_vec[0]);
-            have_forward = 1;
-            break;
-        case 't':
-            set_use_motor = true;
-            break;
-        case 'S':
-            /* TODO: also ensure have_axes before we power anything on */
-            if (!motors[0] && !motors[1] && !motors[2]) {
-                serial->println("We have no motors");
-                break;
-            }
-
-            for (i = 0; i < 3; i++)
-                if (motors[i] && use_motor[i] && !motors[i]->ready) {
-                    serial->print("Motor ");
-                    serial->print(i);
-                    serial->println(" not ready");
-                    break;
-                }
-            if (i < 3)
-                break;
-
-            for (i = 0; i < 3; i++)
-                if (motors[i] && use_motor[i])
-                    motors[i]->cls->set_velocity(motors[i], 0);
-
-            motors_on_off(true);
-            serial->println("Motors on");
-            break;
-        case 's':
-            motors_on_off(false);
-            serial->println("Motors off");
-            break;
-        case 'P':
-            set_param = BLDC_PARAM_KP;
-            break;
-        case 'I':
-            set_param = BLDC_PARAM_KI;
-            break;
-        case 'D':
-            set_param = BLDC_PARAM_KD;
-            break;
-        case 'm':
-            if (motors_on || !vbat_ok) {
-                serial->println("Motors must be off and VBAT good");
-                break;
-            }
-
-            for (i = 0; i < 3; i++) {
-                struct obgc_motor_calib_data_s data;
-
-                if (!motors[i] || !use_motor[i])
-                    continue;
-
-                if (motors[i]->cls->recalibrate(motors[i]) != 0)
-                    serial->println("Motor calibration failed");
-                else if (motors[i]->cls->get_calibration(motors[i], &data) != 0)
-                    serial->println("Motor calibration no data");
-                else {
-                    char msg[200];
-                    sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
-                            i, data.bldc_with_encoder.pole_pairs, data.bldc_with_encoder.zero_electric_offset,
-                            data.bldc_with_encoder.sensor_direction);
-                    serial->println(msg);
-                }
-            }
-
-            break;
-        case ' ':
-            if (control_enable) {
-                stop_control();
-                break;
-            }
-
-            if (!have_axes || !have_home || !have_forward || !motors_on || !vbat_ok) {
-                serial->println("Motors must be on and calibration complete");
-                break;
-            }
-
-            control_enable = true;
-            serial->println("Control on");
-            break;
-        case 27:
-            if (!serial->available())
-                delay(5);
-            if (!serial->available())
-                break;
-            if (serial->read() != '[') /* Not an ANSI CSI sequence */
-                break;
-            /* Parse first parameter */
-            param = 0;
-            while (1) {
-                cmd = serial->read();
-                if (cmd < '0' || cmd > '9')
-                    break;
-                param = param * 10 + (cmd - '0');
-            }
-            /* Ignore everything until CSI command final byte */
-            while (cmd < 0x40 || cmd > 0x7e)
-                cmd = serial->read();
-
-            switch (cmd) {
-            case 'D': /* Cursor Back or left arrow, param is modifier */
-                if (motors[0])
-                    motors[0]->cls->set_velocity(motors[0], -5);
-                break;
-            case 'C': /* Cursor Forward or right arrow, param is modifier */
-                if (motors[0])
-                    motors[0]->cls->set_velocity(motors[0], 5);
-                break;
-            case 'A': /* Cursor Up or up arrow, param is modifier */
-                if (motors[1])
-                    motors[1]->cls->set_velocity(motors[1], -5);
-                break;
-            case 'B': /* Cursor Down or down arrow, param is modifier */
-                if (motors[1])
-                    motors[1]->cls->set_velocity(motors[1], 5);
-                break;
-            case 'H': /* Cursor Position or Home */
-            case 'F': /* Cursos Previous Line or End */
-                break;
-            case '~': /* Private sequence: xterm keycode sequence, param is keycode */
-                switch (param) {
-                case 5: /* Page Up */
-                    if (motors[2])
-                        motors[2]->cls->set_velocity(motors[2], 5);
-                    break;
-                case 6: /* Page Down */
-                    if (motors[2])
-                        motors[2]->cls->set_velocity(motors[2], -5);
-                    break;
-                case 1: /* Home */
-                case 7: /* Home */
-                case 4: /* End */
-                case 8: /* End */
-                    break;
-                default:
-                    serial->print("Unknown xterm keycode ");
-                    serial->println(param);
-                }
-                break;
-            default:
-                serial->print("Unknown CSI seq ");
-                serial->println(cmd);
-            }
-            break;
-        default:
-            serial->print("Unknown cmd ");
-            serial->println(cmd);
-        }
-    }
 }
 void loop_end(void) {}
 
