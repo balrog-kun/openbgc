@@ -52,6 +52,9 @@ extern "C" {
  *
  * In the two-hand base I believe the pins are left unconnected and the actual joystick and
  * MODE button inputs come through the Bluetooth remote interface.
+ *
+ * TODO: on PilotFly H2 ignore the RC signals until power settles as there are sometimes flukes the
+ * moment the handle is powered on while we were already powered from USB.
  */
 #define SBGC_IN_YAW        PB3  /* PilotFly H2 handle joystick horizontal axis PWM */
 #define SBGC_IN_PITCH      PB5  /* PilotFly H2 handle joystick vertical axis PWM */
@@ -269,6 +272,52 @@ static void probe_in_pins_update() {
     serial->println(analogRead(probe_in_pins[j]));
 }
 
+#define PWM_CENTER 1560
+#define PWM_DEADBAND 6
+static int8_t pwm_convert(unsigned long usecs) {
+    /* Duty cycles seem to go from 925us to 2225us, offset and divide by 6 to get about -108 to 108 range */
+    int val = ((int) usecs - PWM_CENTER) / 6;
+
+    return (val >= -PWM_DEADBAND / 2 && val <= PWM_DEADBAND / 2) ? 0 : -constrain(val, -100, 100);
+}
+
+static unsigned long rc_yaw_start_ts, rc_pitch_start_ts, rc_roll_start_ts, mode_start_ts;
+static int8_t rc_yaw_reading, rc_pitch_reading, rc_roll_reading;
+static uint8_t mode_reading = 1;
+
+static void rc_yaw_end(void);
+static void rc_yaw_start(void) {
+    rc_yaw_start_ts = micros();
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_end, FALLING);
+}
+
+static void rc_yaw_end(void) {
+    rc_yaw_reading = pwm_convert(micros() - rc_yaw_start_ts);
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
+}
+
+static void rc_pitch_end(void);
+static void rc_pitch_start(void) {
+    rc_pitch_start_ts = micros();
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_end, FALLING);
+}
+
+static void rc_pitch_end(void) {
+    rc_pitch_reading = pwm_convert(micros() - rc_pitch_start_ts);
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
+}
+
+static void rc_roll_end(void);
+static void rc_roll_start(void) {
+    rc_roll_start_ts = micros();
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_end, FALLING);
+}
+
+static void rc_roll_end(void) {
+    rc_roll_reading = pwm_convert(micros() - rc_roll_start_ts);
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
+}
+
 static void imu_debug_update() {
     int32_t accel[3], gyro[3], temp;
 
@@ -412,6 +461,43 @@ static void stop_control(void) {
     serial->println("Control off");
 }
 
+static void process_rc_input(void *) {
+    /* Rate-limit printing */
+    static uint16_t cnt;
+
+    cnt++;
+
+    if (rc_yaw_reading && !(cnt & 127)) {
+        serial->print("RC_YAW reads ");
+        serial->println(rc_yaw_reading);
+        rc_yaw_reading = 0;
+    }
+
+    if (rc_pitch_reading && !(cnt & 127)) {
+        serial->print("RC_PITCH reads ");
+        serial->println(rc_pitch_reading);
+        rc_pitch_reading = 0;
+    }
+
+    if (rc_roll_reading && !(cnt & 127)) {
+        serial->print("RC_ROLL reads ");
+        serial->println(rc_roll_reading);
+        rc_roll_reading = 0;
+    }
+
+    if (mode_reading != digitalRead(SBGC_IN_MODE)) {
+        mode_reading ^= 1;
+
+        if (mode_reading) {
+            unsigned long len = micros() - mode_start_ts;
+            serial->print("MODE pressed for ");
+            serial->println(len / 1000);
+        } else
+            mode_start_ts = micros();
+    }
+}
+static struct main_loop_cb_s rc_input_cb = { .cb = process_rc_input };
+
 extern HardwareSerial *error_serial;
 
 void setup(void) {
@@ -436,6 +522,7 @@ void setup(void) {
 
     pinMode(SBGC_LED_GREEN, OUTPUT);
     pinMode(SBGC_VBAT, INPUT);
+    pinMode(SBGC_IN_MODE, INPUT_PULLUP);
 
     /* Initialize IMUs */
     main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);
@@ -517,6 +604,12 @@ void setup(void) {
     serial->println("Motors early init done");
 
     setup_control();
+
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
+
+    main_loop_cb_add(&rc_input_cb);
 }
 void setup_end(void) {}
 
