@@ -13,6 +13,7 @@ extern "C" {
 #include "axes.h"
 #include "moremath.h"
 #include "control.h"
+#include "util.h"
 
 #include "main.h"
 }
@@ -170,27 +171,34 @@ void scan_i2c() {
     }
 }
 
-#define PROBE_PINS_NUM 12
-static const uint8_t probe_pins[PROBE_PINS_NUM] = {
-    PA1, PA2, PA3, PA4, PA5, PA6, PA7, PB0, PB1, PB2, PB10, PB11
+static const uint8_t probe_out_pins[] = {
+    PA4, PA5, PA6, PA7, PB0, PB1, PB2, PB10, PB11
 };
 
-static const char *probe_pin_names[PROBE_PINS_NUM] = {
-    "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7", "PB0", "PB1", "PB2", "PB10", "PB11"
+static const char *probe_out_pin_names[] = {
+    "PA4", "PA5", "PA6", "PA7", "PB0", "PB1", "PB2", "PB10", "PB11"
+};
+
+static const uint8_t probe_in_pins[] = {
+    PA4, PA5, PA6, PA7, PB0, PB1, PB2, PB11, PB13, PA8, PA11, PA12, PA13, PB6, PB7, PB8, PB9, PC14, PC15
+};
+
+static const char *probe_in_pin_names[] = {
+    "PA4", "PA5", "PA6", "PA7", "PB0", "PB1", "PB2", "PB11", "PB13", "PA8", "PA11", "PA12", "PA13", "PB6", "PB7", "PB8", "PB9", "PC14", "PC15"
 };
 
 static int current_low_pin = -1;  /* Start with no pin forced LOW */
 const unsigned long high_duration = 2000;
 const unsigned long low_duration = 1000;
 
-void probe_pins_setup() {
-    for (int i = 0; i < PROBE_PINS_NUM; i++) {
-        pinMode(probe_pins[i], OUTPUT);
-        digitalWrite(probe_pins[i], LOW);
+static void probe_out_pins_setup() {
+    for (int i = 0; i < ARRAY_SIZE(probe_out_pins); i++) {
+        pinMode(probe_out_pins[i], OUTPUT);
+        digitalWrite(probe_out_pins[i], LOW);
     }
 }
 
-void probe_pins_update() {
+static void probe_out_pins_update() {
     unsigned long now = millis();
     uint8_t level = (now % (high_duration + low_duration)) > high_duration;
 
@@ -198,31 +206,70 @@ void probe_pins_update() {
     if (serial->read() < 0)
         return;
 
-    if (current_low_pin >= PROBE_PINS_NUM - 1)
+    if (current_low_pin >= ARRAY_SIZE(probe_out_pins) - 1)
         return;
 
     serial->print("Enabling ");
-    serial->print(probe_pin_names[++current_low_pin]);
+    serial->print(probe_out_pin_names[++current_low_pin]);
     serial->println(" and setting it LOW");
     delay(100);
-    pinMode(probe_pins[current_low_pin], OUTPUT);
-    digitalWrite(probe_pins[current_low_pin], LOW);
+    pinMode(probe_out_pins[current_low_pin], OUTPUT);
+    digitalWrite(probe_out_pins[current_low_pin], LOW);
     return;
 #endif
 
     if (serial->available() > 0) {
         serial->read();  /* Read and discard the character */
-        current_low_pin = (current_low_pin + 1) % PROBE_PINS_NUM;
+        current_low_pin = (current_low_pin + 1) % ARRAY_SIZE(probe_out_pins);
         serial->print("Now forcing ");
-        serial->print(probe_pin_names[current_low_pin]);
+        serial->print(probe_out_pin_names[current_low_pin]);
         serial->println(" to constant LOW");
     }
 
-    for (int i = 0; i < PROBE_PINS_NUM; i++)
-        digitalWrite(probe_pins[i], current_low_pin == i ? LOW : level);
+    for (int i = 0; i < ARRAY_SIZE(probe_out_pins); i++)
+        digitalWrite(probe_out_pins[i], current_low_pin == i ? LOW : level);
 }
 
-void imu_debug_update() {
+static void probe_in_pins_setup() {
+    for (int i = 0; i < ARRAY_SIZE(probe_in_pins); i++)
+        pinMode(probe_in_pins[i], INPUT_PULLUP); /* May need pulldowns enabled */
+}
+
+static void probe_in_pins_update() {
+    static uint32_t state, iters, counts[ARRAY_SIZE(probe_in_pins)];
+    int j;
+
+    for (int i = 0; i < ARRAY_SIZE(probe_in_pins); i++) {
+        uint8_t prev = (state >> i) & 1;
+        uint8_t cur = digitalRead(probe_in_pins[i]);
+
+        if (prev == cur)
+            continue;
+
+        counts[i]++;
+        state ^= 1 << i;
+    }
+
+    if (iters++ & 255)
+        return;
+
+    for (int i = 0; i < ARRAY_SIZE(probe_in_pins); i++) {
+        if (!counts[i])
+            continue;
+
+        serial->print(probe_in_pin_names[i]);
+        serial->print(" triggered x");
+        serial->println(counts[i]);
+        counts[i] = 0;
+    }
+
+    j = (iters >> 8) % ARRAY_SIZE(probe_in_pins);
+    serial->print(probe_in_pin_names[j]);
+    serial->print(": ");
+    serial->println(analogRead(probe_in_pins[j]));
+}
+
+static void imu_debug_update() {
     int32_t accel[3], gyro[3], temp;
 
     main_imu->cls->read_main(main_imu, accel, gyro);
@@ -384,7 +431,8 @@ void setup(void) {
     /* Board debug info */
     // scan_i2c();
     print_mcu();
-    // probe_pins_setup();
+    // probe_out_pins_setup();
+    // probe_in_pins_setup();
 
     pinMode(SBGC_LED_GREEN, OUTPUT);
     pinMode(SBGC_VBAT, INPUT);
@@ -681,7 +729,8 @@ void loop(void) {
     vbat_update();
 
     // imu_debug_update();
-    // probe_pins_update();
+    // probe_out_pins_update();
+    // probe_in_pins_update();
 
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
