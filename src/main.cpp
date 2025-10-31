@@ -19,7 +19,8 @@ extern "C" {
 
 /*
  * SBGC_ prefix for these because most of them seem to be part of the SBGC32 reference design
- * and not user configurable.
+ * and not user configurable.  But these defines are all based specifically on the PilotFly H2
+ * controller board "GH_ENCODER_MB2_RevB".
  */
 
 #define SBGC_LED_GREEN     PB12
@@ -33,13 +34,45 @@ extern "C" {
 #define SBGC_VBAT_R_GND    4700
 #define SBGC_VBAT_SCALE    0.9f  /* TODO: make user configurable */
 
+/* Onboard DRV8313 for the yaw motor */
 #define SBGC_DRV8313_IN1   PA1   /* TIM1 */
 #define SBGC_DRV8313_IN2   PA2   /* TIM2 */
 #define SBGC_DRV8313_IN3   PA3   /* TIM2 */
 #define SBGC_DRV8313_EN123 PB10
 
 /* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
-/* TODO: current and temperature sensing per motor */
+/* TODO: current and temperature sensing for yaw motor */
+
+/* These 3 signals come from the 8-wire pogo-pin base/handle connector.  On the handle side, with
+ * the basic one-hand handle the MODE pin connects directly to the button.  The YAW and PITCH lines
+ * come from the Renesas R5F10268 SSOP-20 MCU chip (8KB code flash, 2KB data flash, 768B RAM) which
+ * probably generates the PWM signals from the analog joystick signals.  20 PWM cycles per second.
+ * We only receive these signals when the handle is powered on (battery or external barrel connector).
+ *
+ * In the two-hand base I believe the pins are left unconnected and the actual joystick and
+ * MODE button inputs come through the Bluetooth remote interface.
+ */
+#define SBGC_IN_YAW        PB3  /* PilotFly H2 handle joystick horizontal axis PWM */
+#define SBGC_IN_PITCH      PB5  /* PilotFly H2 handle joystick vertical axis PWM */
+#define SBGC_IN_MODE       PC13 /* PilotFly H2 handle button, short to GND when pressed */
+                                /* No discrete pull-up so needs our internal pull-up enabled */
+
+/* The RC inputs seem to be connected to the same pins as the handle connector, TODO: confirm */
+#define SBGC_IN_RC_YAW     SBGC_IN_YAW
+#define SBGC_IN_RC_ROLL    PB4
+#define SBGC_IN_RC_PIT     SBGC_IN_PITCH
+
+/* TODO: visually, at least the following extra pins seem to be connected to something:
+ * PB6, PB7
+ * Additionally PA8, PA12 and PA13 are not floating, i.e. analogRead() reads the same value
+ * whether a pull-up or pull-down is enabled, suggesting there may be something connected.
+ * PA11 shows some pattern too.
+ *
+ * Candidates are:
+ *   * yaw motor current sense,
+ *   * the onboard 32kB MicroChip EEPROM,
+ *   * IMU interrupt pin.
+ */
 
 /* TODO: save in flash */
 /* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
