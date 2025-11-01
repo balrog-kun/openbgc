@@ -14,8 +14,7 @@
 void control_step(struct control_data_s *control) {
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
-    float conj_frame_home_q[4] = INIT_CONJ_Q(control->home_frame_q);
-    float frame_rel_q[4], frame_rel_align_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4], target_q[4];
+    float frame_rel_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4], target_q[4];
     float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4];
     float v_vec[3], max_v, new_v, perp_vec[3], step_delta_vec[3];
     float joint_angles_current[3], joint_angles_to_target[3];
@@ -34,29 +33,28 @@ void control_step(struct control_data_s *control) {
      * to vertical, we'd repeat the same calc with [-forward_vec[1], forward_vec[0], 0] instead and seamlessly
      * switch between one of these two methods.
      */
-    quaternion_mult_to(control->frame_q, conj_frame_home_q, frame_rel_q);
-    quaternion_rotate_z_to(frame_rel_q, control->forward_vec[1], control->forward_vec[0], frame_rel_align_q);
-    quaternion_to_euler(frame_rel_align_q, frame_ypr);
-    frame_ypr[0] -= control->forward_az;
+    quaternion_mult_to(control->frame_q, control->conj_aligned_home_frame_q, frame_rel_q);
+    quaternion_to_euler(frame_rel_q, frame_ypr);
 
     for (i = 0; i < 3; i++)
-        target_ypr[i] = control->follow[i] ? frame_ypr[i] : 0;
+        target_ypr[i] = control->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az);
 
     /* TODO: handle various corner cases, there may be cases where the yaw from quaternion_to_euler is meaningless,
      * detect those and just keep main_ypr in those cases, maybe add hysteresis */
     if (control->keep_yaw) {
-        float conj_home_q[4] = INIT_CONJ_Q(control->home_q);
+        float conj_home_q[4] = INIT_CONJ_Q(control->aligned_home_q);
         float main_rel_q[4], main_ypr[3], diff;
         quaternion_mult_to(control->main_ahrs->q, conj_home_q, main_rel_q);
-        quaternion_to_euler(frame_rel_align_q, main_ypr);
+        quaternion_to_euler(main_rel_q, main_ypr);
         diff = angle_normalize_pi(target_ypr[0] - main_ypr[0]);
         if (fabsf(diff) > M_PI / 2)
             target_ypr[0] += M_PI;
     }
 
     quaternion_from_euler(target_ypr, target_rel_q);
-    /* TODO: If following all, shortcut to multiply by frame_rel_q.  If following none, don't multiply at all.  */
-    quaternion_mult_to(target_rel_q, control->home_q, target_q);
+    /* TODO: If following all, shortcut to multiply by frame_rel_q, perhaps use the non-aligned_* versions.
+     * If following none, don't multiply at all, use ->home_q.  */
+    quaternion_mult_to(target_rel_q, control->aligned_home_q, target_q);
 
     /* Global delta to target_q */
     quaternion_mult_to(target_q, conj_main_q, delta_q);

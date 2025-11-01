@@ -12,11 +12,11 @@ struct control_data_s {
     /* Aux precalculated inputs */
     const float *rel_q, *frame_q;
 
-    /* Geometry calibration */
+    /* Geometry calibration + precalculated values */
     const struct axes_data_s *axes;
-    float home_q[4];
-    float home_frame_q[4];
-    float forward_vec[3], forward_az;
+    float home_q[4], aligned_home_q[4];
+    float home_frame_q[4], conj_aligned_home_frame_q[4];
+    float forward_vec[3], forward_az, forward_sincos2[2];
 
     /* User settings */
     bool keep_yaw;
