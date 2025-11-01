@@ -270,12 +270,12 @@ static inline void quaternion_from_rotvec(float *q, const float *v) {
     q[3] = factor * v[2];
 }
 
-/* Shortcut for quaternion_mult(quaternion_from_axis_angle([0, 0, 1], a), q) */
-static inline void quaternion_rotate_z_to(const float *q, float cosa, float sina, float *q_out) {
-    q_out[0] = cosa * q[0] - sina * q[3];
-    q_out[1] = cosa * q[1] - sina * q[2];
-    q_out[2] = cosa * q[2] + sina * q[1];
-    q_out[3] = cosa * q[3] + sina * q[0];
+/* Shortcut for quaternion_mult(quaternion_from_axis_angle([0, 0, 1], a / 2), q) */
+static inline void quaternion_rotate_z_to(const float *q, float cosa2, float sina2, float *q_out) {
+    q_out[0] = cosa2 * q[0] - sina2 * q[3];
+    q_out[1] = cosa2 * q[1] - sina2 * q[2];
+    q_out[2] = cosa2 * q[2] + sina2 * q[1];
+    q_out[3] = cosa2 * q[3] + sina2 * q[0];
 }
 
 static inline bool vector_solve(const float A[][3], const float *b, float *x) {
