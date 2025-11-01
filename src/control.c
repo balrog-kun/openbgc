@@ -11,13 +11,8 @@
 
 #include "control.h"
 
-void control_step(struct control_data_s *control) {
-    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
-    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
-    float frame_rel_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4], target_q[4];
-    float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4];
-    float v_vec[3], max_v, new_v, perp_vec[3], step_delta_vec[3];
-    float joint_angles_current[3], joint_angles_to_target[3];
+static void control_calc_target(struct control_data_s *control, float *out_target_q) {
+    float frame_rel_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4];
     int i;
 
     /*
@@ -53,8 +48,21 @@ void control_step(struct control_data_s *control) {
 
     quaternion_from_euler(target_ypr, target_rel_q);
     /* TODO: If following all, shortcut to multiply by frame_rel_q, perhaps use the non-aligned_* versions.
-     * If following none, don't multiply at all, use ->home_q.  */
-    quaternion_mult_to(target_rel_q, control->aligned_home_q, target_q);
+     * If following none, don't multiply at all, use .home_q.  */
+    quaternion_mult_to(target_rel_q, control->aligned_home_q, out_target_q);
+
+    /* TODO: add gradual transition to the vertical check.  Switch the ref vector to pitch axis when roll axis is too vertical */
+    /* TODO: do we want to further complicate this by adding 1-motor and/or 2-motor modes?
+     * That would probably mean an euler angles priority setting that tells us, with two motors, which two axes we want to stabilize
+     * and which one we give up on.  We may want this kind of setting anyway for non-orthogonal axes where some combinations of
+     * Yaw+Pitch+Roll may be out of reach, and specially with travel limits on some joints.  */
+}
+
+static void control_calc_step_delta(struct control_data_s *control, const float *target_q,
+        float *out_step_delta_vec) {
+    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
+    float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4];
+    float v_vec[3], max_v, new_v, perp_vec[3];
 
     /* Global delta to target_q */
     quaternion_mult_to(target_q, conj_main_q, delta_q);
@@ -127,14 +135,18 @@ void control_step(struct control_data_s *control) {
     vector_weighted_sum(delta_axis, new_v, perp_vec,
             max((vector_norm(perp_vec) - control->max_accel * control->dt), 0),
             control->velocity_vec);
-    memcpy(step_delta_vec, control->velocity_vec, 3 * sizeof(float));
-    vector_mult_scalar(step_delta_vec, control->dt);
+    memcpy(out_step_delta_vec, control->velocity_vec, 3 * sizeof(float));
+    vector_mult_scalar(out_step_delta_vec, control->dt);
+}
 
-    /* TODO: add gradual transition to the vertical check.  Switch the ref vector to pitch axis when roll axis is too vertical */
-    /* TODO: do we want to further complicate this by adding 1-motor and/or 2-motor modes?
-     * That would probably mean an euler angles priority setting that tells us, with two motors, which two axes we want to stabilize
-     * and which one we give up on.  We may want this kind of setting anyway for non-orthogonal axes where some combinations of
-     * Yaw+Pitch+Roll may be out of reach, and specially with travel limits on some joints.  */
+void control_step(struct control_data_s *control) {
+    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+    float target_q[4], step_delta_vec[3];
+    float joint_angles_current[3], joint_angles_to_target[3];
+    int i;
+
+    control_calc_target(control, target_q);
+    control_calc_step_delta(control, target_q, step_delta_vec);
 
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
