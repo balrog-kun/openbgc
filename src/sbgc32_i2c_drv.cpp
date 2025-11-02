@@ -51,7 +51,7 @@ static void sbgc32_i2c_drv_encoder_free(obgc_encoder *enc) {
     /* refcount? */
 }
 
-obgc_encoder_class sbgc32_i2c_drv_encoder_class = {
+static obgc_encoder_class sbgc32_i2c_drv_encoder_class = {
     .read  = sbgc32_i2c_drv_encoder_read,
     .free  = sbgc32_i2c_drv_encoder_free,
     .scale = (0x4000 << 13) / 360, /* LSBs per 1deg */
@@ -113,7 +113,7 @@ static void sbgc32_i2c_drv_motor_free(obgc_foc_driver *motor_drv) {
     sbgc32_i2c_drv_motor_off(motor_drv);
 }
 
-obgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
+static obgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
     .set_phase_voltage = sbgc32_i2c_drv_motor_set_phase_voltage,
     .on                = sbgc32_i2c_drv_motor_on,
     .off               = sbgc32_i2c_drv_motor_off,

@@ -186,14 +186,29 @@ static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct obgc_mo
     return 0;
 }
 
-obgc_motor_class motor_bldc_class = {
-    .set_velocity    = (void (*)(obgc_motor *, float)) motor_bldc_set,
-    .powered_init    = (int (*)(obgc_motor *)) motor_bldc_init,
-    .on              = (int (*)(obgc_motor *)) motor_bldc_on,
-    .off             = (void (*)(obgc_motor *)) motor_bldc_off,
-    .free            = (void (*)(obgc_motor *)) motor_bldc_free,
-    .recalibrate     = (int (*)(obgc_motor *)) motor_bldc_recalibrate,
-    .get_calibration = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
+static void motor_bldc_override_cur_omega(struct motor_bldc_s *motor, float val) {
+    /* If we have a more precise angular velocity reading than what we get from the encoder, use that.
+     * This is very beneficial at low velocities where the encoder resolution is way too low.  It is
+     * Ok as the source of the electrical angle (indirectly) which we also need and we need absolute
+     * values, so it's a good fit.  But the velocity we get from it is just too low-resolution so if
+     * we have even a relative but higher-resolution guess based on sensors such as gyroscopes, we
+     * stand to benefit from them and should be able to lower the Ki parameter and get less jittery
+     * movement.
+     */
+
+    motor->ext_omega = val;
+    motor->have_ext_omega = true;
+}
+
+static obgc_motor_class motor_bldc_class = {
+    .set_velocity          = (void (*)(obgc_motor *, float)) motor_bldc_set,
+    .powered_init          = (int (*)(obgc_motor *)) motor_bldc_init,
+    .on                    = (int (*)(obgc_motor *)) motor_bldc_on,
+    .off                   = (void (*)(obgc_motor *)) motor_bldc_off,
+    .free                  = (void (*)(obgc_motor *)) motor_bldc_free,
+    .recalibrate           = (int (*)(obgc_motor *)) motor_bldc_recalibrate,
+    .get_calibration       = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
+    .override_cur_velocity = (void (*)(obgc_motor *, float)) motor_bldc_override_cur_omega,
 };
 
 static void motor_bldc_loop(struct motor_bldc_s *motor) {
@@ -322,20 +337,4 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         bldc->v_max = val;
         break;
     }
-}
-
-void motor_bldc_override_cur_omega(obgc_motor *motor, float val) {
-    struct motor_bldc_s *bldc = (struct motor_bldc_s *) motor;
-
-    /* If we have a more precise angular velocity reading than what we get from the encoder, use that.
-     * This is very beneficial at low velocities where the encoder resolution is way too low.  It is
-     * Ok as the source of the electrical angle (indirectly) which we also need and we need absolute
-     * values, so it's a good fit.  But the velocity we get from it is just too low-resolution so if
-     * we have even a relative but higher-resolution guess based on sensors such as gyroscopes, we
-     * stand to benefit from them and should be able to lower the Ki parameter and get less jittery
-     * movement.
-     */
-
-    bldc->ext_omega = val;
-    bldc->have_ext_omega = true;
 }

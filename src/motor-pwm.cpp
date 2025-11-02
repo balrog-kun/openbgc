@@ -124,7 +124,7 @@ static int motor_pwm_get_calibration(struct obgc_motor_s *motor_obj, struct obgc
     return 0;
 }
 
-obgc_motor_class motor_pwm_class = {
+static obgc_motor_class motor_pwm_class = {
     .set_velocity    = motor_pwm_set,
     .powered_init    = motor_pwm_init,
     .on              = motor_pwm_on,
@@ -159,7 +159,7 @@ static void motor_drv_pwm_free(struct obgc_foc_driver_s *drv_obj) {
     motor_pwm_free(&motor->motor_obj);
 }
 
-obgc_foc_driver_class motor_drv_pwm_class = {
+static obgc_foc_driver_class motor_drv_pwm_class = {
     .set_phase_voltage = motor_drv_pwm_set_phase_voltage,
     .on                = motor_drv_pwm_on,
     .off               = motor_drv_pwm_off,

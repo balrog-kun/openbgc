@@ -187,8 +187,8 @@ void control_step(struct control_data_s *control) {
 
         motor->cls->set_velocity(motor, delta * (R2D / control->dt));
 
-        if (motor->cls == &motor_bldc_class)
-            motor_bldc_override_cur_omega(motor,
+        if (motor->cls->override_cur_velocity)
+            motor->cls->override_cur_velocity(motor,
                     joint_velocities_current[i] * R2D / control->axes->encoder_scale[num]);
     }
 }

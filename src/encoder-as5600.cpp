@@ -23,7 +23,28 @@ struct as5600_s {
     bool i2c_err;
 };
 
-extern obgc_encoder_class as5600_encoder_class;
+static void as5600_free(struct as5600_s *dev) {
+    /* TODO: power chip down? */
+    free(dev);
+}
+
+static int32_t as5600_read(struct as5600_s *dev) {
+    uint8_t hi;
+
+    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, AS5600_REG_RAW_ANGLE, 1, true) != 2) {
+        dev->i2c_err = 1;
+        return 0;
+    }
+
+    hi = dev->i2c->read() & 0xf;
+    return ((uint32_t) (hi << 8) | dev->i2c->read()) << 15;
+}
+
+static obgc_encoder_class as5600_encoder_class = {
+    .read  = (int32_t (*)(obgc_encoder *enc)) as5600_read,
+    .free  = (void (*)(obgc_encoder *enc)) as5600_free,
+    .scale = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
+};
 
 obgc_encoder *as5600_new(TwoWire *i2c) {
     struct as5600_s *dev = (struct as5600_s *) malloc(sizeof(struct as5600_s));
@@ -58,29 +79,6 @@ obgc_encoder *as5600_new(TwoWire *i2c) {
 
     return &dev->obj;
 }
-
-static void as5600_free(struct as5600_s *dev) {
-    /* TODO: power chip down? */
-    free(dev);
-}
-
-static int32_t as5600_read(struct as5600_s *dev) {
-    uint8_t hi;
-
-    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, AS5600_REG_RAW_ANGLE, 1, true) != 2) {
-        dev->i2c_err = 1;
-        return 0;
-    }
-
-    hi = dev->i2c->read() & 0xf;
-    return ((uint32_t) (hi << 8) | dev->i2c->read()) << 15;
-}
-
-obgc_encoder_class as5600_encoder_class = {
-    .read  = (int32_t (*)(obgc_encoder *enc)) as5600_read,
-    .free  = (void (*)(obgc_encoder *enc)) as5600_free,
-    .scale = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
-};
 
 const char *as5600_get_error(obgc_encoder *enc) {
     struct as5600_s *dev = (struct as5600_s *) enc;
