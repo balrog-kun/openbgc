@@ -2,7 +2,7 @@
 
 This code is a basic opensource firmware for SimpleBGC32 camera gimbals.
 
-Before I go any further, this code is in its early stage.  Current status, at the initial commit, is that it reads and processes the sensor values but doesn't drive the motors.  I wanted to start change tracking early.  The code has minimal drivers for all the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design), it has some mathematical algorithms implemented but doesn't drive the motors.  It also doesn't do Bluetooth.
+Before I go any further, this code is in its early stage.  It's nearing a Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design) and the necessary mathematical algorithms implemented but little in the way of a user interface, settings storage (calibration is forgotten through power cycle), control protocol, companion app or any other niceties to make it usable.
 
 ## Licensing
 
@@ -44,7 +44,7 @@ This repository hosts a basic firmware for camera gimbals, specifically for the 
 
 This is the case with the excellent PilotFly H2 gimbal, which this code is currently tested on.  Very robust design and seemingly full firmware compatibility with other models and manufacturers as well as with DIY gimbals using SimpleBGC32 controllers or their clones.  PilotFly H2 uses a tiny, round controller PCB which is not offered by BasecamElectronics but matches their schematics and the gimbal overall connection layout matches the SimpleBGC32 recommended encoder-enabled modular design.
 
-This code is not at a Proof of Concept stage yet.  This README will be updated when that milestone is reached.  Most code here is currently a least-effort minimum to get something working.  Right now there are IMU drivers with an AHRS algorithm, encoder reading, LED control, some autodetect/autocalibrate/self-test and bootloader/flashing management (but no reflashing from GUI yet), rough motor driver support.  It is easily possible to go back to original firmware but make sure to back all your settings up.
+Most code here is currently a least-effort minimum to get something working.  Right now there are IMU drivers with an AHRS algorithm, encoder reading, LED control, some autodetect/autocalibrate/self-test and bootloader/flashing management (but no reflashing from GUI yet), rough motor driver support, RC channel and MODE button inputs.  It is easily possible to go back to original firmware but make sure to back all your settings up.
 
 ## Motivation
 
