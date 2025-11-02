@@ -6,20 +6,23 @@ compile build: .pio/build/simplebgc32_regular/firmware.bin
 # Bootloader detects the baudrate from our first byte sent to it so we decide the baudrate between 1200 and 115200
 bl_baudrate = 115200
 
-upload: .pio/build/simplebgc32_regular/firmware.bin /dev/ttyUSB0 stm32ld
+#port = /dev/rfcomm0 # bluetooth -- works with picocom but not with stm32ld
+port = /dev/ttyUSB0
+
+upload: .pio/build/simplebgc32_regular/firmware.bin $(port) stm32ld
 	# First place a jumper at FLASH pads on PilotFly H2 board then connect USB cable
 	# The 1 at the end is to start the new binary immediately, drop last param to avoid this
-	./stm32ld /dev/ttyUSB0 $(bl_baudrate) .pio/build/simplebgc32_regular/firmware.bin 1
+	./stm32ld $(port) $(bl_baudrate) .pio/build/simplebgc32_regular/firmware.bin 1
 	# Show serial port, ^a q to exit
-	picocom -b 115200 /dev/ttyUSB0
-boot: /dev/ttyUSB0 stm32ld
+	picocom -b 115200 $(port)
+boot: $(port) stm32ld
 	# Start the firmware if board is still in bootloader
-	./stm32ld /dev/ttyUSB0 $(bl_baudrate) 0 1
+	./stm32ld $(port) $(bl_baudrate) 0 1
 	# Show serial port, ^a q to exit
-	picocom -b 115200 /dev/ttyUSB0
-com: /dev/ttyUSB0
+	picocom -b 115200 $(port)
+com: $(port)
 	# Show serial port, ^a q to exit
-	picocom -b 115200 /dev/ttyUSB0
+	picocom -b 115200 $(port)
 
 # This is mainly for documentation and a bit of a hack
 stm32ld: utils/stm32ld.patch
