@@ -34,9 +34,11 @@ struct axes_calibrate_data_s {
 int axes_calibrate(struct axes_calibrate_data_s *data);
 void axes_q_to_angles(const struct axes_data_s *data, float *q, float *out_angles);
 void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        float *angles, float damp_factor, float *out_steps);
-void axes_rotvec_to_step(const struct axes_data_s *data, float *omega,
-        float *angles, float damp_factor, float *out_steps);
+        float *angles, float damp_factor, float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega);
+void axes_rotvec_to_step(const struct axes_data_s *data, float *new_omega_vec,
+        float *angles, float damp_factor, float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega);
 void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q);
 

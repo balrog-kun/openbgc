@@ -437,7 +437,8 @@ void axes_q_to_angles(const struct axes_data_s *data, float *to_q, float *out_an
  * With lambda == 0 it becomes delta theta = J^T * omega
  */
 void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        float *angles, float damp_factor, float *out_steps) {
+        float *angles, float damp_factor, float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega) {
     float omega[3];
 
     if (from_q) {
@@ -449,11 +450,12 @@ void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const f
     } else
         quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
 
-    axes_rotvec_to_step(data, omega, angles, damp_factor, out_steps);
+    axes_rotvec_to_step(data, omega, angles, damp_factor, cur_omega_vec, out_steps, out_cur_omega);
 }
 
-void axes_rotvec_to_step(const struct axes_data_s *data, float *omega, /* Note: modifies omega */
-        float *angles, float damp_factor, float *out_steps) {
+void axes_rotvec_to_step(const struct axes_data_s *data, float *new_omega_vec, /* Note: modifies new_omega_vec */
+        float *angles, float damp_factor, float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega) {
     float j[3][3], jtj[3][3];
 
     /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
@@ -466,11 +468,16 @@ void axes_rotvec_to_step(const struct axes_data_s *data, float *omega, /* Note: 
     /* TODO: come up with a good enough fallback if they are, somehow force out_steps[2] to 0 */
 
     /* Calc J^T * omega */
-    vector_mult_matrix(omega, j);                        /* 9 multiplications */
+    vector_mult_matrix(new_omega_vec, j);                /* 9 multiplications */
+
+    if (out_cur_omega) {
+        memcpy(out_cur_omega, cur_omega_vec, 3 * sizeof(float));
+        vector_mult_matrix(out_cur_omega, j);            /* 9 multiplications */
+    }
 
     /* If no damping, we're done */
     if (damp_factor != 0.0f) {
-        memcpy(out_steps, omega, sizeof(omega));
+        memcpy(out_steps, new_omega_vec, 3 * sizeof(float));
         return;
     }
 
@@ -486,7 +493,7 @@ void axes_rotvec_to_step(const struct axes_data_s *data, float *omega, /* Note: 
      * TODO: check if jtj fits the conditions for Cholesky Decomposition (or just try it, see if it works),
      * then see if the code ends up being faster
      */
-    vector_solve(jtj, omega, out_steps);                 /* ~51 multiplications */
+    vector_solve(jtj, new_omega_vec, out_steps);         /* ~51 multiplications */
 }
 
 /* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
