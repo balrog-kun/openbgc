@@ -22,6 +22,8 @@ struct motor_bldc_s {
     float prev_theta;
     float prev_omega;
     uint32_t prev_ts;
+    float ext_omega;
+    bool have_ext_omega;
     float kdrag/*B*/, kcoulomb, kstiction;
 };
 
@@ -213,9 +215,10 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         dtheta += 360.0f;
 
     invdt = 1000000.0f / (motor->prev_ts - prev_ts); /* TODO: zero check */
-    omega = dtheta * invdt;
+    omega = motor->have_ext_omega ? motor->ext_omega : (dtheta * invdt);
     accel = (omega - motor->prev_omega) * invdt;
     motor->prev_omega = omega;
+    motor->have_ext_omega = false;
 
     error = motor->target_omega - (omega + accel * motor->kd);
     /* Basic PID (note we applied Kd before Kp so Kd is strictly in time units) */
@@ -319,4 +322,20 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         bldc->v_max = val;
         break;
     }
+}
+
+void motor_bldc_override_cur_omega(obgc_motor *motor, float val) {
+    struct motor_bldc_s *bldc = (struct motor_bldc_s *) motor;
+
+    /* If we have a more precise angular velocity reading than what we get from the encoder, use that.
+     * This is very beneficial at low velocities where the encoder resolution is way too low.  It is
+     * Ok as the source of the electrical angle (indirectly) which we also need and we need absolute
+     * values, so it's a good fit.  But the velocity we get from it is just too low-resolution so if
+     * we have even a relative but higher-resolution guess based on sensors such as gyroscopes, we
+     * stand to benefit from them and should be able to lower the Ki parameter and get less jittery
+     * movement.
+     */
+
+    bldc->ext_omega = val;
+    bldc->have_ext_omega = true;
 }
