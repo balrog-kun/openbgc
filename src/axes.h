@@ -12,6 +12,7 @@
  *
  * It doesn't matter if there is *no* frame IMU -- we can still have a coordinate system based on where it would have been.
  */
+/* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 struct axes_data_s {
     float axes[3][3];
     int axis_to_encoder[3]; /* -1 for no encoder */

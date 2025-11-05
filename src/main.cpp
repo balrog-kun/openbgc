@@ -14,6 +14,7 @@ extern "C" {
 #include "moremath.h"
 #include "control.h"
 #include "util.h"
+#include "storage.h"
 
 #include "main.h"
 }
@@ -72,10 +73,10 @@ extern "C" {
  * whether a pull-up or pull-down is enabled, suggesting there may be something connected.
  * PA11 shows some pattern too.
  *
- * Candidates are:
- *   * yaw motor current sense,
- *   * the onboard 32kB MicroChip EEPROM,
+ * Some candidates are:
+ *   * yaw motor current or temperature sense,
  *   * IMU interrupt pin.
+ *   * ...
  */
 
 /* TODO: save in flash */
@@ -111,6 +112,7 @@ static bool have_axes;
 static struct control_data_s control;
 struct control_settings_s control_settings;
 static bool control_enable;
+static bool have_config;
 
 static float rel_q[4];   /* aux: true or estimated (from encoders) expression of main_ahrs->q in frame_ahrs->q frame of ref */
 static float frame_q[4]; /* aux: frame_ahrs->q or its estimation from main_ahrs->q x rel_q^-1 */
@@ -135,7 +137,7 @@ static void print_mcu() {
     /*
      * Specific register addresses for F3 in RM0316, F4 RM0090:
      *  0x1ffff7ac or UID_BASE: Unique Device ID
-     *  0x1fffd7cc or FLASHSIZE_BASE: Flash Size
+     *  0x1ffff7cc or FLASHSIZE_BASE: Flash Size
      *  0xe0042000 or DBGMCU->IDCODE/DBGMCU_BASE: MCU Device ID
      * But use the HAL functions where possbile
      */
@@ -152,12 +154,12 @@ static void print_mcu() {
     serial->print(", Unique-dev-ID: ");
     serial->print(uid[0], HEX);
     serial->print(", Flash size: ");
-    serial->print((*(uint32_t *) FLASHSIZE_BASE) & 0xffff);
+    serial->print(*(uint16_t *) FLASH_SIZE_DATA_REGISTER);
     serial->print("kB, CPUID: ");
     serial->println(SCB->CPUID, HEX);
 }
 
-void scan_i2c() {
+static void scan_i2c() {
     serial->println("Scanning I2C bus...");
     uint8_t found = 0;
     for (uint8_t address = 1; address < 127; address++) {
@@ -701,6 +703,23 @@ static void misc_debug_update(void *) {
 }
 static struct main_loop_cb_s misc_debug_cb = { .cb = misc_debug_update };
 
+static void config_read(void) {
+    if (storage_read() == 0) {
+        serial->println("Config version " STRINGIFY(STORAGE_CONFIG_VERSION) " loaded");
+        have_config = true;
+    } else if (have_config)
+        serial->println("Config failed to load");
+    else {
+        serial->println("Config failed to load, will reset to defaults");
+        memset(&config, 0, sizeof(config));
+    }
+}
+
+static void config_write(void) {
+    if (storage_write() == 0)
+        serial->println("Config version " STRINGIFY(STORAGE_CONFIG_VERSION) " saved");
+}
+
 static void serial_ui_run(void *) {
     uint8_t cmd;
     int i, param;
@@ -1011,6 +1030,12 @@ handle_set_param:
         }
 
         break;
+    case 'r':
+        config_read();
+        break;
+    case 'w':
+        config_write();
+        break;
     case ' ':
         if (control_enable) {
             stop_control();
@@ -1119,6 +1144,11 @@ void setup(void) {
     pinMode(SBGC_LED_GREEN, OUTPUT);
     pinMode(SBGC_VBAT, INPUT);
     pinMode(SBGC_IN_MODE, INPUT_PULLUP);
+
+    /* Initialize storage */
+    storage_init_internal_flash();
+    // storage_init(MC_24FC256_BASE_ADDR + 0, i2c, 32 * 1024);
+    config_read();
 
     /* Initialize IMUs */
     main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);

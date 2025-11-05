@@ -17,6 +17,7 @@ typedef struct obgc_bldc_with_encoder_calib_data_s {
     int8_t sensor_direction;
 } obgc_bldc_with_encoder_calib_data;
 
+/* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 typedef struct obgc_motor_calib_data_s {
     union {
         struct obgc_bldc_with_encoder_calib_data_s bldc_with_encoder;
