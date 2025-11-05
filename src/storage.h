@@ -2,12 +2,14 @@
 #ifndef STORAGE_H
 #define STORAGE_H
 
-#include <Wire.h>
 #include <stdbool.h>
 
-#include "motor.h"
+extern "C" {
 #include "axes.h"
 #include "control.h"
+}
+#include "motor.h"
+#include "i2c.h"
 
 #define STORAGE_CONFIG_VERSION 1
 
@@ -27,8 +29,10 @@ extern struct obgc_storage_config_s {
     struct control_settings_s control;
 } config;
 
+#define MC_24FC256_BASE_ADDR 0x50
+
 void storage_init_internal_flash(void);
-void storage_init_i2c_eeprom(uint8_t addr, TwoWire *i2c, uint32_t size);
+void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint32_t size);
 
 int storage_read(void);
 int storage_write(void);

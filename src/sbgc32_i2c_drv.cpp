@@ -1,6 +1,4 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Wire.h>
-
 #include "util.h"
 
 #include "sbgc32_i2c_drv.h"
@@ -32,7 +30,7 @@ struct sbgc32_i2c_drv_s {
     obgc_encoder enc_obj;
     obgc_foc_driver motor_drv_obj;
     uint8_t addr;
-    TwoWire *i2c;
+    obgc_i2c *i2c;
 };
 
 static int32_t sbgc32_i2c_drv_encoder_read(obgc_encoder *enc) {
@@ -120,7 +118,7 @@ static obgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
     .free              = sbgc32_i2c_drv_motor_free,
 };
 
-sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ) {
+sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, obgc_i2c *i2c, enum sbgc32_i2c_drv_encoder_type typ) {
     struct sbgc32_i2c_drv_s *dev = (struct sbgc32_i2c_drv_s *) malloc(sizeof(struct sbgc32_i2c_drv_s));
     int i;
 

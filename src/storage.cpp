@@ -6,9 +6,8 @@
 #include "util.h"
 extern "C" {
 #include "main.h"
-
-#include "storage.h"
 }
+#include "storage.h"
 
 /* Support either the on-chip embedded flash or the external Microchip 24FC256
  * I2C EEPROM for storage.
@@ -16,7 +15,7 @@ extern "C" {
  * The internal flash is rated for 10k to 100k erase cycles.  The 24FC256 EEPROM
  * is rated for 1M write cycles.
  */
-static TwoWire *i2c_bus;
+static obgc_i2c *i2c_bus;
 static uint8_t i2c_addr;
 
 struct storage_image_s {
@@ -143,7 +142,7 @@ void storage_init_internal_flash(void) {
     i2c_bus = NULL;
 }
 
-void storage_init_i2c_eeprom(uint8_t addr, TwoWire *i2c, uint32_t size) {
+void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint32_t size) {
     i2c_bus = i2c;
     i2c_addr = addr;
 }

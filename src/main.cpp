@@ -1,11 +1,12 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <Arduino.h>
-#include <Wire.h>
 #include <SimpleFOC.h>
 
+#include "i2c.h"
 #include "imu-mpu6050.h"
 #include "sbgc32_i2c_drv.h"
 #include "encoder-as5600.h"
+#include "storage.h"
 extern "C" {
 #include "motor-pwm.h"
 #include "motor-bldc.h"
@@ -14,7 +15,6 @@ extern "C" {
 #include "moremath.h"
 #include "control.h"
 #include "util.h"
-#include "storage.h"
 
 #include "main.h"
 }
@@ -91,7 +91,7 @@ static sbgc32_i2c_drv *drv_modules[3];
 static obgc_encoder *encoders[3];
 static obgc_foc_driver *motor_drivers[3];
 static obgc_motor *motors[3];
-static TwoWire *i2c;
+static obgc_i2c *i2c;
 static HardwareSerial *serial;
 
 static bool use_motor[3], set_use_motor;
@@ -147,12 +147,12 @@ static void print_mcu() {
     serial->println(SCB->CPUID, HEX);
 }
 
-static void scan_i2c() {
+static void scan_i2c(obgc_i2c *bus) {
     serial->println("Scanning I2C bus...");
     uint8_t found = 0;
     for (uint8_t address = 1; address < 127; address++) {
-        i2c->beginTransmission(address);
-        uint8_t error = i2c->endTransmission();
+        bus->beginTransmission(address);
+        uint8_t error = bus->endTransmission();
 
         if (error == 0) {
             serial->print("Device found at 0x");
@@ -1120,7 +1120,7 @@ void setup(void) {
     serial->println("Initializing");
 
     /* Initialize I2C */
-    i2c = new TwoWire(SBGC_SDA, SBGC_SCL);
+    i2c = new obgc_i2c_subcls<TwoWire>(SBGC_SDA, SBGC_SCL);
     i2c->begin();
     i2c->setClock(400000); /* 400kHz I2C */
 

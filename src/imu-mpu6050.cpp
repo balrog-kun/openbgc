@@ -1,6 +1,4 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Wire.h>
-
 #include "imu-mpu6050.h"
 
 /* Register definitions */
@@ -19,7 +17,7 @@
 struct mpu6050_s {
     obgc_imu obj;
     uint8_t i2c_addr;
-    TwoWire *i2c;
+    obgc_i2c *i2c;
     int16_t last_temp;
 };
 
@@ -228,7 +226,7 @@ static obgc_imu_class mpu6050_imu_class = {
     .gyro_scale  = 131,   /* LSBs per 1deg/s */
 };
 
-obgc_imu *mpu6050_new(uint8_t i2c_addr, TwoWire *i2c) {
+obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
     struct mpu6050_s *dev = (struct mpu6050_s *) malloc(sizeof(struct mpu6050_s));
 
     dev->obj.cls = &mpu6050_imu_class;

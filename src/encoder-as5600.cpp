@@ -1,6 +1,4 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Wire.h>
-
 #include "encoder-as5600.h"
 
 /* Register definitions */
@@ -19,7 +17,7 @@
 struct as5600_s {
     obgc_encoder obj;
     uint8_t i2c_addr;
-    TwoWire *i2c;
+    obgc_i2c *i2c;
     bool i2c_err;
 };
 
@@ -46,7 +44,7 @@ static obgc_encoder_class as5600_encoder_class = {
     .scale = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
 };
 
-obgc_encoder *as5600_new(TwoWire *i2c) {
+obgc_encoder *as5600_new(obgc_i2c *i2c) {
     struct as5600_s *dev = (struct as5600_s *) malloc(sizeof(struct as5600_s));
 
     memset(dev, 0, sizeof(*dev));

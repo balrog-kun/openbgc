@@ -2,10 +2,9 @@
 #ifndef SBGC32_I2C_DRV_H
 #define SBGC32_I2C_DRV_H
 
-#include <Wire.h>
-
 #include "encoder.h"
 #include "motor.h"
+#include "i2c.h"
 
 #define SBGC32_I2C_DRV_ADDR(n) (0x19 + (n) - 1)
 
@@ -23,7 +22,7 @@ enum sbgc32_i2c_drv_encoder_type {
 
 typedef struct sbgc32_i2c_drv_s sbgc32_i2c_drv;
 
-sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, TwoWire *i2c, enum sbgc32_i2c_drv_encoder_type typ);
+sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, obgc_i2c *i2c, enum sbgc32_i2c_drv_encoder_type typ);
 void sbgc32_i2c_drv_free(sbgc32_i2c_drv *dev);
 obgc_encoder *sbgc32_i2c_drv_get_encoder(sbgc32_i2c_drv *dev);
 obgc_foc_driver *sbgc32_i2c_drv_get_motor_drv(sbgc32_i2c_drv *dev);
