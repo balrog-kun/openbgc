@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <FlexWire.h>
 
 /* Common base class for TwoWire and other I2C imlpementations (software or hardware) since
  * none of the common libraries declare a usable base class.  We could maybe have the template
@@ -64,7 +65,7 @@ public:
     }
 
     void begin() override { wire->begin(); }
-    void end() override { wire->end(); }
+    void end() override { /*wire->end(); disabled until FlexWire fix it */ }
     void setClock(uint32_t frequency) { wire->setClock(frequency); }
     void beginTransmission(uint8_t address) override { wire->beginTransmission(address); }
     uint8_t endTransmission(bool stop_condition = true) override {

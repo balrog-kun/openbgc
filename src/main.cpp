@@ -28,8 +28,11 @@ extern "C" {
 #define SBGC_LED_GREEN     PB12
 /* Red LED apparently always-on, not software controllable */
 
-#define SBGC_SDA           PA14
-#define SBGC_SCL           PA15
+#define SBGC_SDA_MAIN      PA14  /* The sensors and extension boards are on this bus */
+#define SBGC_SCL_MAIN      PA15
+
+#define SBGC_SDA_AUX       PB7   /* The EEPROM chip is on this bus (something else too) */
+#define SBGC_SCL_AUX       PB6
 
 #define SBGC_VBAT          PA0   /* Through R17 (140k?) to BAT+ and R18 to GND (4.7k) */
 #define SBGC_VBAT_R_BAT    140000
@@ -67,18 +70,6 @@ extern "C" {
 #define SBGC_IN_RC_ROLL    PB4
 #define SBGC_IN_RC_PIT     SBGC_IN_PITCH
 
-/* TODO: visually, at least the following extra pins seem to be connected to something:
- * PB6, PB7
- * Additionally PA8, PA12 and PA13 are not floating, i.e. analogRead() reads the same value
- * whether a pull-up or pull-down is enabled, suggesting there may be something connected.
- * PA11 shows some pattern too.
- *
- * Some candidates are:
- *   * yaw motor current or temperature sense,
- *   * IMU interrupt pin.
- *   * ...
- */
-
 /* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
 #define SBGC_MOTOR0_PAIRS  11
 static const struct obgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
@@ -91,7 +82,7 @@ static sbgc32_i2c_drv *drv_modules[3];
 static obgc_encoder *encoders[3];
 static obgc_foc_driver *motor_drivers[3];
 static obgc_motor *motors[3];
-static obgc_i2c *i2c;
+static obgc_i2c *i2c_main, *i2c_aux;
 static HardwareSerial *serial;
 
 static bool use_motor[3], set_use_motor;
@@ -169,6 +160,21 @@ static void scan_i2c(obgc_i2c *bus) {
         serial->print(found);
         serial->println(" device(s) found");
     }
+
+    /*
+     * PilotFly H2 output:
+     * main:
+     * Device found at 0x19 -- SBGC32_I2C_DRV_ADDR(1)
+     * Device found at 0x1c -- SBGC32_I2C_DRV_ADDR(4)
+     * Device found at 0x36 -- AS5600 encoder
+     * Device found at 0x68 -- MPU6050_DEFAULT_ADDR
+     * Device found at 0x69 -- MPU6050_ALT_ADDR
+     * 5 device(s) found
+     * aux:
+     * Device found at 0x50 -- MC_24FC256_BASE_ADDR
+     * Device found at 0x64 -- unmarked 8-pin chip, no register reads by address, reads 0x04 0x11 0x33 0x43 once a second.
+     * 2 device(s) found
+     */
 }
 
 static const uint8_t probe_out_pins[] = {
@@ -540,7 +546,8 @@ static void shutdown_to_bl(void) {
     for (i = 0; i < 3; i++)
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
-    i2c->end();
+    i2c_main->end();
+    i2c_aux->end();
     serial->end();
     digitalWrite(SBGC_LED_GREEN, 0);
     pinMode(SBGC_LED_GREEN, INPUT);
@@ -1120,12 +1127,19 @@ void setup(void) {
     serial->println("Initializing");
 
     /* Initialize I2C */
-    i2c = new obgc_i2c_subcls<TwoWire>(SBGC_SDA, SBGC_SCL);
-    i2c->begin();
-    i2c->setClock(400000); /* 400kHz I2C */
+    /* Cannot use hardware I2C registers for both busses because PA14/PA15 and PB7/PB6
+     * both map to the I2C1 hardware instance.  Each instance only controls one bus.
+     */
+    i2c_main = new obgc_i2c_subcls<TwoWire>(SBGC_SDA_MAIN, SBGC_SCL_MAIN);
+    i2c_main->begin();
+    i2c_main->setClock(400000); /* 400kHz I2C */
+
+    i2c_aux = new obgc_i2c_subcls<FlexWire>(SBGC_SDA_AUX, SBGC_SCL_AUX);
+    i2c_aux->begin();
 
     /* Board debug info */
-    // scan_i2c();
+    // scan_i2c(i2c_main);
+    // scan_i2c(i2c_aux);
     print_mcu();
     // probe_out_pins_setup();
     // probe_in_pins_setup();
@@ -1136,11 +1150,11 @@ void setup(void) {
 
     /* Initialize storage */
     storage_init_internal_flash();
-    // storage_init(MC_24FC256_BASE_ADDR + 0, i2c, 32 * 1024);
+    // storage_init(MC_24FC256_BASE_ADDR + 0, i2c_aux, 32 * 1024);
     config_read();
 
     /* Initialize IMUs */
-    main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c);
+    main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c_main);
     if (!main_imu) {
         serial->println("Main MPU6050 initialization failed!");
         while (1);
@@ -1164,14 +1178,14 @@ void setup(void) {
 
     /* TODO: frame_ahrs -- not crucial though, we fill in for it with encoder data and forget about yaw drift */
 
-    drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-    drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     if (drv_modules[0] && drv_modules[1])
         serial->println("SBGC32_I2C_Drv initialized");
     else
         serial->println("SBGC32_I2C_Drv init failed");
 
-    encoders[0] = as5600_new(i2c);
+    encoders[0] = as5600_new(i2c_main);
     encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
     encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
