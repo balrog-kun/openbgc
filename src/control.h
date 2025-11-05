@@ -7,7 +7,9 @@ struct control_settings_s {
     /* Geometry config */
     float home_q[4];
     float home_frame_q[4];
+    bool have_home;
     float forward_vec[3];
+    bool have_forward;
 
     /* Control config */
     bool keep_yaw;

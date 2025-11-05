@@ -111,8 +111,6 @@ static bool have_axes;
 static struct control_data_s control;
 struct control_settings_s control_settings;
 static bool control_enable;
-static bool have_home;
-static bool have_forward;
 
 static float rel_q[4];   /* aux: true or estimated (from encoders) expression of main_ahrs->q in frame_ahrs->q frame of ref */
 static float frame_q[4]; /* aux: frame_ahrs->q or its estimation from main_ahrs->q x rel_q^-1 */
@@ -407,7 +405,32 @@ void main_loop_sleep(void) {
     next_update += TARGET_INTERVAL;
 }
 
-static void setup_control(void) {
+static void control_update_aux_values(void) {
+    /* The "az" may be a misnomer, we want the angle from positive X axis
+     * (in the positive yaw direction) for quaternion_to/from_euler() to work consistently
+     * with the "forward" naming, i.e. so that roll is always around the "forward" vector
+     * (X at 0-yaw) and pitch is around the "sideways" vector (Y at 0-yaw).
+     * (Traditionally azimuth is from the north but we use ENU so north is Y+).
+     */
+    if (control.settings->have_forward)
+        control.forward_az = atan2f(control.settings->forward_vec[1], control.settings->forward_vec[0]);
+    else
+        control.forward_az = M_PI / 2;
+
+    control.forward_sincos2[0] = sinf(control.forward_az / 2);
+    control.forward_sincos2[1] = cosf(control.forward_az / 2);
+
+    if (control.settings->have_home) {
+        /* Rotate forward_az radians in the negative yaw direction to align "forward" with 0-yaw */
+        quaternion_rotate_z_to(control.settings->home_q, control.forward_sincos2[1], -control.forward_sincos2[0],
+                control.aligned_home_q);
+        quaternion_rotate_z_to(control.settings->home_frame_q, control.forward_sincos2[1], -control.forward_sincos2[0],
+                control.conj_aligned_home_frame_q);
+        control.conj_aligned_home_frame_q[0] = -control.conj_aligned_home_frame_q[0];
+    }
+}
+
+static void control_setup(void) {
     control.main_ahrs = main_ahrs;
     control.frame_ahrs = frame_ahrs;
     control.encoders = encoders;
@@ -447,6 +470,8 @@ static void setup_control(void) {
      * consider things like mechanical limits on some joints.
      */
     control.settings->ahrs_velocity_kp = 0.05;
+
+    control_update_aux_values();
 }
 
 static void stop_control(void) {
@@ -850,11 +875,18 @@ handle_set_param:
         serial->println("Saving current camera and base orientations as home orientations (0-pitch, 0-roll)"); /* And 0-yaw if not following */
         memcpy(control.settings->home_q, main_ahrs->q, sizeof(control.settings->home_q));
         memcpy(control.settings->home_frame_q, frame_q, sizeof(control.settings->home_frame_q));
-        have_home = 1;
+        control.settings->have_home = 1;
         /* TODO: if have_forward, perhaps recalculate .forward_* and .aligned_* */
+        control.settings->have_forward = 0;
+        control_update_aux_values();
         break;
     case 'K':
-        if (!have_home) {
+        if (control_enable) {
+            serial->println("Control must be disabled (' ')");
+            break;
+        }
+
+        if (!control.settings->have_home) {
             serial->println("Set home orientation first ('k')");
             break;
         }
@@ -877,7 +909,7 @@ handle_set_param:
          * TODO: add shortcut commands to set the forward direction as parallel or perpendicular (in horizontal plane) to one of the
          * axes and not require any user action.
          */
-        have_forward = 0;
+        control.settings->have_forward = 0;
 
         {
             float angle;
@@ -902,23 +934,8 @@ handle_set_param:
         serial->println("Saving the rotation axis as the forward direction");
         control.settings->forward_vec[2] = 0.0f;
         vector_normalize(control.settings->forward_vec);
-        have_forward = 1;
-
-        /* The "az" may be a misnomer, we want the angle from positive X axis
-         * (in the positive yaw direction) for quaternion_to/from_euler() to work consistently
-         * with the "forward" naming, i.e. so that roll is always around the "forward" vector
-         * (X at 0-yaw) and pitch is around the "sideways" vector (Y at 0-yaw).
-         * (Traditionally azimuth is from the north but we use ENU so north is Y+).
-         */
-        control.forward_az = atan2f(control.settings->forward_vec[1], control.settings->forward_vec[0]);
-        control.forward_sincos2[0] = sinf(control.forward_az / 2);
-        control.forward_sincos2[1] = cosf(control.forward_az / 2);
-        /* Rotate forward_az radians in the negative yaw direction to align "forward" with 0-yaw */
-        quaternion_rotate_z_to(control.settings->home_q, control.forward_sincos2[1], -control.forward_sincos2[0],
-                control.aligned_home_q);
-        quaternion_rotate_z_to(control.settings->home_frame_q, control.forward_sincos2[1], -control.forward_sincos2[0],
-                control.conj_aligned_home_frame_q);
-        control.conj_aligned_home_frame_q[0] = -control.conj_aligned_home_frame_q[0];
+        control.settings->have_forward = 1;
+        control_update_aux_values();
         break;
         break;
     case 't':
@@ -992,7 +1009,7 @@ handle_set_param:
             break;
         }
 
-        if (!have_axes || !have_home || !have_forward || !motors_on || !vbat_ok) {
+        if (!have_axes || !config.control.have_home || !config.control.have_forward || !motors_on || !vbat_ok) {
             serial->println("Motors must be on and calibration complete");
             break;
         }
@@ -1176,7 +1193,7 @@ void setup(void) {
 
     serial->println("Motors early init done");
 
-    setup_control();
+    control_setup();
 
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
