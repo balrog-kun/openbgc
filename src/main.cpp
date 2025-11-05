@@ -79,14 +79,6 @@ extern "C" {
  *   * ...
  */
 
-/* TODO: save in flash */
-/* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
-static const struct obgc_motor_calib_data_s motor_calib[3] = {
-    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 146.7, .sensor_direction = 1 } },  /* Yaw   (axis 0) */
-    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 91.11, .sensor_direction = -1 } }, /* Pitch (axis 2) */
-    { .bldc_with_encoder = { .pole_pairs = 11, .zero_electric_offset = 64.64, .sensor_direction = 1 } },  /* Roll  (axis 1) */
-};
-
 /* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
 #define SBGC_MOTOR0_PAIRS  11
 static const struct obgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
@@ -106,11 +98,7 @@ static bool use_motor[3], set_use_motor;
 static obgc_motor_bldc_param set_param = __BLDC_PARAM_MAX;
 static int set_param_power = -1;
 
-static struct axes_data_s axes;
-static bool have_axes;
-
 static struct control_data_s control;
-struct control_settings_s control_settings;
 static bool control_enable;
 static bool have_config;
 
@@ -374,7 +362,7 @@ static void main_ahrs_from_encoders_debug(void) {
     char buf[128];
     static float q_prev[4] = { 1, 0, 0, 0 };
 
-    if (quiet || !have_axes)
+    if (quiet || !config.have_axes)
         return;
 
     /* We want the global main_ahrs->q estimated from frame_ahrs + rel_q (encoders).
@@ -445,41 +433,43 @@ static void control_setup(void) {
     control.frame_ahrs = frame_ahrs;
     control.encoders = encoders;
     control.motors = motors;
-    control.axes = &axes;
+    control.axes = &config.axes;
 
     control.dt = 1.0f / TARGET_LOOP_RATE;
     control.rel_q = rel_q;
     control.frame_q = frame_q;
 
-    control.settings = &control_settings;
+    control.settings = &config.control;
 
-    /* Defaults */
-    control.settings->keep_yaw = true;
-    control.settings->follow[0] = true;  /* Yaw only */
-    control.settings->follow[1] = false;
-    control.settings->follow[2] = false;
-    control.settings->max_accel = 30 * D2R; /* rad/s/s */
-    control.settings->max_vel = 60 * D2R;   /* rad/s */
+    if (!have_config) {
+        /* Defaults */
+        control.settings->keep_yaw = true;
+        control.settings->follow[0] = true;  /* Yaw only */
+        control.settings->follow[1] = false;
+        control.settings->follow[2] = false;
+        control.settings->max_accel = 30 * D2R; /* rad/s/s */
+        control.settings->max_vel = 60 * D2R;   /* rad/s */
 
-    /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
-     * rotational speed we need to get from current camera orientation to the desired one (target),
-     * we depend on the whole feedback look through the motor PID up to the IMU and AHRS to
-     * propagate and reflect the speed changes we command with little delay.  If there's any delay,
-     * we'll be applying the acceleration limit to a velocity we commanded some iterations ago and
-     * effectively the rate of acceleration will be much lower than what is requested.  And there's
-     * an inherent delay in the sensors.  And a delay in that the current omega the AHRS sees is
-     * the difference between the current and the last iteration i.e. the average speed over this
-     * period (if we use the IMU FIFO), and this short period is the time the motor PID has only
-     * started to apply the new torque so it cannot immediately show the speed we commanded.
-     *
-     * So depending on how well the loop is tuned, set this higher (up to 1.0) to fully depend on
-     * the current physical rotiation rate from the gyro or lower and especially low when in
-     * development or tuning.  control.c will replace the remaining portion of the velocity from
-     * the gyro with the velocity it itself has most recently commanded, at the cost of responding
-     * more slowly to speed changes due to outside physical forces.  This may even be desired but
-     * consider things like mechanical limits on some joints.
-     */
-    control.settings->ahrs_velocity_kp = 0.05;
+        /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
+         * rotational speed we need to get from current camera orientation to the desired one (target),
+         * we depend on the whole feedback look through the motor PID up to the IMU and AHRS to
+         * propagate and reflect the speed changes we command with little delay.  If there's any delay,
+         * we'll be applying the acceleration limit to a velocity we commanded some iterations ago and
+         * effectively the rate of acceleration will be much lower than what is requested.  And there's
+         * an inherent delay in the sensors.  And a delay in that the current omega the AHRS sees is
+         * the difference between the current and the last iteration i.e. the average speed over this
+         * period (if we use the IMU FIFO), and this short period is the time the motor PID has only
+         * started to apply the new torque so it cannot immediately show the speed we commanded.
+         *
+         * So depending on how well the loop is tuned, set this higher (up to 1.0) to fully depend on
+         * the current physical rotiation rate from the gyro or lower and especially low when in
+         * development or tuning.  control.c will replace the remaining portion of the velocity from
+         * the gyro with the velocity it itself has most recently commanded, at the cost of responding
+         * more slowly to speed changes due to outside physical forces.  This may even be desired but
+         * consider things like mechanical limits on some joints.
+         */
+        control.settings->ahrs_velocity_kp = 0.05;
+    }
 
     control_update_aux_values();
 }
@@ -818,7 +808,7 @@ handle_set_param:
                 if (!encoders[i])
                     continue;
 
-                scale = have_axes ? axes.encoder_scale[i] : 1.0f;
+                scale = config.have_axes ? config.axes.encoder_scale[i] : 1.0f;
                 angles[i] = encoders[i]->reading * scale + (scale < 0 ? 360 : 0);
 
                 serial->print("Encoder ");
@@ -827,7 +817,7 @@ handle_set_param:
                 serial->println(angles[i]);
             }
 
-            if (have_axes) {
+            if (config.have_axes) {
                 float q[4], conj_rel_q[4] = INIT_CONJ_Q(rel_q);
                 float angles_est[3], mapped[3];
 
@@ -839,10 +829,10 @@ handle_set_param:
                     memcpy(q, main_ahrs->q, 4 * sizeof(float));
 
                 /* Try to estimate the same angles from IMU data */
-                axes_q_to_angles(&axes, q, angles_est);
-                mapped[axes.axis_to_encoder[0]] = angles_est[0];
-                mapped[axes.axis_to_encoder[1]] = angles_est[1];
-                mapped[axes.axis_to_encoder[2]] = angles_est[2];
+                axes_q_to_angles(&config.axes, q, angles_est);
+                mapped[config.axes.axis_to_encoder[0]] = angles_est[0];
+                mapped[config.axes.axis_to_encoder[1]] = angles_est[1];
+                mapped[config.axes.axis_to_encoder[2]] = angles_est[2];
                 serial->print("Estimated = ");
                 serial->print(mapped[0] * R2D);
                 serial->print(", ");
@@ -877,11 +867,11 @@ handle_set_param:
         cs.frame_ahrs = frame_ahrs;
         cs.encoders = encoders;
         cs.print = calibrate_print;
-        cs.out = &axes;
+        cs.out = &config.axes;
 
         /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
         quiet = 1;
-        have_axes = !axes_calibrate(&cs);
+        config.have_axes = !axes_calibrate(&cs);
         quiet = 0;
 
         /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
@@ -889,9 +879,9 @@ handle_set_param:
          * and so far this seems to work well.  The scales from axes_calibrate() inherently include some
          * amount of noise so for now we'll bet on the 1.0 scale giving lower error and override the scales.
          */
-        axes.encoder_scale[0] = copysignf(1.0f, axes.encoder_scale[0]);
-        axes.encoder_scale[1] = copysignf(1.0f, axes.encoder_scale[1]);
-        axes.encoder_scale[2] = copysignf(1.0f, axes.encoder_scale[2]);
+        config.axes.encoder_scale[0] = copysignf(1.0f, config.axes.encoder_scale[0]);
+        config.axes.encoder_scale[1] = copysignf(1.0f, config.axes.encoder_scale[1]);
+        config.axes.encoder_scale[2] = copysignf(1.0f, config.axes.encoder_scale[2]);
         break;
     case 'k':
         if (control_enable) {
@@ -1011,20 +1001,19 @@ handle_set_param:
         }
 
         for (i = 0; i < 3; i++) {
-            struct obgc_motor_calib_data_s data;
-
             if (!motors[i] || !use_motor[i])
                 continue;
 
             if (motors[i]->cls->recalibrate(motors[i]) != 0)
                 serial->println("Motor calibration failed");
-            else if (motors[i]->cls->get_calibration(motors[i], &data) != 0)
+            else if (motors[i]->cls->get_calibration(motors[i], &config.motor_calib[i]) != 0)
                 serial->println("Motor calibration no data");
             else {
                 char msg[200];
                 sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
-                        i, data.bldc_with_encoder.pole_pairs, data.bldc_with_encoder.zero_electric_offset,
-                        data.bldc_with_encoder.sensor_direction);
+                        i, config.motor_calib[i].bldc_with_encoder.pole_pairs,
+                        config.motor_calib[i].bldc_with_encoder.zero_electric_offset,
+                        config.motor_calib[i].bldc_with_encoder.sensor_direction);
                 serial->println(msg);
             }
         }
@@ -1042,7 +1031,7 @@ handle_set_param:
             break;
         }
 
-        if (!have_axes || !config.control.have_home || !config.control.have_forward || !motors_on || !vbat_ok) {
+        if (!config.have_axes || !config.control.have_home || !config.control.have_forward || !motors_on || !vbat_ok) {
             serial->println("Motors must be on and calibration complete");
             break;
         }
@@ -1216,9 +1205,10 @@ void setup(void) {
     motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
     motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
 
+    /* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
     for (i = 0; i < 3; i++) {
         motors[i] = motor_bldc_new(encoders[i], motor_drivers[i],
-                motor_calib[i].bldc_with_encoder.pole_pairs ? &motor_calib[i] : NULL);
+                config.motor_calib[i].bldc_with_encoder.pole_pairs ? &config.motor_calib[i] : NULL);
 
         motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
@@ -1290,8 +1280,8 @@ void loop(void) {
     for (i = 0; i < 3; i++)
         encoder_update(encoders[i]);
 
-    if (have_axes)
-        axes_precalc_rel_q(&axes, encoders, main_ahrs->q, rel_q, frame_q);
+    if (config.have_axes)
+        axes_precalc_rel_q(&config.axes, encoders, main_ahrs->q, rel_q, frame_q);
 
     if (control_enable)
         control_step(&control);
