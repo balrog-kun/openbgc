@@ -1,7 +1,11 @@
+ifeq ($(V), 1)
+	pio_verbose=-v
+endif
+
 all: compile
 compile build: .pio/build/simplebgc32_regular/firmware.bin
 .pio/build/simplebgc32_regular/firmware.bin: src/*.c src/*.cpp src/*.h
-	pio run
+	pio run $(pio_verbose)
 
 # Bootloader detects the baudrate from our first byte sent to it so we decide the baudrate between 1200 and 115200
 bl_baudrate = 115200
