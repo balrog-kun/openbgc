@@ -240,7 +240,23 @@ start:
 
     switch (crash_usart_read(USART1)) {
     case 'r':
-        goto start;
+        break;
+    case 'R':
+        /* Same as shutdown_to_bl(), see comments there */
+        __disable_irq();
+        USB->CNTR = 0x0003;
+        HAL_RCC_DeInit();
+        SysTick->CTRL = 0;
+        SysTick->LOAD = 0;
+        SysTick->VAL = 0;
+        for (int i = 0; i < sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0]); i++) {
+            NVIC->ICER[i] = 0xffffffff;
+            NVIC->ICPR[i] = 0xffffffff;
+        }
+        __set_MSP(*(uint32_t *) 0x1fffd800);
+        __set_PSP(*(uint32_t *) 0x1fffd800);
+        ((void (*)(void)) *(uint32_t *) 0x1fffd804)();
+        while (1);
     case 'b':
 #ifdef __ARM_FP
         more_regs(sp);
@@ -250,6 +266,8 @@ start:
     case 'B':
         more_regs(sp);
         bt(sp, fp, true, 20);
+        goto start;
+    default:
         goto start;
     }
 
