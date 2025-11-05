@@ -33,11 +33,11 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
     quaternion_to_euler(frame_rel_q, frame_ypr);
 
     for (i = 0; i < 3; i++)
-        target_ypr[i] = control->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az);
+        target_ypr[i] = control->settings->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az);
 
     /* TODO: handle various corner cases, there may be cases where the yaw from quaternion_to_euler is meaningless,
      * detect those and just keep main_ypr in those cases, maybe add hysteresis */
-    if (control->keep_yaw) {
+    if (control->settings->keep_yaw) {
         float conj_home_q[4] = INIT_CONJ_Q(control->aligned_home_q);
         float main_rel_q[4], main_ypr[3], diff;
         quaternion_mult_to(control->main_ahrs->q, conj_home_q, main_rel_q);
@@ -78,10 +78,10 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
      * length of its projection onto delta_axis so that it's negative if we're currently
      * travelling in the opposite direction.
      *
-     * TODO: force control->ahrs_velocity_kp of 1 every first iteration after control enable.
+     * TODO: force control->settings->ahrs_velocity_kp of 1 every first iteration after control enable.
      */
-    vector_weighted_sum(control->main_ahrs->velocity_vec, -control->ahrs_velocity_kp,
-            control->velocity_vec, 1.0f - control->ahrs_velocity_kp, v_vec);
+    vector_weighted_sum(control->main_ahrs->velocity_vec, -control->settings->ahrs_velocity_kp,
+            control->velocity_vec, 1.0f - control->settings->ahrs_velocity_kp, v_vec);
     current_v = vector_dot(v_vec, delta_axis);
 
     /*
@@ -107,15 +107,17 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
      * in steps.  So shorten the distance by some time * current velocity.
      */
 #define BUFFER_STEPS 3
-    max_v = sqrtf(2 * max(delta_angle - BUFFER_STEPS * control->dt * current_v, 0) * control->max_accel);
+    max_v = sqrtf(2 * max(delta_angle - BUFFER_STEPS * control->dt * current_v, 0) *
+            control->settings->max_accel);
 
     /* TODO: filter current_v and use the filter response time in place of dt */
-    if (delta_angle <= BUFFER_STEPS * control->max_accel * control->dt * control->dt)
+    if (delta_angle <= BUFFER_STEPS * control->settings->max_accel * control->dt * control->dt)
         new_v = delta_angle / (BUFFER_STEPS * control->dt);
     else if (current_v >= max_v)
         /*
          * Two options here:
-         *   * prioritize control->max_accel, set current_v - control->max_accel * control->dt.
+         *   * prioritize control->settings->max_accel, set
+         *     current_v - control->settings->max_accel * control->dt.
          *     The downside is we may overshoot if for whatever reason we're already
          *     travelling too fast.  The reason could be a new user command or a sudden
          *     movement.
@@ -129,12 +131,12 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
          */
         new_v = current_v - (0.5f * current_v * current_v / delta_angle) * control->dt;
     else
-        new_v = min(control->max_vel, current_v + control->max_accel * control->dt);
+        new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
 
     /* Recalculate delta_q based on what we want to see one step from now (actually skip going back to quaternion) */
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
-            max((vector_norm(perp_vec) - control->max_accel * control->dt), 0),
+            max((vector_norm(perp_vec) - control->settings->max_accel * control->dt), 0),
             control->velocity_vec);
     memcpy(out_step_delta_vec, control->velocity_vec, 3 * sizeof(float));
     vector_mult_scalar(out_step_delta_vec, control->dt);

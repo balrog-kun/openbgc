@@ -2,6 +2,23 @@
 #ifndef CONTROL_H
 #define CONTROL_H
 
+/* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
+struct control_settings_s {
+    /* Geometry config */
+    float home_q[4];
+    float home_frame_q[4];
+    float forward_vec[3];
+
+    /* Control config */
+    bool keep_yaw;
+    bool follow[3]; /* Per euler angle, not gimbal axis */
+    float max_accel;
+    float max_vel;
+    float ahrs_velocity_kp;
+
+    /* TODO: RC in trims/scales */
+};
+
 struct control_data_s {
     /* Control inputs and outputs */
     struct obgc_ahrs_s *main_ahrs;
@@ -14,16 +31,12 @@ struct control_data_s {
 
     /* Geometry calibration + precalculated values */
     const struct axes_data_s *axes;
-    float home_q[4], aligned_home_q[4];
-    float home_frame_q[4], conj_aligned_home_frame_q[4];
-    float forward_vec[3], forward_az, forward_sincos2[2];
+    float aligned_home_q[4];
+    float conj_aligned_home_frame_q[4];
+    float forward_az, forward_sincos2[2];
 
     /* User settings */
-    bool keep_yaw;
-    bool follow[3]; /* Per euler angle, not gimbal axis */
-    float max_accel;
-    float max_vel;
-    float ahrs_velocity_kp;
+    struct control_settings_s *settings;
 
     /* TODO: may need to do the same thing in motor-bldc.c where the velocity is calculated
      * based on the length of the previous period (from micros()) but how much force we want

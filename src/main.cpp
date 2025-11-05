@@ -109,6 +109,7 @@ static struct axes_data_s axes;
 static bool have_axes;
 
 static struct control_data_s control;
+struct control_settings_s control_settings;
 static bool control_enable;
 static bool have_home;
 static bool have_forward;
@@ -417,13 +418,15 @@ static void setup_control(void) {
     control.rel_q = rel_q;
     control.frame_q = frame_q;
 
-    /* Setting defaults */
-    control.keep_yaw = true;
-    control.follow[0] = true;  /* Yaw only */
-    control.follow[1] = false;
-    control.follow[2] = false;
-    control.max_accel = 30 * D2R; /* rad/s/s */
-    control.max_vel = 60 * D2R;   /* rad/s */
+    control.settings = &control_settings;
+
+    /* Defaults */
+    control.settings->keep_yaw = true;
+    control.settings->follow[0] = true;  /* Yaw only */
+    control.settings->follow[1] = false;
+    control.settings->follow[2] = false;
+    control.settings->max_accel = 30 * D2R; /* rad/s/s */
+    control.settings->max_vel = 60 * D2R;   /* rad/s */
 
     /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
      * rotational speed we need to get from current camera orientation to the desired one (target),
@@ -443,7 +446,7 @@ static void setup_control(void) {
      * more slowly to speed changes due to outside physical forces.  This may even be desired but
      * consider things like mechanical limits on some joints.
      */
-    control.ahrs_velocity_kp = 0.05;
+    control.settings->ahrs_velocity_kp = 0.05;
 }
 
 static void stop_control(void) {
@@ -839,9 +842,14 @@ handle_set_param:
         axes.encoder_scale[2] = copysignf(1.0f, axes.encoder_scale[2]);
         break;
     case 'k':
+        if (control_enable) {
+            serial->println("Control must be disabled (' ')");
+            break;
+        }
+
         serial->println("Saving current camera and base orientations as home orientations (0-pitch, 0-roll)"); /* And 0-yaw if not following */
-        memcpy(control.home_q, main_ahrs->q, sizeof(control.home_q));
-        memcpy(control.home_frame_q, frame_q, sizeof(control.home_frame_q));
+        memcpy(control.settings->home_q, main_ahrs->q, sizeof(control.settings->home_q));
+        memcpy(control.settings->home_frame_q, frame_q, sizeof(control.settings->home_frame_q));
         have_home = 1;
         /* TODO: if have_forward, perhaps recalculate .forward_* and .aligned_* */
         break;
@@ -873,11 +881,11 @@ handle_set_param:
 
         {
             float angle;
-            float conj_q0[4] = INIT_CONJ_Q(control.home_q);
+            float conj_q0[4] = INIT_CONJ_Q(control.settings->home_q);
             float roll_q[4];
 
             quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
-            quaternion_to_axis_angle(roll_q, control.forward_vec, &angle);
+            quaternion_to_axis_angle(roll_q, control.settings->forward_vec, &angle);
 
             if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
                 serial->println("No rotation within 30-120 deg detected");
@@ -885,15 +893,15 @@ handle_set_param:
             }
         }
 
-        if (fabsf(control.forward_vec[0]) + fabsf(control.forward_vec[1]) < 0.001f)
+        if (fabsf(control.settings->forward_vec[0]) + fabsf(control.settings->forward_vec[1]) < 0.001f)
             break;
 
-        if (fabsf(control.forward_vec[2]) > 0.1f)
+        if (fabsf(control.settings->forward_vec[2]) > 0.1f)
             serial->println("WARN: rotation axis not very level");
 
         serial->println("Saving the rotation axis as the forward direction");
-        control.forward_vec[2] = 0.0f;
-        vector_normalize(control.forward_vec);
+        control.settings->forward_vec[2] = 0.0f;
+        vector_normalize(control.settings->forward_vec);
         have_forward = 1;
 
         /* The "az" may be a misnomer, we want the angle from positive X axis
@@ -902,13 +910,13 @@ handle_set_param:
          * (X at 0-yaw) and pitch is around the "sideways" vector (Y at 0-yaw).
          * (Traditionally azimuth is from the north but we use ENU so north is Y+).
          */
-        control.forward_az = atan2f(control.forward_vec[1], control.forward_vec[0]);
+        control.forward_az = atan2f(control.settings->forward_vec[1], control.settings->forward_vec[0]);
         control.forward_sincos2[0] = sinf(control.forward_az / 2);
         control.forward_sincos2[1] = cosf(control.forward_az / 2);
         /* Rotate forward_az radians in the negative yaw direction to align "forward" with 0-yaw */
-        quaternion_rotate_z_to(control.home_q, control.forward_sincos2[1], -control.forward_sincos2[0],
+        quaternion_rotate_z_to(control.settings->home_q, control.forward_sincos2[1], -control.forward_sincos2[0],
                 control.aligned_home_q);
-        quaternion_rotate_z_to(control.home_frame_q, control.forward_sincos2[1], -control.forward_sincos2[0],
+        quaternion_rotate_z_to(control.settings->home_frame_q, control.forward_sincos2[1], -control.forward_sincos2[0],
                 control.conj_aligned_home_frame_q);
         control.conj_aligned_home_frame_q[0] = -control.conj_aligned_home_frame_q[0];
         break;
@@ -917,7 +925,6 @@ handle_set_param:
         set_use_motor = true;
         break;
     case 'S':
-        /* TODO: also ensure have_axes before we power anything on */
         if (!motors[0] && !motors[1] && !motors[2]) {
             serial->println("We have no motors");
             break;
