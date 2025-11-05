@@ -123,7 +123,15 @@ static struct main_loop_cb_s *cbs;
 
 #define TARGET_LOOP_RATE 128
 
-void print_mcu() {
+HardwareSerial *error_serial;
+
+void error_serial_print(const char *func, const char *msg) {
+    error_serial->print(func);
+    error_serial->print(": ");
+    error_serial->println(msg);
+}
+
+static void print_mcu() {
     /*
      * Specific register addresses for F3 in RM0316, F4 RM0090:
      *  0x1ffff7ac or UID_BASE: Unique Device ID
@@ -1087,8 +1095,6 @@ handle_set_param:
     }
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
-
-extern HardwareSerial *error_serial;
 
 void setup(void) {
     int i;

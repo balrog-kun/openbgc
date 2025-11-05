@@ -58,7 +58,7 @@ extern "C" void UsageFault_Handler(void) {
     while (1);
 }
 
-HardwareSerial *error_serial; /* TODO: use the usart number from this */
+/* TODO: use the usart number from error_serial */
 
 static void crash_usart_write(USART_TypeDef *USARTx, uint8_t ch) {
     /* STM32F3-specific, F1/F4 would be slightly different */
