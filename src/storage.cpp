@@ -17,6 +17,7 @@ extern "C" {
  */
 static obgc_i2c *i2c_bus;
 static uint8_t i2c_addr;
+static uint16_t i2c_eeprom_size;
 
 struct storage_image_s {
     struct storage_header_s {
@@ -56,47 +57,116 @@ static uint16_t crc16_ccitt(const struct obgc_storage_config_s *config_data) {
     return crc;
 }
 
-static void update_header(void) {
-    ram_image.structure.header.config_version = STORAGE_CONFIG_VERSION;
-    ram_image.structure.header.config_len = sizeof(struct obgc_storage_config_s);
-    ram_image.structure.header.config_crc = crc16_ccitt(&config);
+static uint16_t i2c_eeprom_image_addr(void) {
+    /* Start somewhere towards the end of the chip but at a constant address.
+     * So not RAM_IMAGE_SIZE from the end because that may vary with config
+     * versions and the header would move making backwards compatibility more
+     * difficult.
+     */
+    return (i2c_eeprom_size - FLASH_PAGE_SIZE) & ~63;
+}
+
+static int i2c_eeprom_read(int (*cb)(const struct storage_image_s *)) {
+    union {
+        uint8_t bytes[RAM_IMAGE_SIZE];
+        struct storage_image_s structure;
+    } tmp_image;
+    uint8_t *pos = &tmp_image.bytes[0];
+    uint16_t left = RAM_IMAGE_SIZE;
+    uint16_t from_addr = i2c_eeprom_image_addr();
+
+    while (left) {
+        uint8_t chunk_size = min(min(left, (uint16_t) (64 - (from_addr & 63))), (uint16_t) I2C_BUFFER_LENGTH);
+        int read_size = i2c_bus->requestFrom(i2c_addr, chunk_size, from_addr, 2, true);
+
+        if (read_size != chunk_size) {
+            char msg[128];
+            sprintf(msg, "Short or failed read after %i bytes at 0x%04x",
+                    RAM_IMAGE_SIZE - left + read_size, from_addr + read_size);
+            error_print(msg);
+            return -1;
+        }
+
+        left -= read_size;
+        from_addr += read_size;
+        while (read_size--)
+            *pos++ = i2c_bus->read();
+    }
+
+    return cb(&tmp_image.structure);
+}
+
+#define EEPROM_PROGRAM_TIMEOUT_MS 500
+static int i2c_eeprom_write(void) {
+    uint8_t *pos = &ram_image.bytes[0];
+    uint16_t left = RAM_IMAGE_SIZE;
+    uint16_t to_addr = i2c_eeprom_image_addr();
+
+    while (left) {
+        unsigned long start_ms;
+        bool ack = false;
+        uint8_t chunk_size = min(left, (uint16_t) (64 - (to_addr & 63)));
+
+        i2c_bus->beginTransmission(i2c_addr);
+        if (i2c_bus->write((uint8_t) (to_addr >> 8)) != 1 ||
+                i2c_bus->write((uint8_t) to_addr) != 1) {
+            char msg[128];
+            sprintf(msg, "address write() failed after %i bytes at 0x%04x",
+                    RAM_IMAGE_SIZE - left, to_addr);
+            error_print(msg);
+        }
+
+        left -= chunk_size;
+        to_addr += chunk_size;
+        while (chunk_size--)
+            if (i2c_bus->write(*pos++) != 1) {
+                char msg[128];
+                i2c_bus->endTransmission();
+                sprintf(msg, "write() failed after %i bytes at 0x%04x",
+                        RAM_IMAGE_SIZE - left - chunk_size, to_addr - chunk_size);
+                error_print(msg);
+                return -1;
+            }
+
+        if (i2c_bus->endTransmission() != 0) {
+            error_print("endTransmission() failed");
+            return -1;
+        }
+
+        /* Start polling for end of programming */
+        start_ms = millis();
+        while (!ack && (unsigned long) (millis() - start_ms) < EEPROM_PROGRAM_TIMEOUT_MS) {
+            i2c_bus->beginTransmission(i2c_addr);
+            ack = i2c_bus->write(0);
+            i2c_bus->endTransmission();
+        }
+
+        if (!ack) {
+            char msg[128];
+            sprintf(msg, "Programming ACK timeout after %i bytes at 0x%04x",
+                    RAM_IMAGE_SIZE - left, to_addr);
+            error_print(msg);
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 static const struct storage_image_s *storage_flash_addr(void) {
     /* Use the last page of on-chip flash for storage, banks not supported */
-    /* TODO: eventually switch to using the external 32kB flash chip */
     uint16_t page_num = *(uint16_t *) FLASH_SIZE_DATA_REGISTER - 1;
 
     return (struct storage_image_s *) (unsigned long) (FLASH_BASE | (page_num * FLASH_PAGE_SIZE));
 }
 
-int storage_read(void) {
+static int flash_read(int (*cb)(const struct storage_image_s *)) {
     const struct storage_image_s *flash_image = storage_flash_addr();
 
-    /* TODO: might want to check this last (but sanity check length first) to detect
-     * older configs with correct CRC to tell the caller to: try a conversion, or at
-     * least refuse to overwrite the old config until explicitly acked by user.
-     */
-    if (flash_image->header.config_version != STORAGE_CONFIG_VERSION) {
-        error_print("Flash config version mismatch");
-        return -1;
-    }
-
-    if (flash_image->header.config_len != sizeof(struct obgc_storage_config_s)) {
-        error_print("Flash config length mismatch");
-        return -1;
-    }
-
-    if (flash_image->header.config_crc != crc16_ccitt(&flash_image->config)) {
-        error_print("Flash config CRC mismatch");
-        return -1;
-    }
-
-    memcpy(&ram_image, flash_image, sizeof(struct storage_image_s));
-    return 0;
+    return cb(flash_image);
 }
 
-int storage_write(void) {
+static int flash_write(void) {
     const struct storage_image_s *flash_image = storage_flash_addr();
     uint32_t addr = (unsigned long) flash_image;
 
@@ -107,8 +177,6 @@ int storage_write(void) {
         .NbPages     = 1,
     };
     int pos;
-
-    update_header();
 
     if (!memcmp(&ram_image, flash_image, sizeof(struct storage_image_s)))
         return 0;
@@ -138,11 +206,58 @@ int storage_write(void) {
     return 0;
 }
 
+static void update_header(void) {
+    ram_image.structure.header.config_version = STORAGE_CONFIG_VERSION;
+    ram_image.structure.header.config_len = sizeof(struct obgc_storage_config_s);
+    ram_image.structure.header.config_crc = crc16_ccitt(&config);
+}
+
+static int storage_image_validate_read_cb(const struct storage_image_s *image) {
+    /* TODO: might want to check this last (but sanity check length first) to detect
+     * older configs with correct CRC to tell the caller to: try a conversion, or at
+     * least refuse to overwrite the old config until explicitly acked by user.
+     */
+    if (image->header.config_version != STORAGE_CONFIG_VERSION) {
+        error_print("Saved config version mismatch");
+        return -1;
+    }
+
+    if (image->header.config_len != sizeof(struct obgc_storage_config_s)) {
+        error_print("Saved config length mismatch");
+        return -1;
+    }
+
+    if (image->header.config_crc != crc16_ccitt(&image->config)) {
+        error_print("Saved config CRC mismatch");
+        return -1;
+    }
+
+    memcpy(&ram_image, image, sizeof(struct storage_image_s));
+    return 0;
+}
+
+int storage_read(void) {
+    if (i2c_bus)
+        return i2c_eeprom_read(storage_image_validate_read_cb);
+    else
+        return flash_read(storage_image_validate_read_cb);
+}
+
+int storage_write(void) {
+    update_header();
+
+    if (i2c_bus)
+        return i2c_eeprom_write();
+    else
+        return flash_write();
+}
+
 void storage_init_internal_flash(void) {
     i2c_bus = NULL;
 }
 
-void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint32_t size) {
+void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint16_t size) {
     i2c_bus = i2c;
     i2c_addr = addr;
+    i2c_eeprom_size = size;
 }

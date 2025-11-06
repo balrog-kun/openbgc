@@ -1149,8 +1149,8 @@ void setup(void) {
     pinMode(SBGC_IN_MODE, INPUT_PULLUP);
 
     /* Initialize storage */
-    storage_init_internal_flash();
-    // storage_init(MC_24FC256_BASE_ADDR + 0, i2c_aux, 32 * 1024);
+    // storage_init_internal_flash();
+    storage_init_i2c_eeprom(MC_24FC256_BASE_ADDR + 0, i2c_aux, 0x8000);
     config_read();
 
     /* Initialize IMUs */

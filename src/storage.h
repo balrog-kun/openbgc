@@ -32,7 +32,7 @@ extern struct obgc_storage_config_s {
 #define MC_24FC256_BASE_ADDR 0x50
 
 void storage_init_internal_flash(void);
-void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint32_t size);
+void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint16_t size);
 
 int storage_read(void);
 int storage_write(void);
