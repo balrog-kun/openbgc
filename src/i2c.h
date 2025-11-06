@@ -78,9 +78,11 @@ public:
             bool send_stop) override {
         /* See comments in ~/.platformio/packages/framework-arduinoststm32/libraries/Wire/src/Wire.cpp */
         beginTransmission(address);
-        while (isize-- > 0) {
-            write((uint8_t) (iaddress >> (isize * 8)));
-        }
+        while (isize-- > 0)
+            if (!write((uint8_t) (iaddress >> (isize * 8)))) {
+                endTransmission();
+                return 0xff;
+            }
         endTransmission(false);
         return requestFrom(address, quantity, send_stop);
     }
