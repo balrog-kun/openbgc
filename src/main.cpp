@@ -1032,6 +1032,9 @@ handle_set_param:
     case 'w':
         config_write();
         break;
+    case 'd':
+        storage_dump();
+        break;
     case ' ':
         if (control_enable) {
             stop_control();

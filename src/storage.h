@@ -36,5 +36,6 @@ void storage_init_i2c_eeprom(uint8_t addr, obgc_i2c *i2c, uint16_t size);
 
 int storage_read(void);
 int storage_write(void);
+void storage_dump(void);
 
 #endif /* STORAGE_H */

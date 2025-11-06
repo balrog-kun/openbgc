@@ -236,11 +236,44 @@ static int storage_image_validate_read_cb(const struct storage_image_s *image) {
     return 0;
 }
 
+static int storage_image_dump_cb(const struct storage_image_s *image) {
+    uint16_t len = min((uint16_t) sizeof(struct storage_image_s), (uint16_t) 0xffff/*image->header.config_len*/);
+    const uint8_t *pos = (const uint8_t *) image;
+
+    while (len) {
+        int num = min((uint16_t) 16, len);
+        int i, j;
+        char line[128];
+        uint8_t line_len = 0;
+
+        for (i = 0; i < num; i++)
+            line_len += sprintf(line + line_len, "%s %02x", i == 8 ? " " : "", pos[i]);
+        j = (num - i) * 3 + (i <= 8 ? 1 : 0) + 2;
+        memset(line + line_len, 0, j);
+        line_len += j;
+        for (i = 0; i < num; i++)
+            line[line_len++] = pos[i] >= 32 ? pos[i] : '.';
+        line[line_len] = '\0';
+        error_print(line);
+        len -= num;
+        pos += num;
+    }
+
+    return 0;
+}
+
 int storage_read(void) {
     if (i2c_bus)
         return i2c_eeprom_read(storage_image_validate_read_cb);
     else
         return flash_read(storage_image_validate_read_cb);
+}
+
+void storage_dump(void) {
+    if (i2c_bus)
+        i2c_eeprom_read(storage_image_dump_cb);
+    else
+        flash_read(storage_image_dump_cb);
 }
 
 int storage_write(void) {
