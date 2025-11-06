@@ -592,6 +592,53 @@ static void powered_init(void) {
     serial->println("Motors powered init done");
 }
 
+static bool mode_press_handle(void) {
+    /* If motors are enabled, disable them as soon as MODE pressed */
+    if (motors_on) {
+        motors_on_off(false);
+        use_motor[0] = false;
+        use_motor[1] = false;
+        use_motor[2] = false;
+        /* TODO: short beep */
+        return true;
+    }
+
+    return false;
+}
+
+static void mode_release_handle(unsigned long duration_ms) {
+}
+
+static bool mode_down_1s_handle(void) {
+    /* If motors are off but everything is ready, power motors on and enable control */
+    if (!motors_on) {
+        if (!config.have_axes || !config.control.have_home || !config.control.have_forward || !vbat_ok ||
+                !motors[0] || !motors[1] || !motors[2] ||
+                !motors[0]->ready || !motors[1]->ready || !motors[2]->ready ||
+                /* All test functions off */ use_motor[0] || use_motor[1] || use_motor[2]) {
+            /* TODO: long beep */
+            serial->println("Conditions not met");
+            return true;
+        }
+
+        /* TODO: short beep */
+        use_motor[0] = true;
+        use_motor[1] = true;
+        use_motor[2] = true;
+        motors_on_off(true);
+
+        if (!motors_on)
+            /* TODO: long beep */
+            return true;
+
+        control_enable = true;
+        serial->println("Motors on, control on");
+        return true;
+    }
+
+    return false;
+}
+
 static void process_rc_input(void *) {
     /* Rate-limit printing */
     static uint16_t cnt;
@@ -620,11 +667,21 @@ static void process_rc_input(void *) {
         mode_reading ^= 1;
 
         if (mode_reading) {
-            unsigned long len = micros() - mode_start_ts;
-            serial->print("MODE pressed for ");
-            serial->println(len / 1000);
-        } else
-            mode_start_ts = micros();
+            unsigned long len = millis() - mode_start_ts;
+            serial->print("MODE released after ");
+            serial->print(len);
+            serial->println(" ms");
+
+            mode_release_handle(len);
+        } else {
+            mode_start_ts = millis();
+
+            if (mode_press_handle())
+                mode_reading = 1; /* Reset if action taken */
+        }
+    } else if (!mode_reading && !motors_on && (unsigned long) (millis() - mode_start_ts) >= 1000) {
+        if (mode_down_1s_handle())
+            mode_reading = 1; /* Reset if action taken */
     }
 }
 static struct main_loop_cb_s rc_input_cb = { .cb = process_rc_input };
