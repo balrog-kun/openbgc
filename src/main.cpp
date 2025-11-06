@@ -522,6 +522,11 @@ static void motors_on_off(bool on) {
 
     motors_on = on;
     /* TODO: beep */
+
+    if (on)
+        serial->println("Motors on");
+    else
+        serial->println("Motors off");
 }
 
 static void shutdown_to_bl(void) __attribute__((noreturn));
@@ -632,7 +637,7 @@ static bool mode_down_1s_handle(void) {
             return true;
 
         control_enable = true;
-        serial->println("Motors on, control on");
+        serial->println("Control on");
         return true;
     }
 
@@ -640,6 +645,7 @@ static bool mode_down_1s_handle(void) {
 }
 
 static void process_rc_input(void *) {
+    static bool mode_handled;
     /* Rate-limit printing */
     static uint16_t cnt;
 
@@ -672,17 +678,14 @@ static void process_rc_input(void *) {
             serial->print(len);
             serial->println(" ms");
 
-            mode_release_handle(len);
+            if (!mode_handled)
+                mode_release_handle(len);
         } else {
             mode_start_ts = millis();
-
-            if (mode_press_handle())
-                mode_reading = 1; /* Reset if action taken */
+            mode_handled = mode_press_handle();
         }
-    } else if (!mode_reading && !motors_on && (unsigned long) (millis() - mode_start_ts) >= 1000) {
-        if (mode_down_1s_handle())
-            mode_reading = 1; /* Reset if action taken */
-    }
+    } else if (!mode_reading && !mode_handled && !motors_on && (unsigned long) (millis() - mode_start_ts) >= 1000)
+        mode_handled = mode_down_1s_handle();
 }
 static struct main_loop_cb_s rc_input_cb = { .cb = process_rc_input };
 
@@ -1043,11 +1046,9 @@ handle_set_param:
                 motors[i]->cls->set_velocity(motors[i], 0);
 
         motors_on_off(true);
-        serial->println("Motors on");
         break;
     case 's':
         motors_on_off(false);
-        serial->println("Motors off");
         break;
     case 'P':
         set_param = BLDC_PARAM_KP;

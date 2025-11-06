@@ -1,9 +1,11 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <Arduino.h> /* For micros(), delayMicroseconds() */
+#include <stdio.h>
 
 #include "main.h"
 #include "moremath.h"
 #include "util.h"
+#include "encoder.h"
 
 #include "motor-bldc.h"
 
@@ -100,8 +102,10 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
     float mech0, mech1, diff, pairs;
     int8_t dir;
 
-    if (motor->on) /* Must be off */
+    if (motor->on) {
+        error_print("Must be off");
         return -1;
+    }
 
     motor->calib_data.pole_pairs = -1;
     motor->calib_data.zero_electric_offset = -1;
@@ -130,6 +134,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
 
     delay(1000); /* Wait for the rotor to settle */
 
+    encoder_update(motor->enc);
     motor_bldc_update_theta(motor);
     mech1 = motor->prev_theta;
 
@@ -141,6 +146,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
 
     delay(1000); /* Wait for the rotor to settle */
 
+    encoder_update(motor->enc);
     motor_bldc_update_theta(motor);
     mech0 = motor->prev_theta;
     motor->driver->cls->off(motor->driver);
@@ -158,12 +164,19 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
         diff = -diff;
     }
 
-    if (diff < 0.5f)
+    if (diff < 0.5f) {
+        error_print("Less than 0.5deg motion seen by encoder");
         return -2; /* Too little motion seen by encoder (assuming pole pairs < ~720) */
+    }
 
     pairs = 360.0f / diff;
-    if (fabsf(pairs - roundf(pairs)) > 0.1f)
-        return -3; /* Electrical angle not close enough to a multiple of mechanical angle distance */
+    if (fabsf(pairs - roundf(pairs)) > 0.1f) {
+        char msg[128];
+        sprintf(msg, "Electrical angle (360) not close enough to a multiple of mechanical "
+                "angle distance (%.4f)", diff);
+        error_print(msg);
+        return -3;
+    }
 
     motor->calib_data.pole_pairs = roundf(pairs);
 
