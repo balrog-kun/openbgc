@@ -1354,6 +1354,9 @@ void setup(void) {
     main_loop_cb_add(&vbat_cb);
     main_loop_cb_add(&misc_debug_cb);
     main_loop_cb_add(&serial_ui_cb);
+
+    /* Set have_config now that everyone should have filled in their defaults */
+    have_config = true;
 }
 void setup_end(void) {}
 
