@@ -652,27 +652,49 @@ static bool mode_down_1s_handle(void) {
 
 static void process_rc_input(void *) {
     static bool mode_handled;
-    /* Rate-limit printing */
     static uint16_t cnt;
 
     cnt++;
 
-    if (rc_yaw_reading && !(cnt & 127)) {
-        serial->print("RC_YAW reads ");
-        serial->println(rc_yaw_reading);
-        rc_yaw_reading = 0;
+    if (rc_yaw_reading) {
+        if (control_enable)
+            control.target_ypr_offsets[0] +=
+                rc_yaw_reading * config.control.rc_gain * control.dt * 0.01f;
+
+        if (!(cnt & 127)) {
+            serial->print("RC_YAW reads ");
+            serial->println(rc_yaw_reading);
+            /* Resetting the commanded angles like this may cause a discontinuity in the
+             * target movement but we want it here not just to rate-limit the debug message
+             * above.  We do want the command to quickly time out if the PWM signal stops
+             * being received for whatever reason, similar to RC receiver failsafe.
+             */
+            rc_yaw_reading = 0;
+        }
     }
 
-    if (rc_pitch_reading && !(cnt & 127)) {
-        serial->print("RC_PITCH reads ");
-        serial->println(rc_pitch_reading);
-        rc_pitch_reading = 0;
+    if (rc_pitch_reading) {
+        if (control_enable)
+            control.target_ypr_offsets[1] +=
+                rc_pitch_reading * config.control.rc_gain * control.dt * 0.01f;
+
+        if (!(cnt & 127)) {
+            serial->print("RC_PITCH reads ");
+            serial->println(rc_pitch_reading);
+            rc_pitch_reading = 0;
+        }
     }
 
-    if (rc_roll_reading && !(cnt & 127)) {
-        serial->print("RC_ROLL reads ");
-        serial->println(rc_roll_reading);
-        rc_roll_reading = 0;
+    if (rc_roll_reading) {
+        if (control_enable)
+            control.target_ypr_offsets[2] +=
+                rc_roll_reading * config.control.rc_gain * control.dt * 0.01f;
+
+        if (!(cnt & 127)) {
+            serial->print("RC_ROLL reads ");
+            serial->println(rc_roll_reading);
+            rc_roll_reading = 0;
+        }
     }
 
     if (mode_reading != digitalRead(SBGC_IN_MODE)) {
