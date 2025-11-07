@@ -18,7 +18,9 @@ struct control_settings_s {
     float max_vel;
     float ahrs_velocity_kp;
 
-    /* TODO: RC in trims/scales */
+    float rc_gain;       /* deg/s or deg/event at full deflection */
+    uint8_t rc_deadband; /* % of full range */
+    /* TODO: RC in trims */
 };
 
 struct control_data_s {

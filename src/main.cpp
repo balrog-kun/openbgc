@@ -276,12 +276,12 @@ static void probe_in_pins_update() {
 }
 
 #define PWM_CENTER 1560
-#define PWM_DEADBAND 6
 static int8_t pwm_convert(unsigned long usecs) {
     /* Duty cycles seem to go from 925us to 2225us, offset and divide by 6 to get about -108 to 108 range */
     int val = ((int) usecs - PWM_CENTER) / 6;
 
-    return (val >= -PWM_DEADBAND / 2 && val <= PWM_DEADBAND / 2) ? 0 : -constrain(val, -100, 100);
+    return abs(val) < config.control.rc_deadband / 2 ? 0 :
+        -constrain(val - (val > 0 ? 1 : -1) * (config.control.rc_deadband / 2), -100, 100);
 }
 
 static unsigned long rc_yaw_start_ts, rc_pitch_start_ts, rc_roll_start_ts, mode_start_ts;
@@ -475,6 +475,9 @@ static void control_setup(void) {
          * consider things like mechanical limits on some joints.
          */
         control.settings->ahrs_velocity_kp = 0.05;
+
+        control.settings->rc_gain = 20; /* deg/s */
+        control.settings->rc_deadband = 6;
     }
 
     control_update_aux_values();
