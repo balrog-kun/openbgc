@@ -33,7 +33,8 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
     quaternion_to_euler(frame_rel_q, frame_ypr);
 
     for (i = 0; i < 3; i++)
-        target_ypr[i] = control->settings->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az);
+        target_ypr[i] = (control->settings->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az)) +
+            control->target_ypr_offsets[i];
 
     /* TODO: handle various corner cases, there may be cases where the yaw from quaternion_to_euler is meaningless,
      * detect those and just keep main_ypr in those cases, maybe add hysteresis */

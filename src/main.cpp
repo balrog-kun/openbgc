@@ -483,7 +483,7 @@ static void control_setup(void) {
     control_update_aux_values();
 }
 
-static void stop_control(void) {
+static void control_stop(void) {
     int i;
 
     if (!control_enable)
@@ -495,6 +495,9 @@ static void stop_control(void) {
         if (motors[i] && use_motor[i])
             motors[i]->cls->set_velocity(motors[i], 0);
 
+    for (i = 0; i < 3; i++)
+        control.target_ypr_offsets[i] = 0;
+
     serial->println("Control off");
 }
 
@@ -503,7 +506,7 @@ static void motors_on_off(bool on) {
         return;
 
     if (!on)
-        stop_control();
+        control_stop();
 
     for (int i = 0; i < 3; i++) {
         if (!motors[i] || !use_motor[i])
@@ -1098,7 +1101,7 @@ handle_set_param:
         break;
     case ' ':
         if (control_enable) {
-            stop_control();
+            control_stop();
             break;
         }
 
@@ -1131,32 +1134,50 @@ handle_set_param:
 
         switch (cmd) {
         case 'D': /* Cursor Back or left arrow, param is modifier */
-            if (motors[0])
+            if (control_enable)
+                control.target_ypr_offsets[0] += config.control.rc_gain * 0.5f * D2R;
+            else if (motors[0])
                 motors[0]->cls->set_velocity(motors[0], -5);
             break;
         case 'C': /* Cursor Forward or right arrow, param is modifier */
-            if (motors[0])
+            if (control_enable)
+                control.target_ypr_offsets[0] -= config.control.rc_gain * 0.5f * D2R;
+            else if (motors[0])
                 motors[0]->cls->set_velocity(motors[0], 5);
             break;
         case 'A': /* Cursor Up or up arrow, param is modifier */
-            if (motors[1])
+            if (control_enable)
+                control.target_ypr_offsets[1] -= config.control.rc_gain * 0.5f * D2R;
+            else if (motors[1])
                 motors[1]->cls->set_velocity(motors[1], -5);
             break;
         case 'B': /* Cursor Down or down arrow, param is modifier */
-            if (motors[1])
+            if (control_enable)
+                control.target_ypr_offsets[1] += config.control.rc_gain * 0.5f * D2R;
+            else if (motors[1])
                 motors[1]->cls->set_velocity(motors[1], 5);
             break;
         case 'H': /* Cursor Position or Home */
+            if (control_enable) {
+                control.target_ypr_offsets[0] = 0;
+                control.target_ypr_offsets[1] = 0;
+                control.target_ypr_offsets[2] = 0;
+            }
+            break;
         case 'F': /* Cursos Previous Line or End */
             break;
         case '~': /* Private sequence: xterm keycode sequence, param is keycode */
             switch (param) {
             case 5: /* Page Up */
-                if (motors[2])
+                if (control_enable)
+                    control.target_ypr_offsets[2] -= config.control.rc_gain * 0.5f * D2R;
+                else if (motors[2])
                     motors[2]->cls->set_velocity(motors[2], 5);
                 break;
             case 6: /* Page Down */
-                if (motors[2])
+                if (control_enable)
+                    control.target_ypr_offsets[2] += config.control.rc_gain * 0.5f * D2R;
+                else if (motors[2])
                     motors[2]->cls->set_velocity(motors[2], -5);
                 break;
             case 1: /* Home */
