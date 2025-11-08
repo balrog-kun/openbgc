@@ -15,6 +15,7 @@ extern "C" {
 #include "moremath.h"
 #include "control.h"
 #include "util.h"
+#include "serial-api.h"
 
 #include "main.h"
 }
@@ -84,6 +85,8 @@ static obgc_foc_driver *motor_drivers[3];
 static obgc_motor *motors[3];
 static obgc_i2c *i2c_main, *i2c_aux;
 static HardwareSerial *serial;
+
+static struct serial_api_port_state_s sbgc_api;
 
 static bool use_motor[3], set_use_motor;
 static obgc_motor_bldc_param set_param = __BLDC_PARAM_MAX;
@@ -811,10 +814,17 @@ static void serial_ui_run(void *) {
     struct axes_calibrate_data_s cs;
     static uint8_t dlpf = 0;
 
+start:
     if (!serial->available())
         return;
 
     cmd = serial->read();
+
+    if (sbgc_api.rx_len) {
+        serial_api_rx_byte(&sbgc_api, cmd);
+        goto start;
+    }
+
     switch (cmd) {
     case 'q':
         serial->println("Shutting down and jumping to bootloader");
@@ -1217,12 +1227,34 @@ handle_set_param:
             serial->println(cmd);
         }
         break;
+    case '>':
+    case '$':
+        serial_api_rx_byte(&sbgc_api, cmd);
+        goto start;
     default:
         serial->print("Unknown cmd ");
         serial->println(cmd);
     }
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
+
+static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payload_len) {
+#if 1
+    if (quiet)
+        return;
+
+    serial->print("Decoded cmd 0x");
+    serial->print(cmd, HEX);
+    serial->print(" with payload ");
+
+    while (payload_len--) {
+        serial->print(" 0x");
+        serial->print(*payload++, HEX);
+    }
+
+    serial->println("");
+#endif
+}
 
 void setup(void) {
     int i;
@@ -1354,6 +1386,9 @@ void setup(void) {
     main_loop_cb_add(&vbat_cb);
     main_loop_cb_add(&misc_debug_cb);
     main_loop_cb_add(&serial_ui_cb);
+
+    serial_api_reset(&sbgc_api);
+    sbgc_api.cmd_rx_cb = sbgc_api_cmd_rx_cb;
 
     /* Set have_config now that everyone should have filled in their defaults */
     have_config = true;
