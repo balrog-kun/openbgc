@@ -222,9 +222,12 @@ struct serial_api_port_state_s {
     uint16_t rx_error_cnt;
 
     void (*cmd_rx_cb)(uint8_t cmd, const uint8_t *payload, uint8_t payload_len);
+    void (*bytes_tx_cb)(const uint8_t *data, uint16_t len);
 };
 
 void serial_api_reset(struct serial_api_port_state_s *port);
 void serial_api_rx_byte(struct serial_api_port_state_s *port, uint8_t byte);
+void serial_api_tx_cmd(struct serial_api_port_state_s *port, uint8_t cmd,
+        const uint8_t *payload, uint8_t payload_len);
 
 #endif /* SERIAL_API_H */

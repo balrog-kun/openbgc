@@ -91,3 +91,33 @@ void serial_api_rx_byte(struct serial_api_port_state_s *port, uint8_t byte) {
     handle_cmd(port, port->rx_buf[1], port->rx_buf + 4, port->rx_buf[2]);
     serial_api_reset(port);
 }
+
+void serial_api_tx_cmd(struct serial_api_port_state_s *port, uint8_t cmd,
+        const uint8_t *payload, uint8_t payload_len) {
+    uint8_t buf[payload_len + 6];
+
+    if (!port->bytes_tx_cb)
+        return;
+
+    buf[0] = port->last_version ?: V2_START;
+    buf[1] = cmd;
+    buf[2] = payload_len;
+    buf[3] = buf[1] + buf[2];
+    memcpy(buf + 4, payload, payload_len);
+
+    if (buf[0] == V1_START) {
+        uint8_t sum, pos;
+
+        for (pos = 0; pos < buf[2];)
+            sum += buf[4 + pos++];
+
+        buf[4 + pos++] = sum;
+        port->bytes_tx_cb(buf, 4 + pos);
+    } else {
+        uint16_t crcval = sbgc_crc16(buf + 1, 3 + buf[2]);
+
+        buf[4 + buf[2]] = crcval >> 8;
+        buf[5 + buf[2]] = crcval;
+        port->bytes_tx_cb(buf, 6 + buf[2]);
+    }
+}

@@ -1480,14 +1480,67 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
 #endif
 }
 
+static void sbgc_api_bytes_tx_cb(const uint8_t *data, uint16_t len) {
+    serial->write(data, len);
+}
+
 void setup(void) {
     int i;
 
     error_serial = serial = new HardwareSerial(USART1);
     serial->begin(115200);
+    for (i = 0; i < 20000; i++) serial->println("debug");////
     while (!*serial); /* Wait for serial port connection */
     delay(2000);
     serial->println("Initializing");
+
+#if 0
+    long speed = 115200;
+    pinMode(PB5, INPUT_PULLUP);////
+    SoftwareSerial *other0 = new SoftwareSerial(PB5, PA5, true);
+    SoftwareSerial *other1 = NULL;///new SoftwareSerial(PB5, PA6);
+    SoftwareSerial *other2 = NULL;////new SoftwareSerial(PC13, PA7);
+    other0->begin(speed);
+    if (other1)
+        other1->begin(speed);
+    if (other2)
+        other2->begin(speed);
+    serial->println("waiting for input on these ports...");
+    while (1) {
+        uint8_t cmd, p;
+        if (other0->available()) {
+            p = 0;
+            cmd = other0->read();
+        } else if (other1 && other1->available()) {
+            p = 1;
+            cmd = other1->read();
+        } else if (other2 && other2->available()) {
+            p = 2;
+            cmd = other2->read();
+        } else if (serial->available() && serial->read() == ' ') {
+            other0->end();
+            if (other1)
+                other1->end();
+            if (other2)
+                other2->end();
+            speed = speed >> 1;
+            if (speed == 28800)
+                speed = 38400;
+            if (speed == 1200)
+                speed = 230400;
+            other0->begin(speed);
+            if (other1)
+                other1->begin(speed);
+            if (other2)
+                other2->begin(speed);
+            serial->println(speed);
+        } else
+            continue;
+        serial->print((int) p);
+        serial->print(": ");
+        serial->println((int) cmd);
+    }
+#endif
 
     /* Initialize I2C */
     /* Cannot use hardware I2C registers for both busses because PA14/PA15 and PB7/PB6
@@ -1613,6 +1666,7 @@ void setup(void) {
 
     serial_api_reset(&sbgc_api);
     sbgc_api.cmd_rx_cb = sbgc_api_cmd_rx_cb;
+    sbgc_api.bytes_tx_cb = sbgc_api_bytes_tx_cb;
 
     /* Set have_config now that everyone should have filled in their defaults */
     have_config = true;
