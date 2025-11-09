@@ -284,11 +284,10 @@ static int8_t pwm_convert(unsigned long usecs) {
     int val = ((int) usecs - PWM_CENTER) / 6;
 
     return abs(val) < config.control.rc_deadband / 2 ? 0 :
-        -constrain(val - (val > 0 ? 1 : -1) * (config.control.rc_deadband / 2), -100, 100);
+        constrain(val - (val > 0 ? 1 : -1) * (config.control.rc_deadband / 2), -100, 100);
 }
 
 static unsigned long rc_yaw_start_ts, rc_pitch_start_ts, rc_roll_start_ts, mode_start_ts;
-static int8_t rc_yaw_reading, rc_pitch_reading, rc_roll_reading;
 static uint8_t mode_reading = 1;
 
 static void rc_yaw_end(void);
@@ -298,7 +297,7 @@ static void rc_yaw_start(void) {
 }
 
 static void rc_yaw_end(void) {
-    rc_yaw_reading = pwm_convert(micros() - rc_yaw_start_ts);
+    control.rc_ypr_readings[0] = pwm_convert(micros() - rc_yaw_start_ts);
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
 }
 
@@ -309,7 +308,7 @@ static void rc_pitch_start(void) {
 }
 
 static void rc_pitch_end(void) {
-    rc_pitch_reading = pwm_convert(micros() - rc_pitch_start_ts);
+    control.rc_ypr_readings[1] = pwm_convert(micros() - rc_pitch_start_ts);
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
 }
 
@@ -320,7 +319,7 @@ static void rc_roll_start(void) {
 }
 
 static void rc_roll_end(void) {
-    rc_roll_reading = pwm_convert(micros() - rc_roll_start_ts);
+    control.rc_ypr_readings[2] = pwm_convert(micros() - rc_roll_start_ts);
     attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
 }
 
@@ -479,6 +478,7 @@ static void control_setup(void) {
          */
         control.settings->ahrs_velocity_kp = 0.05;
 
+        control.settings->rc_mode_angle = false;
         control.settings->rc_gain = 20; /* deg/s */
         control.settings->rc_deadband = 6;
     }
@@ -701,44 +701,32 @@ static void process_rc_input(void *) {
 
     cnt++;
 
-    if (rc_yaw_reading) {
-        if (control_enable)
-            control.target_ypr_offsets[0] +=
-                rc_yaw_reading * config.control.rc_gain * control.dt * 0.01f;
-
+    if (control.rc_ypr_readings[0]) {
         if (!(cnt & 127)) {
             serial->print("RC_YAW reads ");
-            serial->println(rc_yaw_reading);
+            serial->println(control.rc_ypr_readings[0]);
             /* Resetting the commanded angles like this may cause a discontinuity in the
              * target movement but we want it here not just to rate-limit the debug message
              * above.  We do want the command to quickly time out if the PWM signal stops
              * being received for whatever reason, similar to RC receiver failsafe.
              */
-            rc_yaw_reading = 0;
+            control.rc_ypr_readings[0] = 0;
         }
     }
 
-    if (rc_pitch_reading) {
-        if (control_enable)
-            control.target_ypr_offsets[1] +=
-                rc_pitch_reading * config.control.rc_gain * control.dt * 0.01f;
-
+    if (control.rc_ypr_readings[1]) {
         if (!(cnt & 127)) {
             serial->print("RC_PITCH reads ");
-            serial->println(rc_pitch_reading);
-            rc_pitch_reading = 0;
+            serial->println(control.rc_ypr_readings[1]);
+            control.rc_ypr_readings[1] = 0;
         }
     }
 
-    if (rc_roll_reading) {
-        if (control_enable)
-            control.target_ypr_offsets[2] +=
-                rc_roll_reading * config.control.rc_gain * control.dt * 0.01f;
-
+    if (control.rc_ypr_readings[2]) {
         if (!(cnt & 127)) {
             serial->print("RC_ROLL reads ");
-            serial->println(rc_roll_reading);
-            rc_roll_reading = 0;
+            serial->println(control.rc_ypr_readings[2]);
+            control.rc_ypr_readings[2] = 0;
         }
     }
 

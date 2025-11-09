@@ -15,6 +15,7 @@
 static void control_calc_target(struct control_data_s *control, float *out_target_q) {
     float frame_rel_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4];
     int i;
+    unsigned long now = millis();
 
     /*
      * We go through Euler/Tait-Bryan angles here to handle the three axes simultaneously.  This cannot be
@@ -32,12 +33,54 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
     quaternion_mult_to(control->frame_q, control->conj_aligned_home_frame_q, frame_rel_q);
     quaternion_to_euler(frame_rel_q, frame_ypr);
 
-    for (i = 0; i < 3; i++)
-        target_ypr[i] = (control->settings->follow[i] ? frame_ypr[i] : (i ? 0 : control->forward_az)) +
+    for (i = 0; i < 3; i++) {
+        bool follow = control->settings->follow[i];
+        float rc;
+
+        if (control->sbgc_api_override_mode[i] != SBGC_API_OVERRIDE_NONE) {
+            if ((unsigned long) (now - control->sbgc_api_override_ts) > 5000) /* TODO: is the timeout configurable? */
+                control->sbgc_api_override_mode[i] = SBGC_API_OVERRIDE_NONE;
+        }
+
+        if (control->sbgc_api_override_mode[i] != SBGC_API_OVERRIDE_NONE &&
+                control->sbgc_api_follow_override[i])
+            follow = false;
+            /* TODO: any change to a speed mode (whether RC or SBGC serial API) should perhaps
+             * preserve the previous offset so we may need to add or subtract frame_ypr[i].
+             */
+
+        switch (control->sbgc_api_override_mode[i]) {
+        case SBGC_API_OVERRIDE_NONE:
+        case SBGC_API_OVERRIDE_RC:
+            if (control->sbgc_api_override_mode[i] == SBGC_API_OVERRIDE_NONE)
+                rc = control->rc_ypr_readings[i];
+            else
+                rc = control->sbgc_api_ypr_offsets[i];
+
+            rc *= control->settings->rc_gain * 0.01f * D2R;
+
+            if (control->settings->rc_mode_angle)
+                control->target_ypr_offsets[i] = rc;
+            else
+                control->target_ypr_offsets[i] += rc * control->dt;
+
+            break;
+        case SBGC_API_OVERRIDE_SPEED:
+            control->target_ypr_offsets[i] += control->sbgc_api_ypr_speeds[i] * control->dt;
+            break;
+        case SBGC_API_OVERRIDE_ANGLE:
+            control->target_ypr_offsets[i] = control->sbgc_api_ypr_offsets[i];
+            break;
+        }
+
+        target_ypr[i] = (follow ? frame_ypr[i] : (i ? 0 : control->forward_az)) +
             control->target_ypr_offsets[i];
+    }
 
     /* TODO: handle various corner cases, there may be cases where the yaw from quaternion_to_euler is meaningless,
-     * detect those and just keep main_ypr in those cases, maybe add hysteresis */
+     * detect those and just keep main_ypr in those cases, maybe add hysteresis.
+     * TODO: some sbgc_api_override_mode values need to override keep_yaw.
+     */
     if (control->settings->keep_yaw) {
         float conj_home_q[4] = INIT_CONJ_Q(control->aligned_home_q);
         float main_rel_q[4], main_ypr[3], diff;

@@ -18,9 +18,10 @@ struct control_settings_s {
     float max_vel;
     float ahrs_velocity_kp;
 
+    bool rc_mode_angle;
     float rc_gain;       /* deg/s or deg/event at full deflection */
     uint8_t rc_deadband; /* % of full range */
-    /* TODO: RC in trims */
+    /* TODO: RC in trims, etc. Probably will end up having to make all the above per angle */
 };
 
 struct control_data_s {
@@ -29,6 +30,18 @@ struct control_data_s {
     struct obgc_ahrs_s *frame_ahrs;
     struct obgc_encoder_s **encoders;
     struct obgc_motor_s **motors;
+
+    int8_t rc_ypr_readings[3]; /* Not saved over reboot */
+    enum {
+        SBGC_API_OVERRIDE_NONE,
+        SBGC_API_OVERRIDE_SPEED,
+        SBGC_API_OVERRIDE_ANGLE,
+        SBGC_API_OVERRIDE_RC,
+    } sbgc_api_override_mode[3];
+    unsigned long sbgc_api_override_ts;
+    float sbgc_api_ypr_offsets[3];
+    float sbgc_api_ypr_speeds[3];
+    bool sbgc_api_follow_override[3];
 
     /* Aux precalculated inputs */
     const float *rel_q, *frame_q;
@@ -51,6 +64,7 @@ struct control_data_s {
 
     /* State */
     float velocity_vec[3];
+    float target_ypr_offsets[3];
 };
 
 void control_step(struct control_data_s *control);
