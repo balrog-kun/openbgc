@@ -17,6 +17,9 @@ void main_shutdown_low_level(void);
 void main_emergency_stop_low_level(void);
 
 #ifdef __cplusplus
+# ifndef Arduino_h
+class HardwareSerial;
+# endif
 extern HardwareSerial *error_serial;
 #endif
 void error_serial_print(const char *func, const char *msg);

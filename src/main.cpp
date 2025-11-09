@@ -812,12 +812,30 @@ print_update:
 static struct main_loop_cb_s vbat_cb = { .cb = vbat_update };
 
 static void misc_debug_update(void *) {
+    static uint16_t i2c_main_err_cnt;
+    static uint16_t i2c_aux_err_cnt;
+    static uint16_t cnt;
+
     // imu_debug_update();
     // probe_out_pins_update();
     // probe_in_pins_update();
 
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
+
+    if (!(cnt++ & 127)) {
+        if (i2c_main_err_cnt != i2c_main->error_cnt) {
+            i2c_main_err_cnt = i2c_main->error_cnt;
+            serial->print("Main I2C bus err cnt at ");
+            serial->println(i2c_main_err_cnt);
+        }
+
+        if (i2c_aux_err_cnt != i2c_aux->error_cnt) {
+            i2c_aux_err_cnt = i2c_aux->error_cnt;
+            serial->print("Aux I2C bus err cnt at ");
+            serial->println(i2c_aux_err_cnt);
+        }
+    }
 }
 static struct main_loop_cb_s misc_debug_cb = { .cb = misc_debug_update };
 

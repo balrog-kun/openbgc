@@ -1,4 +1,8 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
+extern "C" {
+#include "main.h"
+}
+
 #include "imu-mpu6050.h"
 
 /* Register definitions */
@@ -51,6 +55,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
     if (gyro) {
 # endif
         if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
+            dev->i2c->error_cnt++;
             /* TODO: report error */
             return;
         }
@@ -110,6 +115,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
             byte_cnt -= byte_cnt_chunk;
             if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt_chunk, MPU6050_REG_FIFO_R_W, 1, true) !=
                     byte_cnt_chunk) {
+                dev->i2c->error_cnt++;
                 /* TODO: report error */
                 return;
             }
@@ -124,6 +130,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
              * the beginning of a sample.  Fingers crossed.
              */
             if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
+                dev->i2c->error_cnt++;
                 /* TODO: report error */
                 return;
             }
@@ -135,6 +142,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
 #endif
 
     if (dev->i2c->requestFrom(dev->i2c_addr, reg_data_size, MPU6050_REG_DATA_START, 1, true) != reg_data_size) {
+        dev->i2c->error_cnt++;
         /* TODO: report error */
         return;
     }
@@ -168,6 +176,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
         byte_cnt = sample_cnt_chunk * FIFO_SAMPLE_SIZE;
 
         if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt, MPU6050_REG_FIFO_R_W, 1, true) != byte_cnt) {
+            dev->i2c->error_cnt++;
             /* TODO: report error */
             return;
         }
@@ -234,8 +243,16 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
     dev->i2c_addr = i2c_addr;
 
     /* Check device identity */
-    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 1, MPU6050_REG_WHO_AM_I, 1, true) != 1 ||
-            dev->i2c->read() != 0x68) {
+    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 1, MPU6050_REG_WHO_AM_I, 1, true) != 1) {
+        error_print("MPU6050 didn't reply");
+        dev->i2c->error_cnt++;
+        free(dev);
+        return NULL;
+    }
+
+    if (dev->i2c->read() != 0x68) {
+        error_print("MPU6050 identity wasn't 0x68");
+        dev->i2c->error_cnt++;
         free(dev);
         return NULL;
     }
@@ -260,8 +277,14 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
 
     for (uint8_t i = 0; i < sizeof(init_sequence); i += 2) {
         dev->i2c->beginTransmission(dev->i2c_addr);
-        dev->i2c->write(init_sequence[i]);
-        dev->i2c->write(init_sequence[i + 1]);
+        if (dev->i2c->write(init_sequence[i]) != 1 ||
+                dev->i2c->write(init_sequence[i + 1]) != 1) {
+            dev->i2c->endTransmission();
+            error_print("MPU6050 write failed");
+            dev->i2c->error_cnt++;
+            free(dev);
+            return NULL;
+        }
         dev->i2c->endTransmission();
     }
 

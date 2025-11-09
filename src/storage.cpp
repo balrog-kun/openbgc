@@ -84,6 +84,7 @@ static int i2c_eeprom_read(int (*cb)(const struct storage_image_s *)) {
             sprintf(msg, "Short or failed read after %i bytes at 0x%04x",
                     RAM_IMAGE_SIZE - left + read_size, from_addr + read_size);
             error_print(msg);
+            i2c_bus->error_cnt++;
             return -1;
         }
 
@@ -111,9 +112,12 @@ static int i2c_eeprom_write(void) {
         if (i2c_bus->write((uint8_t) (to_addr >> 8)) != 1 ||
                 i2c_bus->write((uint8_t) to_addr) != 1) {
             char msg[128];
+            i2c_bus->endTransmission();
             sprintf(msg, "address write() failed after %i bytes at 0x%04x",
                     RAM_IMAGE_SIZE - left, to_addr);
             error_print(msg);
+            i2c_bus->error_cnt++;
+            return -1;
         }
 
         left -= chunk_size;
@@ -125,11 +129,13 @@ static int i2c_eeprom_write(void) {
                 sprintf(msg, "write() failed after %i bytes at 0x%04x",
                         RAM_IMAGE_SIZE - left - chunk_size, to_addr - chunk_size);
                 error_print(msg);
+                i2c_bus->error_cnt++;
                 return -1;
             }
 
         if (i2c_bus->endTransmission() != 0) {
             error_print("endTransmission() failed");
+            i2c_bus->error_cnt++;
             return -1;
         }
 

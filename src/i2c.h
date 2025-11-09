@@ -29,6 +29,8 @@ public:
     virtual size_t write(uint8_t data) = 0;
     virtual size_t write(const uint8_t *data, size_t length) = 0;
     virtual int read() = 0;
+
+    uint16_t error_cnt;
 };
 
 template<typename wire_type>
@@ -40,11 +42,15 @@ private:
 public:
     /* Constructor for existing Wire instance (no ownership) */
     obgc_i2c_subcls(wire_type *wire_instance)
-        : wire(wire_instance), owns_wire(false) {}
+        : wire(wire_instance), owns_wire(false) {
+        error_cnt = 0;
+    }
 
     /* Constructor that creates the Wire instance with pins (takes ownership) */
     obgc_i2c_subcls(uint8_t sda_pin, uint8_t scl_pin)
-        : wire(new wire_type(sda_pin, scl_pin)), owns_wire(true) {}
+        : wire(new wire_type(sda_pin, scl_pin)), owns_wire(true) {
+        error_cnt = 0;
+    }
 
     /* Destructor to clean up if we own the wire instance */
     virtual ~obgc_i2c_subcls() {

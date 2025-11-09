@@ -1,5 +1,8 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include "util.h"
+extern "C" {
+#include "main.h"
+}
 
 #include "sbgc32_i2c_drv.h"
 
@@ -38,6 +41,7 @@ static int32_t sbgc32_i2c_drv_encoder_read(obgc_encoder *enc) {
     uint8_t lo;
 
     if (dev->i2c->requestFrom(dev->addr, (uint8_t) 2, I2C_DRV_REG_ENC_ANGLE, 1, true) != 2) {
+        dev->i2c->error_cnt++;
         return 0;
     }
 
@@ -79,11 +83,12 @@ static void sbgc32_i2c_drv_motor_set_phase_voltage(obgc_foc_driver *motor_drv, f
      */
 
     dev->i2c->beginTransmission(dev->addr);
-    dev->i2c->write(I2C_DRV_REG_SET_POWER_ANGLE);
-    dev->i2c->write((uint8_t) (power >> 0));
-    dev->i2c->write((uint8_t) (power >> 8));
-    dev->i2c->write((uint8_t) (angle >> 0));
-    dev->i2c->write((uint8_t) (angle >> 8));
+    if (dev->i2c->write(I2C_DRV_REG_SET_POWER_ANGLE) != 1 ||
+            dev->i2c->write((uint8_t) (power >> 0)) != 1 ||
+            dev->i2c->write((uint8_t) (power >> 8)) != 1 ||
+            dev->i2c->write((uint8_t) (angle >> 0)) != 1 ||
+            dev->i2c->write((uint8_t) (angle >> 8)) != 1)
+        dev->i2c->error_cnt++;
     dev->i2c->endTransmission();
 }
 
@@ -91,8 +96,9 @@ static int sbgc32_i2c_drv_motor_on(obgc_foc_driver *motor_drv) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
-    dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
-    dev->i2c->write((uint8_t) 1);
+    if (dev->i2c->write(I2C_DRV_REG_SET_ENABLE) != 1 ||
+            dev->i2c->write((uint8_t) 1) != 1)
+        dev->i2c->error_cnt++;
     dev->i2c->endTransmission();
 
     return 0;
@@ -102,8 +108,9 @@ static void sbgc32_i2c_drv_motor_off(obgc_foc_driver *motor_drv) {
     struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
 
     dev->i2c->beginTransmission(dev->addr);
-    dev->i2c->write(I2C_DRV_REG_SET_ENABLE);
-    dev->i2c->write((uint8_t) 0);
+    if (dev->i2c->write(I2C_DRV_REG_SET_ENABLE) != 1 ||
+            dev->i2c->write((uint8_t) 0) != 1)
+        dev->i2c->error_cnt++;;
     dev->i2c->endTransmission();
 }
 
@@ -129,9 +136,15 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, obgc_i2c *i2c, enum sbgc32_i2c_
     dev->addr = addr;
 
     /* Check device identity */
-    if (dev->i2c->requestFrom(dev->addr, (uint8_t) 1, I2C_DRV_REG_DEVICE_ID, 1, true) != 1 ||
-            dev->i2c->read() != 0x14)
+    if (dev->i2c->requestFrom(dev->addr, (uint8_t) 1, I2C_DRV_REG_DEVICE_ID, 1, true) != 1) {
+        error_print("SBGC_I2C_Drv didn't reply");
         goto err;
+    }
+
+    if (dev->i2c->read() != 0x14) {
+        error_print("SBGC_I2C_Drv identity was not 0x14");
+        goto err;
+    }
 
     /* Safety: power off motor ASAP */
     sbgc32_i2c_drv_motor_off(&dev->motor_drv_obj);
@@ -151,8 +164,10 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, obgc_i2c *i2c, enum sbgc32_i2c_
         if (dev->i2c->read() == typ)
             break;
     }
-    if (i == 50)
+    if (i == 50) {
+        error_print("SBGC_I2C_Drv encoder type write timed out");
         goto err;
+    }
 
     dev->i2c->beginTransmission(dev->addr);
     dev->i2c->write(I2C_DRV_REG_ENC_CONF);
@@ -163,6 +178,7 @@ sbgc32_i2c_drv *sbgc32_i2c_drv_new(uint8_t addr, obgc_i2c *i2c, enum sbgc32_i2c_
     return dev;
 
 err:
+    dev->i2c->error_cnt++;
     free(dev);
     return NULL;
 }

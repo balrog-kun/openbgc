@@ -1,4 +1,8 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
+extern "C" {
+#include "main.h"
+}
+
 #include "encoder-as5600.h"
 
 /* Register definitions */
@@ -31,6 +35,7 @@ static int32_t as5600_read(struct as5600_s *dev) {
 
     if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, AS5600_REG_RAW_ANGLE, 1, true) != 2) {
         dev->i2c_err = 1;
+        dev->i2c->error_cnt++;
         return 0;
     }
 
@@ -58,7 +63,12 @@ obgc_encoder *as5600_new(obgc_i2c *i2c) {
      * the slow filter option which sounds more like an LPF.
      */
     dev->i2c->beginTransmission(dev->i2c_addr);
-    dev->i2c->write(AS5600_REG_CONF); /* TODO: check success */
+    if (dev->i2c->write(AS5600_REG_CONF) != 1) {
+        dev->i2c->error_cnt++;
+        error_print("AS5600 didn't reply");
+        return NULL;
+    }
+
     dev->i2c->write(0x04); /* Slowest "slow filter" (16x) 7 LSBs to switch to "fast filter" */
     dev->i2c->write(0x00); /* No hysteresis,  */
     dev->i2c->endTransmission();
