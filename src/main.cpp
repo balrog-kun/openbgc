@@ -634,14 +634,48 @@ static void powered_init(void) {
     serial->println("Motors powered init done");
 }
 
+static void user_motors_on(void) {
+    if (motors_on)
+        return;
+
+    if (!config.have_axes || !config.control.have_home || !config.control.have_forward || !vbat_ok ||
+            !motors[0] || !motors[1] || !motors[2] ||
+            !motors[0]->ready || !motors[1]->ready || !motors[2]->ready ||
+            /* All test functions off */ use_motor[0] || use_motor[1] || use_motor[2]) {
+        /* TODO: long beep */
+        serial->println("Conditions not met");
+        return;
+    }
+
+    /* TODO: short beep */
+    use_motor[0] = true;
+    use_motor[1] = true;
+    use_motor[2] = true;
+    motors_on_off(true);
+
+    if (!motors_on)
+        /* TODO: long beep */
+        return;
+
+    control_enable = true;
+    serial->println("Control on");
+}
+
+static void user_motors_off(void) {
+    if (!motors_on)
+        return;
+
+    motors_on_off(false);
+    use_motor[0] = false;
+    use_motor[1] = false;
+    use_motor[2] = false;
+    /* TODO: short beep */
+}
+
 static bool mode_press_handle(void) {
     /* If motors are enabled, disable them as soon as MODE pressed */
     if (motors_on) {
-        motors_on_off(false);
-        use_motor[0] = false;
-        use_motor[1] = false;
-        use_motor[2] = false;
-        /* TODO: short beep */
+        user_motors_off();
         return true;
     }
 
@@ -654,27 +688,7 @@ static void mode_release_handle(unsigned long duration_ms) {
 static bool mode_down_1s_handle(void) {
     /* If motors are off but everything is ready, power motors on and enable control */
     if (!motors_on) {
-        if (!config.have_axes || !config.control.have_home || !config.control.have_forward || !vbat_ok ||
-                !motors[0] || !motors[1] || !motors[2] ||
-                !motors[0]->ready || !motors[1]->ready || !motors[2]->ready ||
-                /* All test functions off */ use_motor[0] || use_motor[1] || use_motor[2]) {
-            /* TODO: long beep */
-            serial->println("Conditions not met");
-            return true;
-        }
-
-        /* TODO: short beep */
-        use_motor[0] = true;
-        use_motor[1] = true;
-        use_motor[2] = true;
-        motors_on_off(true);
-
-        if (!motors_on)
-            /* TODO: long beep */
-            return true;
-
-        control_enable = true;
-        serial->println("Control on");
+        user_motors_on();
         return true;
     }
 
@@ -1266,6 +1280,15 @@ handle_set_param:
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
 
+static void sbgc_api_motors_on(void) {
+    user_motors_on();
+}
+
+static void sbgc_api_motors_off(uint8_t mode) {
+    /* TODO: handle mode */
+    user_motors_off();
+}
+
 static void sbgc_api_reset(bool reply, bool save_restore, uint16_t delay_ms) {
     /* TODO: handle reply, save_restore */
     serial->println("Serial API reset");
@@ -1293,6 +1316,24 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
 
             sbgc_api_reset(flags & 1, (flags >> 1) & 1, delay_ms);
         }
+        break;
+    case CMD_MOTORS_ON:
+        if (payload_len != 0) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        sbgc_api_motors_on();
+        /* TODO: queue CMD_CONFIRM */
+        break;
+    case CMD_MOTORS_OFF:
+        if (payload_len != 1) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        sbgc_api_motors_off(payload[0]);
+        /* TODO: queue CMD_CONFIRM */
         break;
     }
 
