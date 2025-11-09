@@ -23,9 +23,9 @@ extern struct obgc_storage_config_s {
     struct obgc_motor_calib_data_s motor_calib[3];
     struct axes_data_s axes;
     bool have_axes;
-    /* TODO: PIDs, including motor, ahrs Kps */
+    struct obgc_motor_pid_params_s motor_pid[3];
 
-    /* User settings */
+    /* User settings -- if we ever want profiles, they'd encapsualte these */
     struct control_settings_s control;
 } config;
 

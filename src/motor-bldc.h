@@ -6,14 +6,14 @@
 #include "motor.h"
 
 typedef enum obgc_motor_bldc_param_e {
-    BLDC_PARAM_KP, /* roughly [V / (deg/s)], should be [A / (deg/s)] */
-    BLDC_PARAM_KI, /* eventually should be same as Kp by time? */
-    BLDC_PARAM_KD, /* [s] */
+    BLDC_PARAM_KP = 1, /* roughly [V / (deg/s)], should be [A / (deg/s)] */
+    BLDC_PARAM_KI,     /* eventually should be same as Kp by time? */
+    BLDC_PARAM_KD,     /* [s] */
     BLDC_PARAM_KI_FALLOFF,
     BLDC_PARAM_K_DRAG,
     BLDC_PARAM_K_COULOMB,
     BLDC_PARAM_K_STICTION,
-    BLDC_PARAM_V_MAX, /* eventually should be in [V] */
+    BLDC_PARAM_V_MAX,  /* eventually should be in [V] */
 
     __BLDC_PARAM_MAX
 } obgc_motor_bldc_param;

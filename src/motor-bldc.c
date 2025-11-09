@@ -18,9 +18,7 @@ struct motor_bldc_s {
     struct obgc_bldc_with_encoder_calib_data_s calib_data;
     float electric_scale;
     float target_omega;
-    float v_max;
-    float kp, ki, kd; /* Set ki == 0 if running an outer (angle) PID on top of this to avoid redundancy? */
-    float i, i_falloff;
+    float i;
     float prev_theta;
     float prev_omega;
     uint32_t prev_ts;
@@ -128,7 +126,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
      */
 #define CALIB_START_OFFSET 270 /* SimpleFOC starts at 270deg, seems to work just as poorly as 0 */
     for (i = 1; i <= 360; i += 1) {
-        motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->v_max, i + CALIB_START_OFFSET);
+        motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->obj.pid_params->v_max, i + CALIB_START_OFFSET);
         delayMicroseconds(2000000 / 360);
     }
 
@@ -140,7 +138,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
 
     /* Rotate one full electrical rotation the other direction */
     for (i = 1; i <= 360; i += 1) {
-        motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->v_max, 360 - i + CALIB_START_OFFSET);
+        motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->obj.pid_params->v_max, 360 - i + CALIB_START_OFFSET);
         delayMicroseconds(2000000 / 360);
     }
 
@@ -227,6 +225,7 @@ static obgc_motor_class motor_bldc_class = {
 static void motor_bldc_loop(struct motor_bldc_s *motor) {
     float prev_theta, theta, dtheta, invdt, omega, accel, error, torque, vq, vd;
     uint32_t prev_ts;
+    const struct obgc_motor_pid_params_s *params = motor->obj.pid_params;
 
     if (!motor->obj.ready || !motor->on)
         return;
@@ -244,14 +243,16 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
 
     invdt = 1000000.0f / (motor->prev_ts - prev_ts); /* TODO: zero check */
     omega = motor->have_ext_omega ? motor->ext_omega : (dtheta * invdt);
+    ////omega = dtheta * invdt;////
+    ////ppserial(omega * 1000, motor->ext_omega * 1000);////
     accel = (omega - motor->prev_omega) * invdt;
     motor->prev_omega = omega;
     motor->have_ext_omega = false;
 
-    error = motor->target_omega - (omega + accel * motor->kd);
+    error = motor->target_omega - (omega + accel * params->kd);
     /* Basic PID (note we applied Kd before Kp so Kd is strictly in time units) */
-    torque = error * motor->kp + motor->i * motor->ki;
-    motor->i = motor->i * (1.0f - motor->i_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
+    torque = error * params->kp + motor->i * params->ki;
+    motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
     /* Friction torque */
     torque += omega * motor->kdrag; /* TODO: maybe should factor this into error */
     if (omega > 0.01f)
@@ -284,7 +285,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
      * Since we expect low angular velocities in our use cases, don't bother with non-zero
      * direct voltages for now.
      */
-    vq = constrain(torque / 12.0f, -motor->v_max, motor->v_max); /* TODO: divide vq by current VBAT and multiply by winding resistance */
+    vq = constrain(torque / 12.0f, -params->v_max, params->v_max); /* TODO: divide vq by current VBAT and multiply by winding resistance */
     vd = 0.0f;
 
     /* TODO: take a temperature sensor as input to init() or if NULL, estimate temperature from vq, VBAT, resistance, dissipation rate.
@@ -323,19 +324,20 @@ error:
 void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         float val) {
     struct motor_bldc_s *bldc = (struct motor_bldc_s *) motor;
+    struct obgc_motor_pid_params_s *params = motor->pid_params;
 
     switch (param) {
     case BLDC_PARAM_KP:
-        bldc->kp = val;
+        params->kp = val;
         break;
     case BLDC_PARAM_KI:
-        bldc->ki = val;
+        params->ki = val;
         break;
     case BLDC_PARAM_KD:
-        bldc->kd = val;
+        params->kd = val;
         break;
     case BLDC_PARAM_KI_FALLOFF:
-        bldc->i_falloff = val;
+        params->ki_falloff = val;
         break;
     case BLDC_PARAM_K_DRAG:
         bldc->kdrag = val;
@@ -347,7 +349,7 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         bldc->kstiction = val;
         break;
     case BLDC_PARAM_V_MAX:
-        bldc->v_max = val;
+        params->v_max = val;
         break;
     }
 }

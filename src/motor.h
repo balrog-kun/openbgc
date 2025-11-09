@@ -5,10 +5,12 @@
 #include <stdint.h>
 
 struct obgc_motor_class_s;
+struct obgc_motor_pid_params_s;
 
 typedef struct obgc_motor_s {
     struct obgc_motor_class_s *cls;
     bool ready;
+    struct obgc_motor_pid_params_s *pid_params;
 } obgc_motor;
 
 typedef struct obgc_bldc_with_encoder_calib_data_s {
@@ -23,6 +25,22 @@ typedef struct obgc_motor_calib_data_s {
         struct obgc_bldc_with_encoder_calib_data_s bldc_with_encoder;
     };
 } obgc_motor_calib_data;
+
+/* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
+typedef struct obgc_motor_pid_params_s {
+    float kp, ki, kd;
+    float ki_falloff;
+    float v_max;
+    /* The below would have been more flexible but at the end of the day the loop code
+     * would be traversing the list and copying the parameters so even more memory use.
+     */
+#if 0
+    struct {
+        uint8_t key;
+        float val;
+    } param[10]; /* 0-key-terminated if not full */
+#endif
+} obgc_motor_pid_params;
 
 typedef struct obgc_motor_class_s {
     void (*set_velocity)(obgc_motor *motor, float omega);

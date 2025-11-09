@@ -1657,7 +1657,17 @@ void setup(void) {
     for (i = 0; i < 3; i++) {
         motors[i] = motor_bldc_new(encoders[i], motor_drivers[i],
                 config.motor_calib[i].bldc_with_encoder.pole_pairs ? &config.motor_calib[i] : NULL);
+        motors[i]->pid_params = &config.motor_pid[i];
 
+#if 0
+        for (int p = 0; p < ARRAY_SIZE(motors[i]->pid_params.param) && motors[i]->pid_params.param[p].key; p++)
+            motor_bldc_set_param(motors[i], motors[i]->pid_params.param[p].key, motors[i]->pid_params.param[p].val);
+#endif
+
+        if (have_config)
+            continue;
+
+        /* Set defaults */
         motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
