@@ -1297,6 +1297,78 @@ static void sbgc_api_reset(bool reply, bool save_restore, uint16_t delay_ms) {
     NVIC_SystemReset();
 }
 
+static void sbgc_api_menu_cmd(uint8_t cmd_id) {
+    switch (cmd_id) {
+    case MENU_CMD_RESET:
+        sbgc_api_reset(false, false, 0);
+        break;
+    case MENU_CMD_MOTOR_TOGGLE:
+    case MENU_CMD_BUTTON_PRESS: /* Sent by the RM-1 remote as MODE button */
+        if (motors_on)
+            sbgc_api_motors_off(0);
+        else
+            sbgc_api_motors_on();
+        break;
+    case MENU_CMD_MOTOR_ON:
+        sbgc_api_motors_on();
+        break;
+    case MENU_CMD_MOTOR_OFF:
+        sbgc_api_motors_off(0);
+        break;
+    case MENU_CMD_LOOK_DOWN:
+        if (control_enable) {
+            /* Should we be writing control.sbgc_api_ypr_offsets instead, and setting
+             * .sbgc_api_override_ts?  What is expected here?  This would override the
+             * RC-in signal whether in speed or angle mode (for some seconds) whereas
+             * the below code only works if current input source is in speed mode.
+             */
+            control.target_ypr_offsets[1] = 80 * R2D;
+            control.target_ypr_offsets[2] = 0;
+        }
+        break;
+    case MENU_CMD_HOME_POSITION:
+    case MENU_HOME_POSITION_SHORTEST: /* Sent by the RM-1 remote */
+        if (control_enable) {
+            control.target_ypr_offsets[0] = 0;
+            control.target_ypr_offsets[1] = 0;
+            control.target_ypr_offsets[2] = 0;
+        }
+        break;
+    case MENU_CMD_LEVEL_ROLL_PITCH:
+        if (control_enable) {
+            control.target_ypr_offsets[1] = 0;
+            control.target_ypr_offsets[2] = 0;
+        }
+        break;
+    case MENU_CMD_CENTER_YAW:
+    case MENU_CENTER_YAW_SHORTEST:
+        if (control_enable) {
+            control.target_ypr_offsets[0] = 0;
+        }
+        break;
+    case MENU_LEVEL_ROLL:
+        if (control_enable) {
+            control.target_ypr_offsets[2] = 0;
+        }
+        break;
+    case MENU_LEVEL_PITCH:
+        if (control_enable) {
+            control.target_ypr_offsets[1] = 0;
+        }
+        break;
+    case MENU_SET_CUR_POS_AS_HOME:
+        /* TODO: same as 'k' but figure out forward_vec handling */
+        break;
+    case MENU_TRIPOD_MODE_OFF:
+        break;
+    case MENU_TRIPOD_MODE_ON:
+        break;
+    default:
+        serial->print("Unsupported API menu cmd ");
+        serial->println(cmd_id);
+    }
+}
+
 static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payload_len) {
     switch (cmd) {
     case CMD_RESET:
@@ -1334,6 +1406,14 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
 
         sbgc_api_motors_off(payload[0]);
         /* TODO: queue CMD_CONFIRM */
+        break;
+    case CMD_EXECUTE_MENU:
+        if (payload_len != 1) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        sbgc_api_menu_cmd(payload[0]);
         break;
     }
 
