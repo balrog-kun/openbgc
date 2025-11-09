@@ -1,6 +1,10 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <Arduino.h>
 
+extern "C" {
+#include "main.h"
+}
+
 /* Override weak fault handlers defined by who? CMSIS? */
 extern "C" void HardFault_Handler(void) {
     __asm volatile (
@@ -220,7 +224,7 @@ extern "C" void crash_handler(const struct fault_frame_s *sp, uint32_t typ, cons
     char msg[200];
     const char *p;
 
-    /* TODO: stop motors if possible */
+    main_emergency_stop_low_level();
 
 start:
     sprintf(msg, "\r\n\nWe hit a %s at pc %p wirh lr %p\r\n"
@@ -242,17 +246,16 @@ start:
     case 'r':
         break;
     case 'R':
-        /* Same as shutdown_to_bl(), see comments there */
-        __disable_irq();
-        USB->CNTR = 0x0003;
-        HAL_RCC_DeInit();
-        SysTick->CTRL = 0;
-        SysTick->LOAD = 0;
-        SysTick->VAL = 0;
-        for (int i = 0; i < sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0]); i++) {
-            NVIC->ICER[i] = 0xffffffff;
-            NVIC->ICPR[i] = 0xffffffff;
-        }
+        /* Same as shutdown_to_bl(), see comments there.
+         * Don't advertise this command.  It does seem to go to the bootloader and you can flash
+         * a new firmware and it'll run.  However it won't start if you tell the bootloader to
+         * jump straight back to the current firmware.
+         *
+         * main_shutdown_high_level() doesn't seem to hurt or help in a simple crash scenario but
+         * let's keep it disabled in case it causes problems in more peculiar crash sites
+         */
+        // main_shutdown_high_level();
+        main_shutdown_low_level();
         __set_MSP(*(uint32_t *) 0x1fffd800);
         __set_PSP(*(uint32_t *) 0x1fffd800);
         ((void (*)(void)) *(uint32_t *) 0x1fffd804)();

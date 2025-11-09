@@ -12,6 +12,10 @@ void main_loop_sleep(void);
 void main_loop_cb_add(struct main_loop_cb_s *cb);
 void main_loop_cb_remove(struct main_loop_cb_s *cb);
 
+void main_shutdown_high_level(void);
+void main_shutdown_low_level(void);
+void main_emergency_stop_low_level(void);
+
 #ifdef __cplusplus
 extern HardwareSerial *error_serial;
 #endif

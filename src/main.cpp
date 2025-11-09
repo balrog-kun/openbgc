@@ -538,8 +538,28 @@ static void motors_on_off(bool on) {
         serial->println("Motors off");
 }
 
-static void shutdown_to_bl(void) __attribute__((noreturn));
-static void shutdown_to_bl(void) {
+void main_emergency_stop_low_level(void) {
+    /* Cut power to the local DRV8313 / motor
+     *
+     * Don't go fancy because we may be in the crash handler with interrupts disabled.
+     * Will digitalWrite() to SBGC_DRV8313_IN1/2/3 override the timer driven PWM signal in
+     * SimpleFOC?  In theory writing SBGC_DRV8313_EN123 should suffice.
+     */
+    digitalWrite(SBGC_DRV8313_EN123, 0);
+    digitalWrite(SBGC_DRV8313_IN1, 0);
+    digitalWrite(SBGC_DRV8313_IN2, 0);
+    digitalWrite(SBGC_DRV8313_IN3, 0);
+
+    /* TODO: use low-level I2C register accesses to reset the bus state and send
+     * I2C_DRV_REG_SET_ENABLE = 0 to the remote drivers.  We may want to do this in a
+     * dedicated sbgc32_i2c_drv.cpp method.  But then low-level I2C register access also
+     * requires knowing the specific I2C bus driver, we have two busses here, driven
+     * differently.  So we'll end up messing with both i2c.h and sbgc32_i2c_drv.cpp,
+     * perhaps using digitalWrite()s to drive the bus.
+     */
+}
+
+void main_shutdown_high_level(void) {
     int i;
 
     motors_on_off(false);
@@ -565,7 +585,9 @@ static void shutdown_to_bl(void) {
     serial->end();
     digitalWrite(SBGC_LED_GREEN, 0);
     pinMode(SBGC_LED_GREEN, INPUT);
+}
 
+void main_shutdown_low_level(void) {
     /* Things arduino, PlatformIO, framework, CMSIS, etc. may have set up */
     __disable_irq();
     USB->CNTR = 0x0003; /* Reset USB in case it is used (not on PilotFly H2) */
@@ -575,10 +597,16 @@ static void shutdown_to_bl(void) {
     SysTick->VAL = 0;
 
     /* Reset interrupts */
-    for (int i = 0; i < sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0]); i++) {
+    for (int i = 0; i < ARRAY_SIZE(NVIC->ICER); i++) {
         NVIC->ICER[i] = 0xffffffff;
         NVIC->ICPR[i] = 0xffffffff;
     }
+}
+
+static void shutdown_to_bl(void) __attribute__((noreturn));
+static void shutdown_to_bl(void) {
+    main_shutdown_high_level();
+    main_shutdown_low_level();
 
     /*
      * STM32F303xB bootloader System Memory start address according to Section 23 in ST Application Note AN2606, Table 28.
@@ -1238,8 +1266,37 @@ handle_set_param:
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
 
+static void sbgc_api_reset(bool reply, bool save_restore, uint16_t delay_ms) {
+    /* TODO: handle reply, save_restore */
+    serial->println("Serial API reset");
+    delay(delay_ms);
+    main_shutdown_high_level();
+    NVIC_SystemReset();
+}
+
 static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payload_len) {
-#if 1
+    switch (cmd) {
+    case CMD_RESET:
+        if (payload_len != 0 && payload_len != 3) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        {
+            uint8_t flags = 0;
+            uint16_t delay_ms = 0;
+
+            if (payload_len) {
+                flags = payload[0];
+                delay_ms = payload[0] | ((uint16_t) payload[1] << 8);
+            }
+
+            sbgc_api_reset(flags & 1, (flags >> 1) & 1, delay_ms);
+        }
+        break;
+    }
+
+#if 0
     if (quiet)
         return;
 
