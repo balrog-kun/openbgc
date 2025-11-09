@@ -1395,6 +1395,64 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         sbgc_api_motors_off(payload[0]);
         /* TODO: queue CMD_CONFIRM */
         break;
+    case CMD_CONTROL:
+        if (payload_len != sizeof(struct serial_api_control_req_s)) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        {
+            int i;
+            struct serial_api_control_req_s req;
+
+            memcpy(&req, payload, sizeof(struct serial_api_control_req_s));
+
+            /* TODO: figure out Euler angles order remapping but the RM-1 remote seems to send Roll-Pitch-Yaw */
+            for (i = 0; i < 3; i++) {
+                uint8_t ypr_num = 2 - i; /* Map RPY to YPR */
+                uint8_t mode = req.control_mode[i];
+                uint16_t range;
+
+                /* CONTROL_FLAG_MIX_FOLLOW */
+                control.sbgc_api_follow_override[ypr_num] = !(mode & 0x10);
+
+                switch (mode & 0xf) {
+                case 0: /* MODE_NO_CONTROL */
+                    control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_NONE;
+                    break;
+                case 1: /* MODE_SPEED */
+                    control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_SPEED;
+                    control.sbgc_api_override_ts = millis();
+                    control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
+                    break;
+                case 2: /* MODE_ANGLE */
+                case 8: /* MODE_ANGLE_SHORTEST */
+                case 3: /* MODE_SPEED_ANGLE */
+                    control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_ANGLE;
+                    control.sbgc_api_override_ts = millis();
+                    control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PI / 32768);
+                    control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
+                    break;
+                case 4: /* MODE_RC */
+                case 6: /* MODE_RC_HIGH_RES */
+                    range = ((mode & 0xf) == 4) ? 500 : 16384;
+                    control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_RC;
+                    control.sbgc_api_override_ts = millis();
+                    if (abs(req.value[i].angle) > range)
+                        control.sbgc_api_ypr_offsets[ypr_num] = 0;
+                    else {
+                        /* TODO: Use deadband setting? */
+                        control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (100.0f / range);
+                    }
+                    break;
+                default:
+                    continue;
+                }
+            }
+        }
+
+        /* TODO: queue CMD_CONFIRM unless CONTROL_CONFIG_FLAG_NO_CONFIRM */
+        break;
     case CMD_EXECUTE_MENU:
         if (payload_len != 1) {
             sbgc_api.rx_error_cnt++;

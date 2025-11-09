@@ -128,6 +128,14 @@
 #define CMD_DEBUG_VARS_3 254
 #define CMD_ERROR 255
 
+struct serial_api_control_req_s {
+    uint8_t control_mode[3];
+    struct {
+        int16_t speed;
+        int16_t angle;
+    } value[3];
+} __attribute__((packed));
+
 enum serial_api_menu_cmd_id_e {
     MENU_CMD_NO = 0,
     MENU_CMD_PROFILE1 = 1,
