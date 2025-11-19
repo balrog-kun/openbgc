@@ -464,15 +464,14 @@ void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_v
  * orthogonal axes (at least from outer axis to middle axis and middle to inner, not outer to inner
  * which depends on angle at the middle joint) so this is only here for testing.
  *
- * A full generalised algorithm would require inverse kinematics (iterative.)
- *
  * This basically decomposes to_q into three individual rotations, one around axis[0], one around
  * axis[1] rotated by the previous rotation and one around axis[2] rotated by the two
  * earlier rotations.
  */
 void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q,
         float *out_angles) {
-    float r[3][3], q_axes[4], q_mount[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
+    float r[3][3], q_axes[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
+    float q_conj_mount[4] = INIT_CONJ_Q(data->main_imu_mount_q);
     bool invert;
 
     /*
@@ -495,15 +494,13 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
     /* TODO: do we need to rotate data->axes[2] by outer and middle angles for this check? */
     memcpy(a2, data->axes[2], sizeof(a2));
     vector_mult_matrix(a2, r);
-    invert = a2[0] * r[0][0] + a2[1] * r[0][1] + a2[2] * r[0][2] < 0;
+    invert = vector_dot(a2, r[0]) < 0;
 
     /* End of precalculated values */
 
     /* 2. Rotate to_q by R and by data->main_imu_mount_q (R @ (to_q @ data->main_imu_mount_q) @ R^T) */
     /* TODO: we have both R and data->main_imu_mount_q at calibration-time, should merge to avoid two multiplications here */
-    memcpy(q_mount, data->main_imu_mount_q, sizeof(q_mount));
-    q_mount[0] = -q_mount[0];
-    quaternion_mult_to(to_q, q_mount, q_tmp1);
+    quaternion_mult_to(to_q, q_conj_mount, q_tmp1);
     quaternion_mult_to(q_axes, q_tmp1, q_tmp2);
     q_axes[0] = -q_axes[0];
     quaternion_mult_to(q_tmp2, q_axes, q_target);
@@ -524,4 +521,146 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
     for (int i = 0; i < 3; i++)
         while (out_angles[i] < 0)
             out_angles[i] += 2 * M_PI;
+}
+
+void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q, float *out_angles) {
+    /* Closed-form solution for 3 arbitrary axes.  Solve for joint angles given target orientation
+     * using geometric constraints.
+     *
+     * We solve the equation: R_target = R(a0, θ0) × R(a1, θ1) × R(a2, θ2)
+     * The key insight: The inner joint axis a2 in world coordinates must satisfy:
+     *   R(a0, θ0) × R(a1, θ1) × a2 = R_target × a2
+     *
+     * This is based on the Pieper's theorem about spherical wrists and the solutions given in the
+     * original document:
+     *   Pieper, D. L. The kinematics of manipulation under computer control. Ph.D. thesis,
+     *   Stanford Artificial Intelligence Laboratory - Stanford University, 1968.
+     *
+     * Note this is currently coded so as to select a solution with inner angle in the -90-90deg
+     * range, with outer and middle allowing full range.  This can be changed if needed.
+     */
+    const float (*axes)[3] = data->axes;
+    float v[3] = INIT_VEC(axes[2]);
+    float cross[3];
+    float a, b, c, e, k, denominator, dot_v_a0, phase, angle;
+    float θ[3], θ1_candidates[2]; /* UTF-8 identifiers seem to work Ok */
+    float q[4], q_conj_mount[4] = INIT_CONJ_Q(data->main_imu_mount_q);
+    int i;
+
+    /* TODO: check data->orthogonal */
+
+    quaternion_mult_to(to_q, q_conj_mount, q);
+    vector_rotate_by_quaternion(v, q); /* a₂ in frame coordinates after full rotation */
+
+    /* Step 1: Solve constraint equation: R(a0, θ0) × R(a1, θ1) × a2 = v
+     *
+     * Let w = R(a1, θ1) × a2 (a2 after middle joint rotation)
+     * Then: R(a0, θ0) × w = v
+     * For this rotation to exist, the projections of w and v onto the plane perpendicular to a0
+     * must have equal lengths:
+     *   ||w - (w·a0)a0|| = ||v - (v·a0)a0||
+     *
+     * Since ||w|| = ||a2|| = 1 and ||v|| = 1, this simplifies to:
+     *   (w·a0)² = (v·a0)²   ⇒   w·a0 = ± (v·a0)
+     *
+     * Now expand w·a0:
+     *   w·a₀ = [R(a₁, θ₁) × a₂] · a₀
+     *     = [cos(θ₁)a₂ + sin(θ₁)(a₁ × a₂) + (1-cos(θ₁))(a₁·a₂)a₁] · a₀
+     *     = cos(θ₁)(a₂·a₀) + sin(θ₁)[(a₁ × a₂)·a₀] + (1-cos(θ₁))(a₁·a₂)(a₁·a₀)
+     *     = (a₁·a₂)(a₁·a₀) + cos(θ₁)[(a₂·a₀) - (a₁·a₂)(a₁·a₀)] + sin(θ₁)[(a₁ × a₂)·a₀]
+     *
+     * Name some coefficients to get: w·a₀ = E + A cos(θ₁) + B sin(θ₁) = ± (v·a₀)
+     */
+    /* TODO: precalculate these coefficients and denominator */
+    c = vector_dot(axes[2], axes[0]);
+    e = vector_dot(axes[1], axes[2]) * vector_dot(axes[1], axes[0]);
+    a = c - e;
+    vector_cross(axes[1], axes[2], cross);
+    b = vector_dot(cross, axes[0]); /* Scalar triple product */
+
+    dot_v_a0 = vector_dot(v, axes[0]);
+
+    /* Rearranging: A cos(θ₁) + B sin(θ₁) = ± (v·a₀) - E
+     *
+     * Solve that for θ₁:
+     *
+     * This form: A cos(θ) + B sin(θ) = K
+     * has solution: θ = atan2(B, A) ± acos(K / √(A² + B²))
+     */
+    k = dot_v_a0 - e;
+    denominator = sqrtf(a * a + b * b);
+
+    /* TODO: check at calibration */
+    if (fabsf(denominator) < 0.00001f) {
+        /* Degenerate case - axes are aligned */
+        memset(out_angles, 0, 3 * sizeof(float));
+        return;
+    }
+
+    if (fabsf(k / denominator) > 1.0f) {
+        /* Target orientation unreachable for these axes */
+        memset(out_angles, 0, 3 * sizeof(float));
+        return;
+    }
+
+    phase = atan2f(b, a);
+    angle = acosf(k / denominator);
+    θ1_candidates[0] = phase - angle;
+    θ1_candidates[1] = phase + angle;
+
+    for (i = 0; i < 2; i++) {
+        float a2_after_θ1[3] = INIT_VEC(axes[2]);
+        float v_proj[3], a2_proj[3];
+        float q0[4], q1[4], q2[4], q01[4];
+
+        θ[1] = θ1_candidates[i];
+
+        /* Step 2: With θ1 known, solve for θ0 using the a₂ direction constraint.
+         *
+         * We have: R(a₀, θ₀) × w = v, where w = R(a₁, θ₁) × a₂
+         * This is a rotation around a₀ that takes w to v.
+         *
+         * We find θ₀ by projecting w and v onto the plane perpendicular to a₀ and computing
+         * the angle between their projections.
+         */
+        vector_rotate_around_axis(a2_after_θ1, axes[1], θ[1]); /* Not much faster than producing the quaternion */
+
+        vector_weighted_sum(v, 1, axes[0], -vector_dot(v, axes[0]), v_proj);
+        vector_weighted_sum(a2_after_θ1, 1, axes[0], -vector_dot(a2_after_θ1, axes[0]), a2_proj);
+
+        if (vector_normsq(v_proj) < 0.000001f || vector_normsq(a2_proj) < 0.000001f)
+            θ[0] = 0; /* Arbitrary choice when projections vanish, TODO: replace with current angle */
+        else {
+            /* No normalization needed for v_proj and a2_proj, the dot and cross product scale together */
+            vector_cross(a2_proj, v_proj, cross);
+            θ[0] = atan2f(vector_dot(cross, axes[0]), vector_dot(a2_proj, v_proj));
+        }
+
+        /* Step 3: With θ0 and θ1 known, solve for θ2 using the full orientation */
+        quaternion_from_axis_angle(q0, axes[0], θ[0]);
+        quaternion_from_axis_angle(q1, axes[1], θ[1]);
+        quaternion_mult_to(q0, q1, q01);
+        q01[0] = -q01[0];
+        quaternion_mult_to(q01, q, q2);
+
+        /* Extract θ2 from q2.
+         * We can get the angle from just q2[0] but due to the double-cover it might be inverted,
+         * so we need the full quaternion or at least one other non-zero component to compare
+         * signs.
+         *
+         * Could also project the result of quaternion_to_rotvec() onto axes[2] (we know they're
+         * parallel).  The below is a reordered one-liner version that skips the sqrtf but seems,
+         * just as good numerically.  copysignf(acosf(q2[0]), vector_dot()) is noticeably worse.
+         */
+        θ[2] = atan2f(vector_dot(axes[2], q2 + 1), q2[0]) * 2;
+
+        if (fabsf(θ[2]) > M_PI_2)
+            θ[2] -= θ[2] > 0 ? M_PI * 2 : -M_PI * 2;
+
+        /* Select one of the two solutions based on theta2 (TODO: accept range center param?) */
+        if (fabsf(θ[2]) < M_PI_2 / 2)
+            break;
+    }
+
+    memcpy(out_angles, θ, 3 * sizeof(float));
 }

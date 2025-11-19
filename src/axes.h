@@ -15,6 +15,7 @@
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 struct axes_data_s {
     float axes[3][3];
+    bool orthogonal;
     int axis_to_encoder[3]; /* -1 for no encoder */
     float encoder_scale[3];
     float main_imu_mount_q[4];
@@ -47,11 +48,12 @@ void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_v
         const float *angles, float damp_factor, const float *cur_omega_vec,
         float *out_steps, float *out_cur_omega);
 
-/* Calculate exact joint angles to achieve given orientation.  Generally the _orthogonal
- * functions here assume that the pairs of rotation axes of successive joints are orthogonal,
- * and these functions are cheap.  The _universal versions don't make any assumptions and are
- * significantly more expensive but still constant/bounded time analytical solutions.
+/* Calculate exact joint angles to achieve given orientation.  _orthogonal assumes that the
+ * pairs of rotation axes of successive joints are orthogonal, and is cheap.  The _universal
+ * version doesn't make any assumptions and is significantly more expensive but still
+ * constant/bounded time analytical solutions.
  */
-void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *q, float *out_angles);
+void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q, float *out_angles);
+void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q, float *out_angles);
 
 #endif /* AXES_H */
