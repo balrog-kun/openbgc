@@ -24,7 +24,7 @@ struct motor_bldc_s {
     uint32_t prev_ts;
     float ext_omega;
     bool have_ext_omega;
-    float kdrag/*B*/, kcoulomb, kstiction;
+    float kcoulomb, kstiction;
 };
 
 /*
@@ -254,7 +254,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     torque = error * params->kp + motor->i * params->ki;
     motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
     /* Friction torque */
-    torque += omega * motor->kdrag; /* TODO: maybe should factor this into error */
+    torque += omega * params->kdrag;
     if (omega > 0.01f)
         torque += motor->kcoulomb;
     else if (omega < -0.01f)
@@ -340,7 +340,7 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         params->ki_falloff = val;
         break;
     case BLDC_PARAM_K_DRAG:
-        bldc->kdrag = val;
+        params->kdrag = val;
         break;
     case BLDC_PARAM_K_COULOMB:
         bldc->kcoulomb = val;
