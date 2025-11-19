@@ -41,10 +41,19 @@ extern "C" {
 #define SBGC_VBAT_SCALE    0.9f  /* TODO: make user configurable */
 
 /* Onboard DRV8313 for the yaw motor */
-#define SBGC_DRV8313_IN1   PA1   /* TIM1 */
-#define SBGC_DRV8313_IN2   PA2   /* TIM2 */
-#define SBGC_DRV8313_IN3   PA3   /* TIM2 */
-#define SBGC_DRV8313_EN123 PB10
+#define SBGC_YAW_DRV8313_IN1     PA1   /* TIM2 */
+#define SBGC_YAW_DRV8313_IN2     PA2   /* TIM2 */
+#define SBGC_YAW_DRV8313_IN3     PA3   /* TIM2 */
+#define SBGC_YAW_DRV8313_EN123   PB10
+
+#if 0
+/* Onboard DRV8313 traces seen on the SimpleBGC32 "Extended" board */
+#define SBGC_PITCH_DRV8313_IN1   PE3
+#define SBGC_PITCH_DRV8313_IN2   PE4
+#define SBGC_PITCH_DRV8313_IN3   PE5
+
+#define SBGC_ROLL_DRV8313_EN123  PC1
+#endif
 
 /* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
 /* TODO: current and temperature sensing for yaw motor */
@@ -545,10 +554,10 @@ void main_emergency_stop_low_level(void) {
      * Will digitalWrite() to SBGC_DRV8313_IN1/2/3 override the timer driven PWM signal in
      * SimpleFOC?  In theory writing SBGC_DRV8313_EN123 should suffice.
      */
-    digitalWrite(SBGC_DRV8313_EN123, 0);
-    digitalWrite(SBGC_DRV8313_IN1, 0);
-    digitalWrite(SBGC_DRV8313_IN2, 0);
-    digitalWrite(SBGC_DRV8313_IN3, 0);
+    digitalWrite(SBGC_YAW_DRV8313_EN123, 0);
+    digitalWrite(SBGC_YAW_DRV8313_IN1, 0);
+    digitalWrite(SBGC_YAW_DRV8313_IN2, 0);
+    digitalWrite(SBGC_YAW_DRV8313_IN3, 0);
 
     /* TODO: use low-level I2C register accesses to reset the bus state and send
      * I2C_DRV_REG_SET_ENABLE = 0 to the remote drivers.  We may want to do this in a
@@ -1641,12 +1650,13 @@ void setup(void) {
     SimpleFOCDebug::enable(serial);
 # endif
     /* SimpleFOC as a full motor object */
-    motors[0] = motor_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123,
-            encoders[0], &sfoc_motor0_calib);
+    motors[0] = motor_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2, SBGC_YAW_DRV8313_IN3,
+            SBGC_YAW_DRV8313_EN123, encoders[0], &sfoc_motor0_calib);
 #endif
 
     /* SimpleFOC as a PWM output driver only */
-    motor_drivers[0] = motor_drv_3pwm_new(SBGC_DRV8313_IN1, SBGC_DRV8313_IN2, SBGC_DRV8313_IN3, SBGC_DRV8313_EN123);
+    motor_drivers[0] = motor_drv_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2,
+            SBGC_YAW_DRV8313_IN3, SBGC_YAW_DRV8313_EN123);
     if (!motor_drivers[0])
         serial->println("Motor 0 driver init failed!");
 
