@@ -22,6 +22,9 @@ struct axes_data_s {
     bool has_limits[3];
     float limit_max[3];
     float limit_min[3];
+
+    /* Dynamic precalculated values */
+    float jacobian_t[3][3]; /* Same as .axes but rotated by current angles */
 };
 
 struct axes_calibrate_data_s {
@@ -35,18 +38,16 @@ struct axes_calibrate_data_s {
 
 int axes_calibrate(struct axes_calibrate_data_s *data);
 
-void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
+void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q);
 
 /* Calculate a step value to be added to each of the current angles to move the end-effector
  * orientation closer to to_q but without a guarantee of the shortest path.
  */
 void axes_q_to_step_proj(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        const float *angles, float damp_factor, const float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega);
+        float damp_factor, float *out_steps);
 void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_vec,
-        const float *angles, float damp_factor, const float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega);
+        float damp_factor, float *out_steps);
 
 /* Calculate exact joint angles to achieve given orientation.  _orthogonal assumes that the
  * pairs of rotation axes of successive joints are orthogonal, and is cheap.  The _universal

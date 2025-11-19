@@ -189,18 +189,12 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
 void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float target_q[4], step_delta_vec[3];
-    float cur_velocity_vec[3] = INIT_VEC(control->main_ahrs->velocity_vec);
-    float joint_angles_current[3], joint_angles_to_target[3], joint_velocities_current[3];
+    float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
+    float joint_angles_to_target[3];
     int i;
 
     control_calc_target(control, target_q);
     control_calc_step_delta(control, target_q, step_delta_vec);
-
-    for (i = 0; i < 3; i++) {
-        int num = control->axes->axis_to_encoder[i];
-
-        joint_angles_current[i] = control->encoders[num]->reading_rad * control->axes->encoder_scale[num];
-    }
 
     /* Convert the global step_delta_vec to frame_q-local then to per-joint delta angles.
      * Do the same with current velocities from the IMU gyros while we're there.
@@ -209,21 +203,16 @@ void control_step(struct control_data_s *control) {
      * through the joints from outer to inner.  Switch to using the main IMU as reference
      * and work our way through the joints from there to reduce the accumulation of rounding
      * errors in encoder angles and maybe even simplify the maths.  We may need to inline all
-     * of axes_rotvec_to_step_proj() here.  Or might want to precalculate the joint axes in main
-     * IMU or global frame in axes_precalc_rel_q() so we don't need to do this in
-     * axes_rotvec_to_step_proj() and can easily inline the gyro velocity projection here.
+     * of axes_rotvec_to_step_proj() here.
      */
     vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
-    vector_rotate_by_quaternion(cur_velocity_vec, conj_frame_q);
-    axes_rotvec_to_step_proj(control->axes, step_delta_vec, joint_angles_current, 0.0f, cur_velocity_vec,
-            joint_angles_to_target, joint_velocities_current);
+    axes_rotvec_to_step_proj(control->axes, step_delta_vec, 0.0f, joint_angles_to_target);
+
+    vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);
+    vector_mult_matrix(joint_velocities_current, control->axes->jacobian_t);
 
     /* Divide the deltas by dt to get velocities and request these directly from motors.
      *
-     * Note we just went from velocities (change /s) to deltas (change per step) but that's ok,
-     * our limits are in unit time terms while axes_rotvec_to_step_proj() has to operate on actual angles
-     * because for if the target orientation is farther away it might in theory take a completely
-     * different trajectory (although it doesn't now).
      */
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];

@@ -350,9 +350,9 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
 }
 
 /* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
-void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
+void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q) {
-    float q_tmp1[4], q_tmp2[4], q_axis[4], angles[3];
+    float q_tmp[4], q0[4], q1[4], q01[4], q2[4], angles[3];
 
     /* Get encoder angles */
     for (int i = 0; i < 3; i++) {
@@ -364,18 +364,21 @@ void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **
             angles[i] = 0.0f;
     }
 
-    quaternion_from_axis_angle(q_axis, data->axes[2], angles[2]);
-    quaternion_mult_to(q_axis, data->main_imu_mount_q, q_tmp1);
-    quaternion_from_axis_angle(q_axis, data->axes[1], angles[1]);
-    quaternion_mult_to(q_axis, q_tmp1, q_tmp2);
-    quaternion_from_axis_angle(q_axis, data->axes[0], angles[0]);
-    quaternion_mult_to(q_axis, q_tmp2, out_rel_q);
+    quaternion_from_axis_angle(q0, data->axes[0], angles[0]);
+    quaternion_from_axis_angle(q1, data->axes[1], angles[1]);
+    quaternion_mult_to(q0, q1, q01);
+    quaternion_from_axis_angle(q2, data->axes[2], angles[2]);
+    quaternion_mult_to(q01, q2, q_tmp);
+    quaternion_mult_to(q_tmp, data->main_imu_mount_q, out_rel_q);
     quaternion_normalize(out_rel_q);
 
-    memcpy(q_tmp1, out_rel_q, 4 * sizeof(float));
-    q_tmp1[0] = -q_tmp1[0];
+    memcpy(q_tmp, out_rel_q, 4 * sizeof(float));
+    q_tmp[0] = -q_tmp[0];
+    quaternion_mult_to(main_q, q_tmp, out_frame_q);
 
-    quaternion_mult_to(main_q, q_tmp1, out_frame_q);
+    memcpy(data->jacobian_t, data->axes, 9 * sizeof(float));
+    vector_rotate_by_quaternion(data->jacobian_t[1], q01); /* q0 and q01 should either work */
+    vector_rotate_by_quaternion(data->jacobian_t[2], q01); /* and maybe q01 helps the compiler */
 }
 
 /*
@@ -400,8 +403,7 @@ void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **
  * With lambda == 0 it becomes delta theta = J^T * omega
  */
 void axes_q_to_step_proj(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        const float *angles, float damp_factor, const float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega) {
+        float damp_factor, float *out_steps) {
     float omega[3];
 
     if (from_q) {
@@ -413,30 +415,18 @@ void axes_q_to_step_proj(const struct axes_data_s *data, const float *from_q, co
     } else
         quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
 
-    axes_rotvec_to_step_proj(data, omega, angles, damp_factor, cur_omega_vec, out_steps, out_cur_omega);
+    axes_rotvec_to_step_proj(data, omega, damp_factor, out_steps);
 }
 
 void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_vec, /* Note: modifies new_omega_vec */
-        const float *angles, float damp_factor, const float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega) {
-    float j[3][3], jtj[3][3];
-
-    /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
-    memcpy(j, data->axes, sizeof(j));
-    vector_rotate_around_axis(j[1], data->axes[0], angles[0]); /* 19 multiplications, maybe should produce quaternion first */
-    vector_rotate_around_axis(j[2], data->axes[1], angles[1]); /* 19 multiplications */
-    vector_rotate_around_axis(j[2], data->axes[0], angles[0]); /* 19 multiplications */
+        float damp_factor, float *out_steps) {
+    float jtj[3][3];
 
     /* Make sure axis[0] and axis[2] are not parallel */
     /* TODO: come up with a good enough fallback if they are, somehow force out_steps[2] to 0 */
 
     /* Calc J^T * omega */
-    vector_mult_matrix(new_omega_vec, j);                /* 9 multiplications */
-
-    if (out_cur_omega) {
-        memcpy(out_cur_omega, cur_omega_vec, 3 * sizeof(float));
-        vector_mult_matrix(out_cur_omega, j);            /* 9 multiplications */
-    }
+    vector_mult_matrix(new_omega_vec, data->jacobian_t); /* 9 multiplications */
 
     /* If no damping, we're done */
     if (damp_factor != 0.0f) {
@@ -444,7 +434,7 @@ void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_v
         return;
     }
 
-    matrix_jt_mult_j(j, jtj);                            /* 18 multiplications */
+    matrix_jt_mult_j(data->jacobian_t, jtj);             /* 18 multiplications */
     jtj[0][0] += damp_factor;
     jtj[1][1] += damp_factor;
     jtj[2][2] += damp_factor;
