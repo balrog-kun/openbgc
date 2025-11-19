@@ -92,7 +92,7 @@ static sbgc32_i2c_drv *drv_modules[3];
 static obgc_encoder *encoders[3];
 static obgc_foc_driver *motor_drivers[3];
 static obgc_motor *motors[3];
-static obgc_i2c *i2c_main, *i2c_aux;
+static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs */
 static HardwareSerial *serial;
 
 static struct serial_api_port_state_s sbgc_api;
@@ -590,7 +590,7 @@ void main_shutdown_high_level(void) {
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
     i2c_main->end();
-    i2c_aux->end();
+    i2c_int->end();
     serial->end();
     digitalWrite(SBGC_LED_GREEN, 0);
     pinMode(SBGC_LED_GREEN, INPUT);
@@ -822,7 +822,7 @@ static struct main_loop_cb_s vbat_cb = { .cb = vbat_update };
 
 static void misc_debug_update(void *) {
     static uint16_t i2c_main_err_cnt;
-    static uint16_t i2c_aux_err_cnt;
+    static uint16_t i2c_int_err_cnt;
     static uint16_t cnt;
 
     // imu_debug_update();
@@ -839,10 +839,10 @@ static void misc_debug_update(void *) {
             serial->println(i2c_main_err_cnt);
         }
 
-        if (i2c_aux_err_cnt != i2c_aux->error_cnt) {
-            i2c_aux_err_cnt = i2c_aux->error_cnt;
+        if (i2c_int_err_cnt != i2c_int->error_cnt) {
+            i2c_int_err_cnt = i2c_int->error_cnt;
             serial->print("Aux I2C bus err cnt at ");
-            serial->println(i2c_aux_err_cnt);
+            serial->println(i2c_int_err_cnt);
         }
     }
 }
@@ -1577,12 +1577,12 @@ void setup(void) {
     i2c_main->begin();
     i2c_main->setClock(400000); /* 400kHz I2C */
 
-    i2c_aux = new obgc_i2c_subcls<FlexWire>(SBGC_SDA_AUX, SBGC_SCL_AUX);
-    i2c_aux->begin();
+    i2c_int = new obgc_i2c_subcls<FlexWire>(SBGC_SDA_AUX, SBGC_SCL_AUX);
+    i2c_int->begin();
 
     /* Board debug info */
     // scan_i2c(i2c_main);
-    // scan_i2c(i2c_aux);
+    // scan_i2c(i2c_int);
     print_mcu();
     // probe_out_pins_setup();
     // probe_in_pins_setup();
@@ -1593,7 +1593,7 @@ void setup(void) {
 
     /* Initialize storage */
     // storage_init_internal_flash();
-    storage_init_i2c_eeprom(MC_24FC256_BASE_ADDR + 0, i2c_aux, 0x8000);
+    storage_init_i2c_eeprom(MC_24FC256_BASE_ADDR + 0, i2c_int, 0x8000);
     config_read();
 
     /* Initialize IMUs */
