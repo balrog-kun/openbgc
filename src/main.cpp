@@ -1766,11 +1766,12 @@ void setup(void) {
             continue;
 
         /* Set defaults */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, i ? 0.03f : 0.06f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, i ? 0.01f : 0.03f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, i ? 0.3f : 1.0f); /* Limit to 0.3 x VBAT */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.06f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.03f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.002f); /* Look 0.002s ahead */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Limit to 0.2 x VBAT */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
     }
 
     serial->println("Motors early init done");

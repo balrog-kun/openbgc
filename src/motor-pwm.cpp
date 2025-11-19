@@ -137,7 +137,8 @@ static obgc_motor_class motor_pwm_class = {
 static void motor_drv_pwm_set_phase_voltage(struct obgc_foc_driver_s *drv_obj, float v_q, float v_d, float theta) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
-    motor->sfoc_motor->setPhaseVoltage(v_q, v_d, theta * D2R);
+    motor->sfoc_motor->setPhaseVoltage(v_q * motor->sfoc_driver->voltage_power_supply,
+            v_d * motor->sfoc_driver->voltage_power_supply, theta * D2R);
 }
 
 static int motor_drv_pwm_on(struct obgc_foc_driver_s *drv_obj) {
