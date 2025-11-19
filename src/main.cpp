@@ -1160,6 +1160,15 @@ handle_set_param:
     case 'D':
         set_param = BLDC_PARAM_KD;
         break;
+    case 'F':
+        set_param = BLDC_PARAM_KI_FALLOFF;
+        break;
+    case 'V':
+        set_param = BLDC_PARAM_V_MAX;
+        break;
+    case 'f':
+        set_param = BLDC_PARAM_K_DRAG;
+        break;
     case 'm':
         if (motors_on || !vbat_ok) {
             serial->println("Motors must be off and VBAT good");
