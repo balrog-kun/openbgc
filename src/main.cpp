@@ -850,8 +850,14 @@ static struct main_loop_cb_s misc_debug_cb = { .cb = misc_debug_update };
 
 static void config_read(void) {
     if (storage_read() == 0) {
+        int i;
+
         serial->println("Config version " STRINGIFY(STORAGE_CONFIG_VERSION) " loaded");
         have_config = true;
+
+        for (i = 0; i < 3; i++)
+            if (motors[i] && motors[i]->cls->set_calibration)
+                motors[i]->cls->set_calibration(motors[i], &config.motor_calib[i]);
     } else if (have_config)
         serial->println("Config failed to load");
     else {
@@ -1736,9 +1742,11 @@ void setup(void) {
 
     /* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
     for (i = 0; i < 3; i++) {
-        motors[i] = motor_bldc_new(encoders[i], motor_drivers[i],
-                config.motor_calib[i].bldc_with_encoder.pole_pairs ? &config.motor_calib[i] : NULL);
+        motors[i] = motor_bldc_new(encoders[i], motor_drivers[i]);
         motors[i]->pid_params = &config.motor_pid[i];
+
+        if (config.motor_calib[i].bldc_with_encoder.pole_pairs && motors[i]->cls->set_calibration)
+            motors[i]->cls->set_calibration(motors[i], &config.motor_calib[i]);
 
 #if 0
         for (int p = 0; p < ARRAY_SIZE(motors[i]->pid_params.param) && motors[i]->pid_params.param[p].key; p++)

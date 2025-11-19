@@ -197,6 +197,15 @@ static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct obgc_mo
     return 0;
 }
 
+static void motor_bldc_set_calibration(struct motor_bldc_s *motor, const struct obgc_motor_calib_data_s *data) {
+    if (data && data->bldc_with_encoder.pole_pairs) {
+        memcpy(&motor->calib_data, &data->bldc_with_encoder, sizeof(motor->calib_data));
+        motor->electric_scale = (float) motor->calib_data.pole_pairs * motor->calib_data.sensor_direction;
+        motor->obj.ready = true;
+    } else
+        motor->obj.ready = false;
+}
+
 static void motor_bldc_override_cur_omega(struct motor_bldc_s *motor, float val) {
     /* If we have a more precise angular velocity reading than what we get from the encoder, use that.
      * This is very beneficial at low velocities where the encoder resolution is way too low.  It is
@@ -219,6 +228,7 @@ static obgc_motor_class motor_bldc_class = {
     .free                  = (void (*)(obgc_motor *)) motor_bldc_free,
     .recalibrate           = (int (*)(obgc_motor *)) motor_bldc_recalibrate,
     .get_calibration       = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
+    .set_calibration       = (void (*)(obgc_motor *, const obgc_motor_calib_data *)) motor_bldc_set_calibration,
     .override_cur_velocity = (void (*)(obgc_motor *, float)) motor_bldc_override_cur_omega,
 };
 
@@ -294,8 +304,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     motor->driver->cls->set_phase_voltage(motor->driver, vq * motor->calib_data.sensor_direction, vd, theta);
 }
 
-obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver,
-        const struct obgc_motor_calib_data_s *calib_data) {
+obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver) {
     struct motor_bldc_s *motor = (struct motor_bldc_s *) malloc(sizeof(struct motor_bldc_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -303,12 +312,6 @@ obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver,
 
     motor->enc = enc;
     motor->driver = driver;
-
-    if (calib_data) {
-        memcpy(&motor->calib_data, &calib_data->bldc_with_encoder, sizeof(motor->calib_data));
-        motor->electric_scale = (float) motor->calib_data.pole_pairs * motor->calib_data.sensor_direction;
-        motor->obj.ready = true;
-    }
 
     motor->loop_cb.cb = (void (*)(void *)) motor_bldc_loop;
     motor->loop_cb.data = motor;
