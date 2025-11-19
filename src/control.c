@@ -128,6 +128,12 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
             control->velocity_vec, 1.0f - control->settings->ahrs_velocity_kp, v_vec);
     current_v = vector_dot(v_vec, delta_axis);
 
+    if (!isfinite(current_v)) {
+        error_print("Bad state, resetting velocity_vec");
+        current_v = 0.0f;
+        memset(control->velocity_vec, 0, 3 * sizeof(float));
+    }
+
     /*
      * Based on current velocity and max allowed acceleration/deceleration decide if we're
      * close enough to target that we need to be decelerating already so that we're at standstill
