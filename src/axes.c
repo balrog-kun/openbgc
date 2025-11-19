@@ -483,9 +483,7 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
      * 1. R = rotation that maps axis[0] to (0, 0, 1) and axis[1] to (0, 1, 0) -- note the
      * orthogonality assumption.
      */
-    r[0][0] = data->axes[1][1] * data->axes[0][2] - data->axes[1][2] * data->axes[0][1];
-    r[0][1] = data->axes[1][2] * data->axes[0][0] - data->axes[1][0] * data->axes[0][2];
-    r[0][2] = data->axes[1][0] * data->axes[0][1] - data->axes[1][1] * data->axes[0][0];
+    vector_cross(data->axes[1], data->axes[0], r[0]);
     memcpy(r[1], data->axes[1], 3 * sizeof(float));
     memcpy(r[2], data->axes[0], 3 * sizeof(float));
     quaternion_from_matrix(r, q_axes);

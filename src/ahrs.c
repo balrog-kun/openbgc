@@ -163,10 +163,7 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         float acc_error[3], sin_angle;
 
         get_ref_gravity(ahrs->q, g_local);
-
-        acc_error[0] = acc[1] * g_local[2] - acc[2] * g_local[1];
-        acc_error[1] = acc[2] * g_local[0] - acc[0] * g_local[2];
-        acc_error[2] = acc[0] * g_local[1] - acc[1] * g_local[0];
+        vector_cross(acc, g_local, acc_error);
         vector_mult_scalar(acc_error, 1.0f / norm);
         sin_angle = vector_norm(acc_error);
         vector_add(error, acc_error);
@@ -317,7 +314,7 @@ static void ahrs_init_q_with_a(obgc_ahrs *ahrs, const float *a) {
     if (!ahrs->encoder_q && lensq > 0.01f) {
         /*
          * At rest and with the body frame aligned with the ENU reference frame (no rotation), the
-         * acceleration as measured by the accelerometer should be in the Z axis (up).  Given a
+         * acceleration as measured by the accelerometer should be in the Z axis (up).  Given
          * only the accelerometer reading, no yaw information (assume 0) and assuming body is still
          * at rest, get the pitch (Y axis rotation) and roll (X axis rotation) angle of the body
          * that would give this accelerometer reading.  Initialize the AHRS quaternion from these
@@ -325,7 +322,7 @@ static void ahrs_init_q_with_a(obgc_ahrs *ahrs, const float *a) {
          * definition and this is guaranteed here by the always positive atan2 x parameter).  The
          * gimbal physically may have arbitrary limits on either axis but these two angles are
          * only used to initialize the quaternion, they don't have to map to rotation angles on
-         * the physical links.
+         * the physical joints.
          */
         float angles[3] = {
             0.0f, /* yaw */

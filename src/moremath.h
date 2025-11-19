@@ -43,8 +43,14 @@ static inline void vector_normalize(float *v) {
     vector_mult_scalar(v, 1.0f / vector_norm(v));
 }
 
-static inline float vector_dot(float *v0, float *v1) {
+static inline float vector_dot(const float *v0, const float *v1) {
     return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
+}
+
+static inline void vector_cross(const float *v0, const float *v1, float *v_out) {
+    v_out[0] = v0[1] * v1[2] - v0[2] * v1[1];
+    v_out[1] = v0[2] * v1[0] - v0[0] * v1[2];
+    v_out[2] = v0[0] * v1[1] - v0[1] * v1[0];
 }
 
 #define INIT_VEC(v)    {  (v)[0], (v)[1], (v)[2] }
