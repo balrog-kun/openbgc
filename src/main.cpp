@@ -982,7 +982,7 @@ handle_set_param:
                     memcpy(q, main_ahrs->q, 4 * sizeof(float));
 
                 /* Try to estimate the same angles from IMU data */
-                axes_q_to_angles(&config.axes, q, angles_est);
+                axes_q_to_angles_orthogonal(&config.axes, q, angles_est);
                 mapped[config.axes.axis_to_encoder[0]] = angles_est[0];
                 mapped[config.axes.axis_to_encoder[1]] = angles_est[1];
                 mapped[config.axes.axis_to_encoder[2]] = angles_est[2];

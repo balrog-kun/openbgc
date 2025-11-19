@@ -349,6 +349,116 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
     return 0;
 }
 
+/* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
+void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
+        const float *main_q, float *out_rel_q, float *out_frame_q) {
+    float q_tmp1[4], q_tmp2[4], q_axis[4], angles[3];
+
+    /* Get encoder angles */
+    for (int i = 0; i < 3; i++) {
+        int num = data->axis_to_encoder[i];
+
+        if (encoders[num])
+            angles[i] = encoders[num]->reading_rad * data->encoder_scale[num];
+        else
+            angles[i] = 0.0f;
+    }
+
+    quaternion_from_axis_angle(q_axis, data->axes[2], angles[2]);
+    quaternion_mult_to(q_axis, data->main_imu_mount_q, q_tmp1);
+    quaternion_from_axis_angle(q_axis, data->axes[1], angles[1]);
+    quaternion_mult_to(q_axis, q_tmp1, q_tmp2);
+    quaternion_from_axis_angle(q_axis, data->axes[0], angles[0]);
+    quaternion_mult_to(q_axis, q_tmp2, out_rel_q);
+    quaternion_normalize(out_rel_q);
+
+    memcpy(q_tmp1, out_rel_q, 4 * sizeof(float));
+    q_tmp1[0] = -q_tmp1[0];
+
+    quaternion_mult_to(main_q, q_tmp1, out_frame_q);
+}
+
+/*
+ * Given current orientation and the orientation we want to achieve and current angles at each
+ * joint, calculate the best change in the angles to move towards the target orientation.  This
+ * makes no assumptions about the axes.
+ *
+ * It is however based on the local Jacobian and it doesn't generally take the shortest path
+ * towards the target orientation.  If called iteratively it'll create a trajectory that marks
+ * some sort of arc path from original to target orientations, with one or two bends, not a
+ * "straight" line (great circle) such as with SLERP.
+ *
+ * The damping factor can be used to straighten the trajectory to some degree but it is
+ * costly computationally.
+ *
+ * This returns the estimated 100% angle difference for each joint.  But the assumption is that
+ * this is going to be called at small intervals through some time at the end of which we want
+ * to be in the target orientation.  The caller is expected to scale the outputs to control the
+ * step size, angular speed, acceleration/deceleration, smoothness of the movement.
+ *
+ * The formula is delta theta = (J^T * J + lambda * I)^-1 * J^T * omega
+ * With lambda == 0 it becomes delta theta = J^T * omega
+ */
+void axes_q_to_step_proj(const struct axes_data_s *data, const float *from_q, const float *to_q,
+        const float *angles, float damp_factor, const float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega) {
+    float omega[3];
+
+    if (from_q) {
+        float from_q_inv[4] = INIT_CONJ_Q(from_q);
+        float q_rel[4];
+
+        quaternion_mult_to(to_q, from_q_inv, q_rel);     /* 16 multiplications */
+        quaternion_to_rotvec(q_rel, omega);              /* ~5 multiplications */
+    } else
+        quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
+
+    axes_rotvec_to_step_proj(data, omega, angles, damp_factor, cur_omega_vec, out_steps, out_cur_omega);
+}
+
+void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_vec, /* Note: modifies new_omega_vec */
+        const float *angles, float damp_factor, const float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega) {
+    float j[3][3], jtj[3][3];
+
+    /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
+    memcpy(j, data->axes, sizeof(j));
+    vector_rotate_around_axis(j[1], data->axes[0], angles[0]); /* 19 multiplications, maybe should produce quaternion first */
+    vector_rotate_around_axis(j[2], data->axes[1], angles[1]); /* 19 multiplications */
+    vector_rotate_around_axis(j[2], data->axes[0], angles[0]); /* 19 multiplications */
+
+    /* Make sure axis[0] and axis[2] are not parallel */
+    /* TODO: come up with a good enough fallback if they are, somehow force out_steps[2] to 0 */
+
+    /* Calc J^T * omega */
+    vector_mult_matrix(new_omega_vec, j);                /* 9 multiplications */
+
+    if (out_cur_omega) {
+        memcpy(out_cur_omega, cur_omega_vec, 3 * sizeof(float));
+        vector_mult_matrix(out_cur_omega, j);            /* 9 multiplications */
+    }
+
+    /* If no damping, we're done */
+    if (damp_factor != 0.0f) {
+        memcpy(out_steps, new_omega_vec, 3 * sizeof(float));
+        return;
+    }
+
+    matrix_jt_mult_j(j, jtj);                            /* 18 multiplications */
+    jtj[0][0] += damp_factor;
+    jtj[1][1] += damp_factor;
+    jtj[2][2] += damp_factor;
+
+    /*
+     * Solve JTJ * delta theta = J^T omega instead of inverting JTJ.
+     * Inverting could also be an option, it would take 36 multiples + 9 for J^T * omega.
+     *
+     * TODO: check if jtj fits the conditions for Cholesky Decomposition (or just try it, see if it works),
+     * then see if the code ends up being faster
+     */
+    vector_solve(jtj, new_omega_vec, out_steps);         /* ~51 multiplications */
+}
+
 /*
  * Calculate joint angles to achieve a specific main IMU orientation.  This implementation assumes
  * orthogonal axes (at least from outer axis to middle axis and middle to inner, not outer to inner
@@ -360,7 +470,8 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
  * axis[1] rotated by the previous rotation and one around axis[2] rotated by the two
  * earlier rotations.
  */
-void axes_q_to_angles(const struct axes_data_s *data, float *to_q, float *out_angles) {
+void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q,
+        float *out_angles) {
     float r[3][3], q_axes[4], q_mount[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
     bool invert;
 
@@ -413,114 +524,4 @@ void axes_q_to_angles(const struct axes_data_s *data, float *to_q, float *out_an
     for (int i = 0; i < 3; i++)
         while (out_angles[i] < 0)
             out_angles[i] += 2 * M_PI;
-}
-
-/*
- * Given current orientation and the orientation we want to achieve and current angles at each
- * joint, calculate the best change in the angles to move towards the target orientation.  This
- * makes no assumptions about the axes.
- *
- * It is however based on the local Jacobian and it doesn't generally take the shortest path
- * towards the target orientation.  If called iteratively it'll create a trajectory that marks
- * some sort of arc path from original to target orientations, with one or two bends, not a
- * "straight" line (great circle) such as with SLERP.
- *
- * The damping factor can be used to straighten the trajectory to some degree but it is
- * costly computationally.
- *
- * This returns the estimated 100% angle difference for each joint.  But the assumption is that
- * this is going to be called at small intervals through some time at the end of which we want
- * to be in the target orientation.  The caller is expected to scale the outputs to control the
- * step size, angular speed, acceleration/deceleration, smoothness of the movement.
- *
- * The formula is delta theta = (J^T * J + lambda * I)^-1 * J^T * omega
- * With lambda == 0 it becomes delta theta = J^T * omega
- */
-void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        float *angles, float damp_factor, float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega) {
-    float omega[3];
-
-    if (from_q) {
-        float from_q_inv[4] = INIT_CONJ_Q(from_q);
-        float q_rel[4];
-
-        quaternion_mult_to(to_q, from_q_inv, q_rel);     /* 16 multiplications */
-        quaternion_to_rotvec(q_rel, omega);              /* ~5 multiplications */
-    } else
-        quaternion_to_rotvec(to_q, omega);               /* ~5 multiplications */
-
-    axes_rotvec_to_step(data, omega, angles, damp_factor, cur_omega_vec, out_steps, out_cur_omega);
-}
-
-void axes_rotvec_to_step(const struct axes_data_s *data, float *new_omega_vec, /* Note: modifies new_omega_vec */
-        float *angles, float damp_factor, float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega) {
-    float j[3][3], jtj[3][3];
-
-    /* Rotate axis[1] and axis[2] by current angles, compose the Jacobian */
-    memcpy(j, data->axes, sizeof(j));
-    vector_rotate_around_axis(j[1], data->axes[0], angles[0]); /* 19 multiplications, maybe should produce quaternion first */
-    vector_rotate_around_axis(j[2], data->axes[1], angles[1]); /* 19 multiplications */
-    vector_rotate_around_axis(j[2], data->axes[0], angles[0]); /* 19 multiplications */
-
-    /* Make sure axis[0] and axis[2] are not parallel */
-    /* TODO: come up with a good enough fallback if they are, somehow force out_steps[2] to 0 */
-
-    /* Calc J^T * omega */
-    vector_mult_matrix(new_omega_vec, j);                /* 9 multiplications */
-
-    if (out_cur_omega) {
-        memcpy(out_cur_omega, cur_omega_vec, 3 * sizeof(float));
-        vector_mult_matrix(out_cur_omega, j);            /* 9 multiplications */
-    }
-
-    /* If no damping, we're done */
-    if (damp_factor != 0.0f) {
-        memcpy(out_steps, new_omega_vec, 3 * sizeof(float));
-        return;
-    }
-
-    matrix_jt_mult_j(j, jtj);                            /* 18 multiplications */
-    jtj[0][0] += damp_factor;
-    jtj[1][1] += damp_factor;
-    jtj[2][2] += damp_factor;
-
-    /*
-     * Solve JTJ * delta theta = J^T omega instead of inverting JTJ.
-     * Inverting could also be an option, it would take 36 multiples + 9 for J^T * omega.
-     *
-     * TODO: check if jtj fits the conditions for Cholesky Decomposition (or just try it, see if it works),
-     * then see if the code ends up being faster
-     */
-    vector_solve(jtj, new_omega_vec, out_steps);         /* ~51 multiplications */
-}
-
-/* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
-void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
-        const float *main_q, float *out_rel_q, float *out_frame_q) {
-    float q_tmp1[4], q_tmp2[4], q_axis[4], angles[3];
-
-    /* Get encoder angles */
-    for (int i = 0; i < 3; i++) {
-        int num = data->axis_to_encoder[i];
-
-        if (encoders[num])
-            angles[i] = encoders[num]->reading_rad * data->encoder_scale[num];
-        else
-            angles[i] = 0.0f;
-    }
-
-    quaternion_from_axis_angle(q_axis, data->axes[2], angles[2]);
-    quaternion_mult_to(q_axis, data->main_imu_mount_q, q_tmp1);
-    quaternion_from_axis_angle(q_axis, data->axes[1], angles[1]);
-    quaternion_mult_to(q_axis, q_tmp1, q_tmp2);
-    quaternion_from_axis_angle(q_axis, data->axes[0], angles[0]);
-    quaternion_mult_to(q_axis, q_tmp2, out_rel_q);
-    quaternion_normalize(out_rel_q);
-
-    memcpy(q_tmp1, out_rel_q, 4 * sizeof(float));
-    q_tmp1[0] = -q_tmp1[0];
-
-    quaternion_mult_to(main_q, q_tmp1, out_frame_q);
 }

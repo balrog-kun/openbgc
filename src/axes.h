@@ -33,14 +33,25 @@ struct axes_calibrate_data_s {
 };
 
 int axes_calibrate(struct axes_calibrate_data_s *data);
-void axes_q_to_angles(const struct axes_data_s *data, float *q, float *out_angles);
-void axes_q_to_step(const struct axes_data_s *data, const float *from_q, const float *to_q,
-        float *angles, float damp_factor, float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega);
-void axes_rotvec_to_step(const struct axes_data_s *data, float *new_omega_vec,
-        float *angles, float damp_factor, float *cur_omega_vec,
-        float *out_steps, float *out_cur_omega);
+
 void axes_precalc_rel_q(const struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q);
+
+/* Calculate a step value to be added to each of the current angles to move the end-effector
+ * orientation closer to to_q but without a guarantee of the shortest path.
+ */
+void axes_q_to_step_proj(const struct axes_data_s *data, const float *from_q, const float *to_q,
+        const float *angles, float damp_factor, const float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega);
+void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_vec,
+        const float *angles, float damp_factor, const float *cur_omega_vec,
+        float *out_steps, float *out_cur_omega);
+
+/* Calculate exact joint angles to achieve given orientation.  Generally the _orthogonal
+ * functions here assume that the pairs of rotation axes of successive joints are orthogonal,
+ * and these functions are cheap.  The _universal versions don't make any assumptions and are
+ * significantly more expensive but still constant/bounded time analytical solutions.
+ */
+void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *q, float *out_angles);
 
 #endif /* AXES_H */
