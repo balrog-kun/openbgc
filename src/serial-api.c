@@ -50,6 +50,7 @@ void serial_api_rx_byte(struct serial_api_port_state_s *port, uint8_t byte) {
 
     if (port->rx_len == 4) {
         if ((uint8_t) (port->rx_buf[1] + port->rx_buf[2]) != port->rx_buf[3]) {
+            error_print("Bad header checksum");
             port->rx_error_cnt++;
             while (--port->rx_len) {
                 memmove(port->rx_buf, port->rx_buf + 1, port->rx_len);
@@ -67,12 +68,13 @@ void serial_api_rx_byte(struct serial_api_port_state_s *port, uint8_t byte) {
         return;
 
     if (port->rx_buf[0] == V1_START) {
-        uint8_t sum, pos;
+        uint8_t sum = 0, pos;
 
         for (pos = 0; pos < port->rx_buf[2]; pos)
             sum += port->rx_buf[4 + pos++];
 
         if (port->rx_buf[4 + pos] != sum) {
+            error_print("Bad V1 payload checksum");
             port->rx_error_cnt++;
             serial_api_reset(port);
             return;
@@ -80,7 +82,8 @@ void serial_api_rx_byte(struct serial_api_port_state_s *port, uint8_t byte) {
     } else {
         const uint8_t *crc = port->rx_buf + (4 + port->rx_buf[2]);
 
-        if (sbgc_crc16(port->rx_buf + 1, 3 + port->rx_buf[2]) != (uint16_t) crc[0] << 8 | crc[1]) {
+        if (sbgc_crc16(port->rx_buf + 1, 3 + port->rx_buf[2]) != (((uint16_t) crc[0] << 8) | crc[1])) {
+            error_print("Bad V2 payload checksum");
             port->rx_error_cnt++;
             serial_api_reset(port);
             return;
@@ -106,7 +109,7 @@ void serial_api_tx_cmd(struct serial_api_port_state_s *port, uint8_t cmd,
     memcpy(buf + 4, payload, payload_len);
 
     if (buf[0] == V1_START) {
-        uint8_t sum, pos;
+        uint8_t sum = 0, pos;
 
         for (pos = 0; pos < buf[2];)
             sum += buf[4 + pos++];
