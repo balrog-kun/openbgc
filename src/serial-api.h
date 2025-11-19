@@ -128,6 +128,29 @@
 #define CMD_DEBUG_VARS_3 254
 #define CMD_ERROR 255
 
+enum serial_api_error_code_e {
+    /* The most often used codes are: */
+    ERR_CMD_SIZE = 1,
+    ERR_WRONG_PARAMS = 2,
+    ERR_CRYPTO = 4,
+    ERR_UNKNOWN_COMMAND = 6,
+    ERR_WRONG_STATE = 8,
+    ERR_NOT_SUPPORTED = 9,
+    ERR_OPERATION_FAILED = 10,
+    ERR_TEMPORARY = 11,
+    /* Codes related to file operations: */
+    ERR_EEPROM_FAULT = 1,
+    ERR_FILE_NOT_FOUND = 2,
+    ERR_FAT = 3,
+    ERR_NO_FREE_SPACE = 4,
+    ERR_FAT_IS_FULL = 5,
+    ERR_FILE_SIZE = 6,
+    ERR_CRC = 7,
+    ERR_LIMIT_REACHED = 8,
+    ERR_FILE_CORRUPTED = 9,
+    ERR_FS_WRONG_PARAMS = 10,
+};
+
 struct serial_api_control_req_s {
     uint8_t control_mode[3];
     struct {

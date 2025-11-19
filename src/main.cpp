@@ -1295,6 +1295,22 @@ handle_set_param:
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
 
+static void sbgc_api_send_confirm(uint8_t cmd_id, uint16_t data, uint8_t data_len) {
+    uint8_t payload[3] = { cmd_id, (uint8_t) data, (uint8_t) (data >> 8) };
+
+    /* TODO: Here and everywhere else that we send, make sure this doesn't block for long enough
+     * to disrupt the main loop.
+     */
+    serial_api_tx_cmd(&sbgc_api, CMD_CONFIRM, payload, 1 + data_len);
+}
+
+static void sbgc_api_send_error(uint8_t cmd_id, uint8_t error, uint32_t data) {
+    uint8_t payload[6] = { cmd_id, error, (uint8_t) data,
+        (uint8_t) (data >> 8), (uint8_t) (data >> 16), (uint8_t) (data >> 24) };
+
+    serial_api_tx_cmd(&sbgc_api, CMD_ERROR, payload, 6);
+}
+
 static void sbgc_api_motors_on(void) {
     user_motors_on();
 }
@@ -1487,6 +1503,61 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         }
 
         sbgc_api_menu_cmd(payload[0]);
+        break;
+    case CMD_I2C_WRITE_REG_BUF:
+        {
+            obgc_i2c *bus;
+
+            if (payload_len < 2 || payload_len > 250) {
+                sbgc_api.rx_error_cnt++;
+                break;
+            }
+
+            bus = (payload[0] & 1) ? i2c_int : i2c_main;
+            bus->beginTransmission(*payload++ >> 1);
+
+            while (--payload_len)
+                if (bus->write(*payload++) != 1) /* TODO: leverage write(data, len)? also in imu-mpu6050?,storage */
+                    break;
+
+            if (bus->endTransmission() || payload_len)
+                sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, 0);
+            else
+                sbgc_api_send_confirm(cmd, 0, 1);
+        }
+        break;
+    case CMD_I2C_READ_REG_BUF:
+        {
+            obgc_i2c *bus;
+            uint8_t i, len, reply[255];
+            uint16_t addr;
+
+            /* Allow a 3-byte payload with 1-byte register addresss, conforming to
+             * SimplBGC_2_6_Serial_Protocol_Specification.pdf, but also 4- or 2-byte payloads,
+             * with a 16-bit register address or no register address respectively.
+             */
+            if (!IN_SET(payload_len, 2, 3, 4)) {
+                sbgc_api.rx_error_cnt++;
+                break;
+            }
+
+            bus = (payload[0] & 1) ? i2c_int : i2c_main;
+            len = payload[payload_len - 1];
+            addr = payload[1];
+
+            if (payload_len == 4)
+                addr = ((uint16_t) payload[1] << 8) | payload[2];
+
+            if (bus->requestFrom(payload[0] >> 1, len, addr, payload_len - 2, true) != len) {
+                sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, 0);
+                break;
+            }
+
+            for (i = 0; i < len; i++)
+                reply[i] = bus->read();
+
+            serial_api_tx_cmd(&sbgc_api, cmd, reply, len);
+        }
         break;
     }
 
