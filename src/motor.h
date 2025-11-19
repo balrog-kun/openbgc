@@ -70,6 +70,8 @@ typedef struct obgc_foc_driver_class_s {
     void (*set_phase_voltage)(obgc_foc_driver *drv, float v_q, float v_d, float theta);
     int (*on)(obgc_foc_driver *drv);
     void (*off)(obgc_foc_driver *drv);
+    /* .passive_brake() may be issued in any state.  Use .off() to disable.  */
+    void (*passive_brake)(obgc_foc_driver *drv);
     void (*free)(obgc_foc_driver *drv);
     void (*beep)(obgc_foc_driver *drv, uint8_t volume, uint16_t freq, uint8_t duration_ms);
 } obgc_foc_driver_class;

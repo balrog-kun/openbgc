@@ -175,6 +175,32 @@ static void motor_drv_pwm_off(struct obgc_foc_driver_s *drv_obj) {
     motor->sfoc_motor->driver->disable();
 }
 
+static void motor_drv_pwm_low_impedance(struct obgc_foc_driver_s *drv_obj) {
+    struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
+
+    motor->on = true;
+
+    if (motor->beeping)
+        return;
+
+    /* .enable() sets the ENx pins high and does setPwm(0, 0, 0) which should drive INx pins
+     * constant low.  Even if not, just knowing that the three pins are constantly at the same
+     * level should be enough to achieve the passive braking.
+     *
+     * If the 0 PWM value is not actually a 0 duty cycle, hopefully the PWMs are synchronized
+     * though.  It would make sense for SimpleFOC to always ensure synchronization for efficiency.
+     * SimpleFOC's generic-arduino HAL cannot do that.  The STM32 HAL has (and uses)
+     * stm32_alignTimers(), which doesn't support the STM32F3xx series though.  So on STM32 it
+     * hinges on whether the MCU's 3 INx outputs use the same timer for their PWM, which on the
+     * PilotFly H2 they luckily do.
+     *
+     * But in theory we *are* setting an absolute zero duty cycle (and SimpleFOC does write a
+     * 0 into CCRx in src/drivers/hardware_specific/stm32/stm32_timerutils.cpp:stm32_setPwm())
+     * so this doesn't matter here.
+     */
+    motor->sfoc_motor->driver->enable();
+}
+
 static void motor_drv_pwm_free(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
@@ -278,6 +304,7 @@ static obgc_foc_driver_class motor_drv_pwm_class = {
     .set_phase_voltage = motor_drv_pwm_set_phase_voltage,
     .on                = motor_drv_pwm_on,
     .off               = motor_drv_pwm_off,
+    .passive_brake     = motor_drv_pwm_low_impedance,
     .free              = motor_drv_pwm_free,
     .beep              = motor_drv_stm32_beep,
 };

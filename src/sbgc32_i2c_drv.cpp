@@ -109,8 +109,26 @@ static void sbgc32_i2c_drv_motor_off(obgc_foc_driver *motor_drv) {
 
     dev->i2c->beginTransmission(dev->addr);
     if (dev->i2c->write(I2C_DRV_REG_SET_ENABLE) != 1 ||
+            dev->i2c->write((uint8_t) 0) != 1 ||
             dev->i2c->write((uint8_t) 0) != 1)
         dev->i2c->error_cnt++;;
+    dev->i2c->endTransmission();
+}
+
+static void sbgc32_i2c_drv_low_impedance(struct obgc_foc_driver_s *motor_drv) {
+    struct sbgc32_i2c_drv_s *dev = container_of(motor_drv, struct sbgc32_i2c_drv_s, motor_drv_obj);
+
+    /* Basically enable motor and set power to 0 */
+    dev->i2c->beginTransmission(dev->addr);
+    if (dev->i2c->write(I2C_DRV_REG_SET_POWER) != 1 ||
+            dev->i2c->write((uint8_t) 0) != 1 || /* I2C_DRV_REG_SET_POWER */
+            dev->i2c->write((uint8_t) 0) != 1 ||
+            dev->i2c->write((uint8_t) 0) != 1 || /* I2C_DRV_REG_SET_ANGLE */
+            dev->i2c->write((uint8_t) 0) != 1 ||
+            dev->i2c->write((uint8_t) 0) != 1 || /* I2C_DRV_REG_SET_FORCE_POWER */
+            dev->i2c->write((uint8_t) 0) != 1 ||
+            dev->i2c->write((uint8_t) 1) != 1)   /* I2C_DRV_REG_SET_ENABLED */
+        dev->i2c->error_cnt++;
     dev->i2c->endTransmission();
 }
 
@@ -122,6 +140,7 @@ static obgc_foc_driver_class sbgc32_i2c_drv_motor_drv_class = {
     .set_phase_voltage = sbgc32_i2c_drv_motor_set_phase_voltage,
     .on                = sbgc32_i2c_drv_motor_on,
     .off               = sbgc32_i2c_drv_motor_off,
+    .passive_brake     = sbgc32_i2c_drv_low_impedance,
     .free              = sbgc32_i2c_drv_motor_free,
 };
 
