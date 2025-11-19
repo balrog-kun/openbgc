@@ -11,6 +11,10 @@ typedef struct obgc_motor_s {
     struct obgc_motor_class_s *cls;
     bool ready;
     struct obgc_motor_pid_params_s *pid_params;
+    struct obgc_motor_pid_stats_s {
+        float tracking[3];
+        float tracking_dev[3];
+    } pid_stats;
 } obgc_motor;
 
 typedef struct obgc_bldc_with_encoder_calib_data_s {

@@ -236,6 +236,8 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     float prev_theta, theta, dtheta, invdt, omega, accel, error, torque, vq, vd;
     uint32_t prev_ts;
     const struct obgc_motor_pid_params_s *params = motor->obj.pid_params;
+    int idx;
+    float val;
 
     if (!motor->obj.ready || !motor->on)
         return;
@@ -302,6 +304,16 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
      * Reduce v_max proportionally to temperature if over threshold.  */
 
     motor->driver->cls->set_phase_voltage(motor->driver, vq * motor->calib_data.sensor_direction, vd, theta);
+
+    /* Keep separate stats in 3 ranges of target_omega values */
+    idx = fabsf(motor->target_omega) < 0.05f ? 0 : (fabsf(motor->target_omega) < 0.5f ? 1 : 2);
+    val = omega / motor->target_omega;
+#define TRACKING_GAIN 0.005f
+    motor->obj.pid_stats.tracking[idx] = val * TRACKING_GAIN +
+        motor->obj.pid_stats.tracking[idx] * (1.0f - TRACKING_GAIN);
+    val = fabsf(val - motor->obj.pid_stats.tracking[idx]);
+    motor->obj.pid_stats.tracking_dev[idx] = val * TRACKING_GAIN +
+        motor->obj.pid_stats.tracking_dev[idx] * (1.0f - TRACKING_GAIN);
 }
 
 obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver) {
