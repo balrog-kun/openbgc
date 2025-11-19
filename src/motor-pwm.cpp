@@ -1,5 +1,7 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
 #include <SimpleFOC.h>
+#include <drivers/hardware_specific/stm32/stm32_mcu.h>
+#include <drivers/hardware_specific/stm32/stm32_timerutils.h>
 extern "C" {
 #include "main.h"
 #include "moremath.h"
@@ -31,6 +33,12 @@ struct motor_pwm_s {
     SFOCEncoder *sfoc_encoder;
     struct main_loop_cb_s loop_cb;
     bool on;
+
+    bool beeping;
+    bool flipped;
+    uint32_t orig_psc0;
+    uint32_t orig_arr0;
+    unsigned long beep_end_ts;
 };
 
 static int motor_pwm_init(struct obgc_motor_s *motor_obj) {
@@ -137,6 +145,9 @@ static obgc_motor_class motor_pwm_class = {
 static void motor_drv_pwm_set_phase_voltage(struct obgc_foc_driver_s *drv_obj, float v_q, float v_d, float theta) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
+    if (motor->beeping)
+        return;
+
     motor->sfoc_motor->setPhaseVoltage(v_q * motor->sfoc_driver->voltage_power_supply,
             v_d * motor->sfoc_driver->voltage_power_supply, theta * D2R);
 }
@@ -144,12 +155,22 @@ static void motor_drv_pwm_set_phase_voltage(struct obgc_foc_driver_s *drv_obj, f
 static int motor_drv_pwm_on(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
 
+    motor->on = true;
+
+    if (motor->beeping)
+        return 0;
+
     motor->sfoc_motor->driver->enable();
     return 0;
 }
 
 static void motor_drv_pwm_off(struct obgc_foc_driver_s *drv_obj) {
     struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
+
+    motor->on = false;
+
+    if (motor->beeping)
+        return;
 
     motor->sfoc_motor->driver->disable();
 }
@@ -160,11 +181,105 @@ static void motor_drv_pwm_free(struct obgc_foc_driver_s *drv_obj) {
     motor_pwm_free(&motor->motor_obj);
 }
 
+static void motor_drv_stm32_flip_polarity(struct motor_pwm_s *motor) {
+    STM32DriverParams *stm32_params = (STM32DriverParams *) motor->sfoc_driver->params;
+
+    /* Invert the polarity of all 3 PWM channels to pull the rotor the other direction just
+     * in case the pull is actually causing noticeable acceleration, or in case the rotor
+     * angle is such that the currents are not causing any pull.
+     *
+     * Right now we keep two of the outputs LOW and one HIGH for a short time at the
+     * beginning of each cycle, of each square wave period, then LOW for the rest of
+     * the cycle.  So for a short time there's current flowing through 2 of the windings
+     * while the third is shorted, no current.  The rest of the time all windings are
+     * shorted so we're probably passively braking.  Then in the next cycle it's the
+     * same situation except the currents are flowing in the opposite directions.
+     *
+     * What we should be doing is perhaps this:
+     * 1. have the currents flow in the same way as now, for the same short period of
+     *    time in each cycle,
+     * 2. then within the same cycle have them flowing in the opposite directions for
+     *    the same small amount of time,
+     * 3. put all outputs in high-impedance state for the rest of the cycle, which would
+     *    require playing with PWM on the ENx pins which we're currently not doing.
+     *    (Unless the user requested passive braking, in that case the windings should
+     *    be shorted for the rest of the cycle like now)
+     *
+     * Another difficult and probably not worth it improvement would be to try to, if
+     * the motor is on and being drived, keep driving it roughly at the same requested
+     * torque while emitting the square wave.  Both these ideas are left as a TODO.
+     */
+    motor->flipped ^= 1;
+
+    LL_TIM_OC_SetPolarity(stm32_params->timers_handle[0]->Instance, stm32_params->channels[0],
+            !LL_TIM_OC_GetPolarity(stm32_params->timers_handle[0]->Instance, stm32_params->channels[0]));
+    LL_TIM_OC_SetPolarity(stm32_params->timers_handle[1]->Instance, stm32_params->channels[1],
+            !LL_TIM_OC_GetPolarity(stm32_params->timers_handle[1]->Instance, stm32_params->channels[1]));
+    LL_TIM_OC_SetPolarity(stm32_params->timers_handle[2]->Instance, stm32_params->channels[2],
+            !LL_TIM_OC_GetPolarity(stm32_params->timers_handle[2]->Instance, stm32_params->channels[2]));
+}
+
+static void motor_drv_stm32_beep_loop(struct motor_pwm_s *motor) {
+    STM32DriverParams *stm32_params = (STM32DriverParams *) motor->sfoc_driver->params;
+
+    if ((signed long) (unsigned long) (millis() - motor->beep_end_ts) < 0) {
+        motor_drv_stm32_flip_polarity(motor);
+        return;
+    }
+
+    /* Restore everything */
+    LL_TIM_SetPrescaler(stm32_params->timers_handle[0]->Instance, motor->orig_psc0);
+    LL_TIM_SetAutoReload(stm32_params->timers_handle[0]->Instance, motor->orig_arr0);
+
+    if (motor->flipped)
+        motor_drv_stm32_flip_polarity(motor);
+
+    if (motor->on)
+        motor->sfoc_driver->enable();
+    else
+        motor->sfoc_driver->disable();
+
+    motor->beeping = false;
+    main_loop_cb_remove(&motor->loop_cb);
+}
+
+static void motor_drv_stm32_beep(struct obgc_foc_driver_s *drv_obj, uint8_t volume, uint16_t freq,
+        uint8_t duration_ms) {
+    struct motor_pwm_s *motor = container_of(drv_obj, struct motor_pwm_s, drv_obj);
+    STM32DriverParams *stm32_params = (STM32DriverParams *) motor->sfoc_driver->params;
+    uint32_t duty0;
+
+    if (motor->beeping)
+        return;
+
+    motor->beeping = true;
+    motor->flipped = false;
+    /* Reprogramming the timers without SimpleFOC knowing is a bit of a hack but still
+     * offloading the rest of the timer logic to SimpleFOC and keeping it all within the
+     * contraints of an embedded MCU are probably worth it.
+     */
+    motor->orig_psc0 = stm32_params->timers_handle[0]->Instance->PSC;
+    motor->orig_arr0 = stm32_params->timers_handle[0]->Instance->ARR;
+
+    motor->sfoc_driver->enable(); /* Sets all duty cycles to 0 */
+
+    stm32_setClockAndARR(stm32_params->timers_handle[0], freq);
+
+    duty0 = (uint32_t) volume * (stm32_params->timers_handle[0]->Instance->ARR + 1) / 200;
+    stm32_setPwm(stm32_params->timers_handle[0], stm32_params->channels[0], duty0);
+
+    motor->beep_end_ts = millis() + duration_ms;
+    motor->loop_cb.cb = (void (*)(void *)) motor_drv_stm32_beep_loop;
+    motor->loop_cb.data = motor;
+    main_loop_cb_add(&motor->loop_cb);
+}
+
 static obgc_foc_driver_class motor_drv_pwm_class = {
     .set_phase_voltage = motor_drv_pwm_set_phase_voltage,
     .on                = motor_drv_pwm_on,
     .off               = motor_drv_pwm_off,
     .free              = motor_drv_pwm_free,
+    .beep              = motor_drv_stm32_beep,
 };
 
 static void motor_pwm_loop(struct motor_pwm_s *motor) {

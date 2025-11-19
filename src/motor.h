@@ -71,8 +71,7 @@ typedef struct obgc_foc_driver_class_s {
     int (*on)(obgc_foc_driver *drv);
     void (*off)(obgc_foc_driver *drv);
     void (*free)(obgc_foc_driver *drv);
-    /* TODO: void beep_on(drv) */
-    /* TODO: void beep_off(drv) */
+    void (*beep)(obgc_foc_driver *drv, uint8_t volume, uint16_t freq, uint8_t duration_ms);
 } obgc_foc_driver_class;
 
 #endif /* MOTOR_H */
