@@ -90,7 +90,7 @@ static obgc_imu *frame_imu;
 static obgc_ahrs *frame_ahrs;
 static sbgc32_i2c_drv *drv_modules[3];
 static obgc_encoder *encoders[3];
-static obgc_foc_driver *motor_drivers[3];
+static obgc_foc_driver *motor_drivers[3], *beep_driver;
 static obgc_motor *motors[3];
 static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs */
 static HardwareSerial *serial;
@@ -420,6 +420,17 @@ void main_loop_sleep(void) {
     next_update += TARGET_INTERVAL;
 }
 
+static void beep(void) {
+    if (beep_driver)
+        beep_driver->cls->beep(beep_driver, 5, 2000, 100); /* 5%, 2kHz, 100ms */
+}
+
+static void error_beep(void) {
+    if (beep_driver) {
+        beep_driver->cls->beep(beep_driver, 5, 600, 255);
+    }
+}
+
 static void control_update_aux_values(void) {
     /* The "az" may be a misnomer, we want the angle from positive X axis
      * (in the positive yaw direction) for quaternion_to/from_euler() to work consistently
@@ -539,7 +550,7 @@ static void motors_on_off(bool on) {
     }
 
     motors_on = on;
-    /* TODO: beep */
+    beep();
 
     if (on)
         serial->println("Motors on");
@@ -651,20 +662,20 @@ static void user_motors_on(void) {
             !motors[0] || !motors[1] || !motors[2] ||
             !motors[0]->ready || !motors[1]->ready || !motors[2]->ready ||
             /* All test functions off */ use_motor[0] || use_motor[1] || use_motor[2]) {
-        /* TODO: long beep */
+        error_beep();
         serial->println("Conditions not met");
         return;
     }
 
-    /* TODO: short beep */
     use_motor[0] = true;
     use_motor[1] = true;
     use_motor[2] = true;
     motors_on_off(true);
 
-    if (!motors_on)
-        /* TODO: long beep */
+    if (!motors_on) {
+        error_beep();
         return;
+    }
 
     control_enable = true;
     serial->println("Control on");
@@ -678,7 +689,6 @@ static void user_motors_off(void) {
     use_motor[0] = false;
     use_motor[1] = false;
     use_motor[2] = false;
-    /* TODO: short beep */
 }
 
 static bool mode_press_handle(void) {
@@ -834,12 +844,18 @@ static void misc_debug_update(void *) {
 
     if (!(cnt++ & 127)) {
         if (i2c_main_err_cnt != i2c_main->error_cnt) {
+            if (!i2c_main_err_cnt)
+                error_beep();
+
             i2c_main_err_cnt = i2c_main->error_cnt;
             serial->print("Main I2C bus err cnt at ");
             serial->println(i2c_main_err_cnt);
         }
 
         if (i2c_int_err_cnt != i2c_int->error_cnt) {
+            if (!i2c_int_err_cnt)
+                error_beep();
+
             i2c_int_err_cnt = i2c_int->error_cnt;
             serial->print("Aux I2C bus err cnt at ");
             serial->println(i2c_int_err_cnt);
@@ -1216,6 +1232,9 @@ handle_set_param:
 
         control_enable = true;
         serial->println("Control on");
+        break;
+    case 'b':
+        beep();
         break;
     case 27:
         if (!serial->available())
@@ -1730,11 +1749,11 @@ void setup(void) {
      *
      * Keep the code below in case we need to cross check something against SimpleFOC.
      */
-#if 0
-# define MOTOR_DEBUG
-# ifdef MOTOR_DEBUG
+#define MOTOR_DEBUG
+#ifdef MOTOR_DEBUG
     SimpleFOCDebug::enable(serial);
-# endif
+#endif
+#if 0
     /* SimpleFOC as a full motor object */
     motors[0] = motor_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2, SBGC_YAW_DRV8313_IN3,
             SBGC_YAW_DRV8313_EN123, encoders[0], &sfoc_motor0_calib);
@@ -1743,6 +1762,7 @@ void setup(void) {
     /* SimpleFOC as a PWM output driver only */
     motor_drivers[0] = motor_drv_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2,
             SBGC_YAW_DRV8313_IN3, SBGC_YAW_DRV8313_EN123);
+    beep_driver = motor_drivers[0];
     if (!motor_drivers[0])
         serial->println("Motor 0 driver init failed!");
 
