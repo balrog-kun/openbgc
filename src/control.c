@@ -205,21 +205,34 @@ void control_step(struct control_data_s *control) {
     /* Convert the global step_delta_vec to frame_q-local then to per-joint delta angles.
      * Do the same with current velocities from the IMU gyros while we're there.
      *
-     * TODO: axes_rotvec_to_step_proj() starts from the frame IMU frame of reference and goes
-     * through the joints from outer to inner.  Switch to using the main IMU as reference
-     * and work our way through the joints from there to reduce the accumulation of rounding
-     * errors in encoder angles and maybe even simplify the maths.  We may need to inline all
-     * of axes_rotvec_to_step_proj() here.
+     * TODO: axes_precalc_rel_q() and axes_calibrate() start from the frame IMU frame of
+     * reference and go through the joints from outer to inner.  Switch to using the main IMU as
+     * reference and work our way through the joints from there to reduce the accumulation of
+     * rounding errors in encoder angles and maybe even simplify the maths.  Note this will
+     * probably make the maths even less obvious, is it worth it?
      */
     vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
-    axes_rotvec_to_step_proj(control->axes, step_delta_vec, 0.0f, joint_angles_to_target);
+    memcpy(joint_angles_to_target, step_delta_vec, 3 * sizeof(float));
+    vector_mult_matrix(joint_angles_to_target, control->axes->jacobian_pinv);
 
     vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);
-    vector_mult_matrix(joint_velocities_current, control->axes->jacobian_t);
+    vector_mult_matrix(joint_velocities_current, control->axes->jacobian_pinv);
 
-    /* Divide the deltas by dt to get velocities and request these directly from motors.
-     *
+    /* TODO: Process the coupling between pairs of axes for at least two reasons:
+     * 1. to tell the motor PIDs to anticipate an external force => acceleration.  When two
+     *    axes are aligned and we command one of the motors to exert a torque on its axis, the
+     *    inertia of the payload and the structure will exert unexpected torque in the opposite
+     *    direction on the other axis.  So the PID of the other motor needs to know to apply
+     *    the same torque in the same direction as the first motor just to counteract this
+     *    external (to it) reaction force, i.e. without expecting its extra torque to produce
+     *    actual acceleration, *only* counteract the reaction torque.  We're effectively
+     *    spending ~2x the energy we would without aligned axes, to produce the same amount
+     *    of acceleration.
+     * 2. (advanced) to anticipate Coriolis effect.  We have rotating bodies mounted on top
+     *    of other rotating bodies (rotating frame of reference) and there's bound to be an
+     *    effect.
      */
+    /* Divide the deltas by dt to get velocities and request these directly from motors. */
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
         struct obgc_motor_s *motor = control->motors[num];

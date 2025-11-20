@@ -353,6 +353,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
 void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q) {
     float q_tmp[4], q0[4], q1[4], q01[4], q2[4], angles[3];
+    float damp_factor = 1e-4f;
 
     /* Get encoder angles */
     for (int i = 0; i < 3; i++) {
@@ -379,6 +380,17 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
     memcpy(data->jacobian_t, data->axes, 9 * sizeof(float));
     vector_rotate_by_quaternion(data->jacobian_t[1], q01); /* q0 and q01 should either work */
     vector_rotate_by_quaternion(data->jacobian_t[2], q01); /* and maybe q01 helps the compiler */
+
+    /* Since we'll be using it more than once, pre-calculate the pseudo-inverse
+     * rather than solve the equation once in axes_q_to_step_proj().
+     *
+     * The pseudo-inverse with regularization (non-zero damp factor) is supposed to better
+     * handle gimbal lock situations than matrix_inverse() would.  But near gimbal lock each
+     * user needs to have a different fallback (speed vs. angle vs. torque), so we may be able
+     * to switch to the cheaper matrix_inverse().
+     */
+    if (!matrix_t_pseudo_invert(data->jacobian_t, damp_factor, data->jacobian_pinv))
+        memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
 }
 
 /*

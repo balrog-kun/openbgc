@@ -394,7 +394,7 @@ static inline void matrix_jt_mult_j(const float j[][3], float jtj[][3]) {
 static inline bool matrix_invert(const float m[][3], float m_inv[][3]) {
     /* Note: could also try Cholesky decomposition here for slight benefit */
     float det =
-        m[0][0] *( m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
         m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
         m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
 
@@ -411,6 +411,51 @@ static inline bool matrix_invert(const float m[][3], float m_inv[][3]) {
     m_inv[2][0] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * det;
     m_inv[2][1] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]) * det;
     m_inv[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * det;
+    return true;
+}
+
+/* Note: drop this if we ever need to save FLASH space, use the individual functions */
+static inline bool matrix_t_pseudo_invert(const float j_t[][3], float damp_factor, float j_pinv[][3]) {
+    /* Find (J^T x J + lambda * I)^-1 x J^T.
+     * Duplicates some of the above code but skips unneeded elements and works directly on J^T */
+    float m00, m01, m02, m11, m12, m22;
+    float det;
+    float adj00, adj01, adj02, adj11, adj12, adj22;
+
+    m00 = vector_dot(j_t[0], j_t[0]) + damp_factor;
+    m01 = vector_dot(j_t[0], j_t[1]);
+    m02 = vector_dot(j_t[0], j_t[2]);
+    m11 = vector_dot(j_t[1], j_t[1]) + damp_factor;
+    m12 = vector_dot(j_t[1], j_t[2]);
+    m22 = vector_dot(j_t[2], j_t[2]) + damp_factor;
+
+    det =
+        m00 * (m11 * m22 - m12 * m12) -
+        m01 * (m01 * m22 - m12 * m02) +
+        m02 * (m01 * m12 - m11 * m02);
+
+    if (fabsf(det) < 1e-8f)
+        return false; /* Singular matrix */
+
+    det = 1.0f / det;
+    adj00 = (m11 * m22 - m12 * m12) * det;
+    adj01 = (m02 * m12 - m01 * m22) * det;
+    adj02 = (m01 * m12 - m02 * m11) * det;
+    adj11 = (m00 * m22 - m02 * m02) * det;
+    adj12 = (m02 * m01 - m00 * m12) * det;
+    adj22 = (m00 * m11 - m01 * m01) * det;
+
+    j_pinv[0][0] = adj00 * j_t[0][0] + adj01 * j_t[1][0] + adj02 * j_t[2][0];
+    j_pinv[0][1] = adj00 * j_t[0][1] + adj01 * j_t[1][1] + adj02 * j_t[2][1];
+    j_pinv[0][2] = adj00 * j_t[0][2] + adj01 * j_t[1][2] + adj02 * j_t[2][2];
+
+    j_pinv[1][0] = adj01 * j_t[0][0] + adj11 * j_t[1][0] + adj12 * j_t[2][0];
+    j_pinv[1][1] = adj01 * j_t[0][1] + adj11 * j_t[1][1] + adj12 * j_t[2][1];
+    j_pinv[1][2] = adj01 * j_t[0][2] + adj11 * j_t[1][2] + adj12 * j_t[2][2];
+
+    j_pinv[2][0] = adj02 * j_t[0][0] + adj12 * j_t[1][0] + adj22 * j_t[2][0];
+    j_pinv[2][1] = adj02 * j_t[0][1] + adj12 * j_t[1][1] + adj22 * j_t[2][1];
+    j_pinv[2][2] = adj02 * j_t[0][2] + adj12 * j_t[1][2] + adj22 * j_t[2][2];
     return true;
 }
 

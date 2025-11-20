@@ -25,6 +25,7 @@ struct axes_data_s {
 
     /* Dynamic precalculated values */
     float jacobian_t[3][3]; /* Same as .axes but rotated by current angles */
+    float jacobian_pinv[3][3]; /* Pseudo-inverse of the Jacobian */
 };
 
 struct axes_calibrate_data_s {
