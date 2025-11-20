@@ -2,7 +2,7 @@
 
 This code is a basic opensource firmware for SimpleBGC32 camera gimbals.
 
-Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design) and the necessary mathematical algorithms implemented but little in the way of a user interface, companion app, API, or any other niceties to make it usable.
+Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design, possibly drop-in compatible with H2-45 and Adventurer) and the necessary mathematical algorithms implemented but little in the way of a user interface, companion app, API, or any other niceties to make it usable.  PID calibration manual-only.
 
 ## Licensing
 
