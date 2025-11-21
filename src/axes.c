@@ -393,6 +393,50 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
         memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
 }
 
+/* Simpler than angle_normalize_pi in moremath.h but may affect resolution more */
+static float angle_normalize_0_2pi(float angle) {
+    return fmodf(angle + 4 * M_PI, 2 * M_PI);
+}
+
+static bool angle_greater(float a, float b) {
+    return angle_normalize_0_2pi(a - b) < M_PI;
+}
+
+/* Assuming angles normalized to the -720-+720deg range or smaller.
+ * We will add 720deg in some places to ensure angle is positive.  This reduces FP resolution
+ * but assuming the margin is wide enough that it doesn't matter.
+ * 2x limit_margin cannot be wider than the range left after removing limit_min to limit_max.
+ */
+void axes_apply_limits_simple(const struct axes_data_s *data, float limit_margin,
+        const float *angles_current, float *angles_delta) {
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        float dist_from_min, dist_from_max, zone_width;
+
+        if (!data->has_limits[i])
+            continue;
+
+        dist_from_min = angle_normalize_0_2pi(data->limit_min[i] - limit_margin - angles_current[i]);
+        dist_from_max = angle_normalize_0_2pi(angles_current[i] - limit_margin - data->limit_max[i]);
+        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PI);
+        zone_width = angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i] + 2 * limit_margin);
+
+        if (dist_from_min > 2 * M_PI - zone_width) { /* Current angle already within the avoid zone */
+            /* Perhaps control has been disabled and just got re-enabled.  Override angles_delta
+             * to move the angle over whichever limit we're closer to.
+             */
+            if (dist_from_min < dist_from_max)
+                angles_delta[i] = 2 * M_PI - dist_from_max;
+            else /* TODO: respect acceleration/speed limits though */
+                angles_delta[i] = dist_from_min - 2 * M_PI;
+        } else if (angles_delta[i] > dist_from_min) /* We're about to cross upwards over limit_min */
+            angles_delta[i] = dist_from_min;        /* Stop at the limit (minus margin) */
+        else if (-angles_delta[i] > dist_from_max)  /* We're about to cross downwards over limit_max */
+            angles_delta[i] = -dist_from_max;       /* Stop at the limit (plus margin) */
+    }
+}
+
 /*
  * Given current orientation and the orientation we want to achieve and current angles at each
  * joint, calculate the best change in the angles to move towards the target orientation.  This
