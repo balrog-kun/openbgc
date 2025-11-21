@@ -24,6 +24,7 @@ struct motor_bldc_s {
     uint32_t prev_ts;
     float ext_omega;
     bool have_ext_omega;
+    float ext_minus_dv;
     float kcoulomb, kstiction;
 };
 
@@ -220,6 +221,16 @@ static void motor_bldc_override_cur_omega(struct motor_bldc_s *motor, float val)
     motor->have_ext_omega = true;
 }
 
+static void motor_bldc_set_ext_minus_dv(struct motor_bldc_s *motor, float val) {
+    /* If the control code is commanding other motors to change velocity, they can tell us what
+     * total delta V equivalent of reaction force (torque) to expect on this joint.  The upper
+     * layer can't know how that delta V is going to be distributed in time by the other motors'
+     * PIDs so we don't trust it much, apply it as input to the PID, not raw after the PID.
+     * (Basically the caller could just as well have added this to target omega)
+     */
+    motor->ext_minus_dv = val;
+}
+
 static obgc_motor_class motor_bldc_class = {
     .set_velocity          = (void (*)(obgc_motor *, float)) motor_bldc_set,
     .powered_init          = (int (*)(obgc_motor *)) motor_bldc_init,
@@ -230,6 +241,7 @@ static obgc_motor_class motor_bldc_class = {
     .get_calibration       = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
     .set_calibration       = (void (*)(obgc_motor *, const obgc_motor_calib_data *)) motor_bldc_set_calibration,
     .override_cur_velocity = (void (*)(obgc_motor *, float)) motor_bldc_override_cur_omega,
+    .set_external_torque   = (void (*)(obgc_motor *, float)) motor_bldc_set_ext_minus_dv,
 };
 
 static void motor_bldc_loop(struct motor_bldc_s *motor) {
@@ -261,7 +273,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     motor->prev_omega = omega;
     motor->have_ext_omega = false;
 
-    error = motor->target_omega - (omega + accel * params->kd);
+    error = motor->target_omega - (omega + accel * params->kd) + steal_num(motor->ext_minus_dv);
     /* Basic PID (note we applied Kd before Kp so Kd is strictly in time units) */
     torque = error * params->kp + motor->i * params->ki;
     motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */

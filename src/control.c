@@ -196,8 +196,9 @@ void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float target_q[4], step_delta_vec[3];
     float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
-    float joint_angles_to_target[3];
-    int i;
+    float joint_velocities_target[3];
+    float joint_angles_to_target[3], joint_extra_torque[3] = {};
+    int i, j;
 
     control_calc_target(control, target_q);
     control_calc_step_delta(control, target_q, step_delta_vec);
@@ -217,8 +218,13 @@ void control_step(struct control_data_s *control) {
 
     vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);
     vector_mult_matrix(joint_velocities_current, control->axes->jacobian_pinv);
+    vector_mult_scalar(joint_velocities_current, R2D);
 
-    /* TODO: Process the coupling between pairs of axes for at least two reasons:
+    /* Divide the deltas by dt to get velocities, go from rad/dt to °/unit time */
+    for (i = 0; i < 3; i++)
+        joint_velocities_target[i] = joint_angles_to_target[i] * (R2D / control->dt);
+
+    /* Process the coupling between pairs of axes for at least two reasons:
      * 1. to tell the motor PIDs to anticipate an external force => acceleration.  When two
      *    axes are aligned and we command one of the motors to exert a torque on its axis, the
      *    inertia of the payload and the structure will exert unexpected torque in the opposite
@@ -228,21 +234,50 @@ void control_step(struct control_data_s *control) {
      *    actual acceleration, *only* counteract the reaction torque.  We're effectively
      *    spending ~2x the energy we would without aligned axes, to produce the same amount
      *    of acceleration.
-     * 2. (advanced) to anticipate Coriolis effect.  We have rotating bodies mounted on top
+     * 2. TODO: to anticipate Coriolis effect.  We have rotating bodies mounted on top
      *    of other rotating bodies (rotating frame of reference) and there's bound to be an
      *    effect.
      */
-    /* Divide the deltas by dt to get velocities and request these directly from motors. */
+    for (i = 0; i < 3; i++)
+        for (j = i + 1; j < 3; j++) {
+            float delta_v_i = joint_velocities_target[i] - joint_velocities_current[i];
+            float delta_v_j = joint_velocities_target[j] - joint_velocities_current[j];
+            float alignment = vector_dot(control->axes->jacobian_t[i], control->axes->jacobian_t[j]);
+
+            joint_extra_torque[i] += alignment * delta_v_j;
+            joint_extra_torque[j] += alignment * delta_v_i;
+
+            /* Instead of calculating the delta_v's, we might add motor API method to pass
+             * the reference of another coupled motor together with the alignment value.  Let
+             * the motors' feedback loops talk to each other and figure it out before sending
+             * new values to their drivers.  This would be better than the naive thing we do
+             * here because it would include the friction modelling (including cogging in the
+             * future) reducing the effect of the torques, and the integral+derivative terms
+             * we don't know about here, which do change the outputs.  Although if we trust
+             * our PIDs, we should be assuming the commanded delta_v is the delta_v we get,
+             * precisely thanks to the friction modelling, the I, the D terms, etc.
+             * Still the PID may add a delay if max voltage is limited for example or to
+             * smooth things out if available feedback is too noisy.
+             */
+        }
+
+    /* Request new values from motors directly */
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
         struct obgc_motor_s *motor = control->motors[num];
         /* TODO: any downside if we make the scales always positive and invert the axes in axes_calibrate? */
-        float delta = joint_angles_to_target[i] / control->axes->encoder_scale[num];
 
-        motor->cls->set_velocity(motor, delta * (R2D / control->dt));
+        /* Note we could merge the three calls into one "torque" value but that would ask for
+         * the whole PID logic to be moved here and we don't want that, let it do its job.
+         */
+        motor->cls->set_velocity(motor, joint_velocities_target[i] / control->axes->encoder_scale[num]);
 
         if (motor->cls->override_cur_velocity)
             motor->cls->override_cur_velocity(motor,
-                    joint_velocities_current[i] * R2D / control->axes->encoder_scale[num]);
+                    joint_velocities_current[i] / control->axes->encoder_scale[num]);
+
+        if (motor->cls->set_external_torque)
+            motor->cls->set_external_torque(motor,
+                    joint_extra_torque[i] / control->axes->encoder_scale[num]);
     }
 }
