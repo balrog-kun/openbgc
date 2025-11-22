@@ -221,7 +221,7 @@ void control_step(struct control_data_s *control) {
     vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
     memcpy(joint_angles_to_target, step_delta_vec, 3 * sizeof(float));
     vector_mult_matrix(joint_angles_to_target, control->axes->jacobian_pinv);
-    axes_apply_limits_simple(control->axes, control->settings->limit_margin, joint_angles_current,
+    axes_apply_limits_step(control->axes, control->settings->limit_margin, joint_angles_current,
             joint_angles_to_target);
 
     vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);

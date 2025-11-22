@@ -408,7 +408,7 @@ static bool angle_greater(float a, float b) {
  * but assuming the margin is wide enough that it doesn't matter.
  * 2x limit_margin cannot be wider than the range left after removing limit_min to limit_max.
  */
-void axes_apply_limits_simple(const struct axes_data_s *data, float limit_margin,
+void axes_apply_limits_step(const struct axes_data_s *data, float limit_margin,
         const float *angles_current, float *angles_delta) {
     int i;
 
@@ -433,6 +433,46 @@ void axes_apply_limits_simple(const struct axes_data_s *data, float limit_margin
                 angles_delta[i] = dist_from_min - 2 * M_PI;
         } else
             angles_delta[i] = clamp(angles_delta[i], -dist_from_max, dist_from_min);
+    }
+}
+
+/* Same as above but the delta is the full distance to target so we can switch the movement
+ * direction if needed.
+ */
+void axes_apply_limits_full(const struct axes_data_s *data, float limit_margin,
+        const float *angles_current, float *angles_delta) {
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        float dist_from_min, dist_from_max, zone_width;
+
+        if (!data->has_limits[i])
+            continue;
+
+        dist_from_min = angle_normalize_0_2pi(data->limit_min[i] - limit_margin - angles_current[i]);
+        dist_from_max = angle_normalize_0_2pi(angles_current[i] - limit_margin - data->limit_max[i]);
+        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PI);
+        zone_width = angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i] + 2 * limit_margin);
+
+        /* Step 1: check if we need to override the travel direction */
+        if (dist_from_min > 2 * M_PI - zone_width) { /* Current angle already within the avoid zone */
+            /* Perhaps control has been disabled and just got re-enabled.  Select the rotation
+             * direction that will move us across a limit faster.
+             */
+            if (dist_from_min < dist_from_max) {
+                if (angles_delta[i] < 0)
+                    angles_delta[i] += 2 * M_PI;
+            } else {
+                if (angles_delta[i] > 0)
+                    angles_delta[i] -= 2 * M_PI;
+            }
+        } else if (angles_delta[i] > dist_from_min + zone_width * 0.5f)
+            angles_delta[i] -= 2 * M_PI;
+        else if (-angles_delta[i] > dist_from_max + zone_width * 0.5f)
+            angles_delta[i] += 2 * M_PI;
+
+        /* Step 2: with the direction fixed limit how far we can travel */
+        angles_delta[i] = clamp(angles_delta[i], -dist_from_max, dist_from_min);
     }
 }
 

@@ -42,7 +42,9 @@ int axes_calibrate(struct axes_calibrate_data_s *data);
 void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
         const float *main_q, float *out_rel_q, float *out_frame_q);
 
-void axes_apply_limits_simple(const struct axes_data_s *data, float limit_margin,
+void axes_apply_limits_step(const struct axes_data_s *data, float limit_margin,
+        const float *angles_current, float *angles_delta);
+void axes_apply_limits_full(const struct axes_data_s *data, float limit_margin,
         const float *angles_current, float *angles_delta);
 
 /* Calculate a step value to be added to each of the current angles to move the end-effector
