@@ -362,7 +362,7 @@ static void imu_debug_update() {
     serial->println("°C\n");
 }
 
-bool quiet = 0;
+bool quiet = true;
 
 static void main_ahrs_debug_print(const char *str) {
     if (quiet)
@@ -1054,9 +1054,13 @@ handle_set_param:
         cs.out = &config.axes;
 
         /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
-        quiet = 1;
-        config.have_axes = !axes_calibrate(&cs);
-        quiet = 0;
+        {
+            bool prev_quiet = quiet;
+
+            quiet = 1;
+            config.have_axes = !axes_calibrate(&cs);
+            quiet = prev_quiet;
+        }
 
         /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
          * the encoders (i.e. trust whatever scale is documented in the spec and applied in encoder_update())
@@ -1218,6 +1222,9 @@ handle_set_param:
         break;
     case 'd':
         storage_dump();
+        break;
+    case 'v':
+        quiet = !quiet;
         break;
     case ' ':
         if (control_enable) {
@@ -1595,7 +1602,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         break;
     }
 
-#if 0
+#if 1
     if (quiet)
         return;
 
