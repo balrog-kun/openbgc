@@ -44,6 +44,25 @@ struct control_data_s {
     float sbgc_api_ypr_speeds[3];
     bool sbgc_api_follow_override[3];
 
+    /* TODO: introduce movement target and callback, reset this and other "per-movement" state
+     * once target reached.
+     */
+    enum {
+        /* Default for targets >5deg away, interpolate joint angles for mechanically fastest
+         * (laziest) path, properly navigating around joint limits.
+         */
+        CONTROL_PATH_INTERPOLATE_JOINT,
+        /* Interpolate orientation quaternion, roughly great circle arc.  This is always used
+         * if target <=5deg away.  Respects joint limits but doesn't know how to navigate
+         * around them.  Cheapest calculation.
+         */
+        CONTROL_PATH_SHORT,
+        /* TODO: Interpolate euler angles for a more cinematic movement, e.g. if start roll
+         * and end roll are 0, keep camera roll at 0 throughout the whole movement.
+         */
+        CONTROL_PATH_INTERPOLATE_EULER,
+    } path_type;
+
     /* Aux precalculated inputs */
     const float *rel_q, *frame_q;
 

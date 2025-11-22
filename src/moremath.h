@@ -103,6 +103,14 @@ static inline void vector_mult_matrix(float *v, const float r[][3]) {
     v[2] = r[2][0] * vo[0] + r[2][1] * vo[1] + r[2][2] * vo[2];
 }
 
+static inline void vector_mult_matrix_t(float *v, const float r[][3]) {
+    float vo[3] = INIT_VEC(v);
+
+    v[0] = r[0][0] * vo[0] + r[1][0] * vo[1] + r[2][0] * vo[2];
+    v[1] = r[0][1] * vo[0] + r[1][1] * vo[1] + r[2][1] * vo[2];
+    v[2] = r[0][2] * vo[0] + r[1][2] * vo[1] + r[2][2] * vo[2];
+}
+
 static inline void vector_rotate_around_axis(float *v, const float *axis, float angle) {
     float cosa = cosf(angle);
     float sina = sinf(angle);
