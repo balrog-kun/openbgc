@@ -199,7 +199,6 @@ void control_step(struct control_data_s *control) {
     float joint_velocities_target[3];
     float joint_angles_current[3], joint_angles_to_target[3], joint_extra_torque[3] = {};
     int i, j;
-    float limit_margin = 4; /* Stay at least 4 degrees away from mechanical joint limits if any */
 
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
@@ -222,7 +221,7 @@ void control_step(struct control_data_s *control) {
     vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
     memcpy(joint_angles_to_target, step_delta_vec, 3 * sizeof(float));
     vector_mult_matrix(joint_angles_to_target, control->axes->jacobian_pinv);
-    axes_apply_limits_simple(control->axes, limit_margin, joint_angles_current,
+    axes_apply_limits_simple(control->axes, control->settings->limit_margin, joint_angles_current,
             joint_angles_to_target);
 
     vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);

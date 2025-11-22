@@ -14,13 +14,14 @@ struct control_settings_s {
     /* Control config */
     bool keep_yaw;
     bool follow[3]; /* Per euler angle, not gimbal axis */
-    float max_accel;
-    float max_vel;
+    float max_accel;    /* [rad/s/s] */
+    float max_vel;      /* [rad/s] */
     float ahrs_velocity_kp;
+    float limit_margin; /* [rad] */
 
     bool rc_mode_angle;
-    float rc_gain;       /* deg/s or deg/event at full deflection */
-    uint8_t rc_deadband; /* % of full range */
+    float rc_gain;       /* [deg/s] or [deg/event] at full deflection */
+    uint8_t rc_deadband; /* [% of full range] */
     /* TODO: RC in trims, etc. Probably will end up having to make all the above per angle */
 };
 

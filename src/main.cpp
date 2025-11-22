@@ -501,6 +501,9 @@ static void control_setup(void) {
         control.settings->rc_mode_angle = false;
         control.settings->rc_gain = 20; /* deg/s */
         control.settings->rc_deadband = 6;
+
+        /* Stay at least 4 degrees away from mechanical joint limits, if any */
+        control.settings->limit_margin = 4 * D2R;
     }
 
     control_update_aux_values();
