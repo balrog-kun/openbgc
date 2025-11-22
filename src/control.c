@@ -12,8 +12,9 @@
 
 #include "control.h"
 
-static void control_calc_target(struct control_data_s *control, float *out_target_q) {
-    float frame_rel_q[4], frame_ypr[3], target_ypr[3], target_rel_q[4];
+static void control_calc_target(struct control_data_s *control,
+        float *out_target_q, float *out_target_ypr) {
+    float frame_rel_q[4], frame_ypr[3], target_rel_q[4];
     int i;
     unsigned long now = millis();
 
@@ -73,7 +74,7 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
             break;
         }
 
-        target_ypr[i] = (follow ? frame_ypr[i] : (i ? 0 : control->forward_az)) +
+        out_target_ypr[i] = (follow ? frame_ypr[i] : (i ? 0 : control->forward_az)) +
             control->target_ypr_offsets[i];
     }
 
@@ -86,12 +87,12 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
         float main_rel_q[4], main_ypr[3], diff;
         quaternion_mult_to(control->main_ahrs->q, conj_home_q, main_rel_q);
         quaternion_to_euler(main_rel_q, main_ypr);
-        diff = angle_normalize_pi(target_ypr[0] - main_ypr[0]);
+        diff = angle_normalize_pi(out_target_ypr[0] - main_ypr[0]);
         if (fabsf(diff) > M_PI / 2)
-            target_ypr[0] += M_PI;
+            out_target_ypr[0] += M_PI;
     }
 
-    quaternion_from_euler(target_ypr, target_rel_q);
+    quaternion_from_euler(out_target_ypr, target_rel_q);
     /* TODO: If following all, shortcut to multiply by frame_rel_q, perhaps use the non-aligned_* versions.
      * If following none, don't multiply at all, use .home_q.  */
     quaternion_mult_to(target_rel_q, control->aligned_home_q, out_target_q);
@@ -210,6 +211,38 @@ static void control_calc_path_step_orientation(struct control_data_s *control, c
     vector_mult_matrix(out_joint_deltas, control->axes->jacobian_pinv);
 }
 
+static void control_calc_path_step_joint(struct control_data_s *control, const float *target_q,
+        const float *angles_current, float *out_joint_deltas) {
+    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+    float target_rel_q[4];
+    float angles_target[3], angles_diff[3];
+    float delta_axis[3], delta_norm, new_v;
+    int i;
+
+    quaternion_mult_to(conj_frame_q, target_q, target_rel_q);
+    axes_q_to_angles_universal(control->axes, target_rel_q, angles_target);
+
+    /* Default to whichever direction to target angle is shorter */
+    for (i = 0; i < 3; i++)
+        angles_diff[i] = angle_normalize_pi(angles_target[i] - angles_current[i]);
+
+    /* But if that crosses a hard stop / limiter, may have to take the other way */
+    axes_apply_limits_full(control->axes, control->settings->limit_margin,
+            angles_current, angles_diff);
+
+    memcpy(delta_axis, angles_diff, 3 * sizeof(float));
+    vector_mult_matrix_t(delta_axis, control->axes->jacobian_t); /* Multiply by J^T^T == J */
+    delta_norm = vector_norm(delta_axis);
+    vector_mult_scalar(delta_axis, 1.0f / delta_norm); /* Normalize to get just the axis */
+    vector_rotate_by_quaternion(delta_axis, control->frame_q); /* Go back to global frame */
+
+    /* Get the maximum velocity magnitude we're allowed in dt time without exceeding max_accel or max_vel */
+    new_v = control_apply_velocity_limits(control, delta_axis, delta_norm);
+
+    memcpy(out_joint_deltas, angles_diff, 3 * sizeof(float));
+    vector_mult_scalar(out_joint_deltas, control->dt * new_v / delta_norm);
+}
+
 void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
@@ -218,6 +251,7 @@ void control_step(struct control_data_s *control) {
     float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
     float joint_velocities_target[3];
     float joint_angles_current[3], joint_step_deltas[3], joint_extra_torque[3] = {};
+    float target_ypr[3];
     int i, j;
 
     /* Collect some info */
@@ -235,14 +269,14 @@ void control_step(struct control_data_s *control) {
     quaternion_mult_to(target_q, conj_main_q, delta_q); /* Global delta to target_q */
     quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
 
-    /* How we want to get there */
-    {
-        float step_delta_vec[3];
-
+    /* How we want to get there: least joint movement if > 5deg, least camera movement if <= 5deg (cheaper) */
+    if (delta_angle <= 5 * D2R || control->path_type == CONTROL_PATH_SHORT) {
         control_calc_path_step_orientation(control, delta_axis, delta_angle, joint_step_deltas);
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);
+    } else {
+        control_calc_path_step_joint(control, target_q, joint_angles_current, joint_step_deltas);
     }
 
     /* Divide the deltas by dt to get velocities, go from rad/dt to °/unit time */
