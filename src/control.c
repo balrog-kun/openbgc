@@ -96,22 +96,15 @@ static void control_calc_target(struct control_data_s *control, float *out_targe
      * If following none, don't multiply at all, use .home_q.  */
     quaternion_mult_to(target_rel_q, control->aligned_home_q, out_target_q);
 
-    /* TODO: add gradual transition to the vertical check.  Switch the ref vector to pitch axis when roll axis is too vertical */
     /* TODO: do we want to further complicate this by adding 1-motor and/or 2-motor modes?
      * That would probably mean an euler angles priority setting that tells us, with two motors, which two axes we want to stabilize
      * and which one we give up on.  We may want this kind of setting anyway for non-orthogonal axes where some combinations of
      * Yaw+Pitch+Roll may be out of reach, and specially with travel limits on some joints.  */
 }
 
-static void control_calc_step_delta(struct control_data_s *control, const float *target_q,
-        float *out_step_delta_vec) {
-    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
-    float delta_q[4], delta_angle, delta_axis[3], current_v, tmp_q[4];
-    float v_vec[3], max_v, new_v, perp_vec[3];
-
-    /* Global delta to target_q */
-    quaternion_mult_to(target_q, conj_main_q, delta_q);
-    quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
+static float control_apply_velocity_limits(struct control_data_s *control,
+        const float *delta_axis, float delta_angle) {
+    float new_v, max_v, current_v, v_vec[3], perp_vec[3];
 
     /*
      * We now have the whole angle we want to travel and the current camera angular velocity in
@@ -183,31 +176,25 @@ static void control_calc_step_delta(struct control_data_s *control, const float 
     else
         new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
 
-    /* Recalculate delta_q based on what we want to see one step from now (actually skip going back to quaternion) */
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
             max((vector_norm(perp_vec) - control->settings->max_accel * control->dt), 0),
             control->velocity_vec);
-    memcpy(out_step_delta_vec, control->velocity_vec, 3 * sizeof(float));
-    vector_mult_scalar(out_step_delta_vec, control->dt);
+
+    return new_v;
 }
 
-void control_step(struct control_data_s *control) {
+static void control_calc_path_step_orientation(struct control_data_s *control, const float *delta_axis,
+        float delta_angle, float *out_joint_deltas) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
-    float target_q[4], step_delta_vec[3];
-    float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
-    float joint_velocities_target[3];
-    float joint_angles_current[3], joint_angles_to_target[3], joint_extra_torque[3] = {};
-    int i, j;
+    float step_delta_vec[3];
 
-    for (i = 0; i < 3; i++) {
-        int num = control->axes->axis_to_encoder[i];
+    /* Set actual delta to the maximum we're allowed in unit time without exceeding max_accel or max_vel */
+    control_apply_velocity_limits(control, delta_axis, delta_angle);
 
-        joint_angles_current[i] = control->encoders[num]->reading_rad * control->axes->encoder_scale[num];
-    }
-
-    control_calc_target(control, target_q);
-    control_calc_step_delta(control, target_q, step_delta_vec);
+    /* Recalculate delta_q based on what we want to see one step from now (actually skip going back to quaternion) */
+    memcpy(step_delta_vec, control->velocity_vec, 3 * sizeof(float));
+    vector_mult_scalar(step_delta_vec, control->dt);
 
     /* Convert the global step_delta_vec to frame_q-local then to per-joint delta angles.
      * Do the same with current velocities from the IMU gyros while we're there.
@@ -219,18 +206,50 @@ void control_step(struct control_data_s *control) {
      * probably make the maths even less obvious, is it worth it?
      */
     vector_rotate_by_quaternion(step_delta_vec, conj_frame_q);
-    memcpy(joint_angles_to_target, step_delta_vec, 3 * sizeof(float));
-    vector_mult_matrix(joint_angles_to_target, control->axes->jacobian_pinv);
-    axes_apply_limits_step(control->axes, control->settings->limit_margin, joint_angles_current,
-            joint_angles_to_target);
+    memcpy(out_joint_deltas, step_delta_vec, 3 * sizeof(float));
+    vector_mult_matrix(out_joint_deltas, control->axes->jacobian_pinv);
+}
 
+void control_step(struct control_data_s *control) {
+    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
+    float target_q[4], delta_q[4];
+    float delta_angle, delta_axis[3];
+    float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
+    float joint_velocities_target[3];
+    float joint_angles_current[3], joint_step_deltas[3], joint_extra_torque[3] = {};
+    int i, j;
+
+    /* Collect some info */
     vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);
     vector_mult_matrix(joint_velocities_current, control->axes->jacobian_pinv);
-    vector_mult_scalar(joint_velocities_current, R2D);
+
+    for (i = 0; i < 3; i++) {
+        int num = control->axes->axis_to_encoder[i];
+
+        joint_angles_current[i] = control->encoders[num]->reading_rad * control->axes->encoder_scale[num];
+    }
+
+    /* Where do we want to go */
+    control_calc_target(control, target_q, target_ypr);
+    quaternion_mult_to(target_q, conj_main_q, delta_q); /* Global delta to target_q */
+    quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
+
+    /* How we want to get there */
+    {
+        float step_delta_vec[3];
+
+        control_calc_path_step_orientation(control, delta_axis, delta_angle, joint_step_deltas);
+
+        axes_apply_limits_step(control->axes, control->settings->limit_margin,
+                joint_angles_current, joint_step_deltas);
+    }
 
     /* Divide the deltas by dt to get velocities, go from rad/dt to °/unit time */
     for (i = 0; i < 3; i++)
-        joint_velocities_target[i] = joint_angles_to_target[i] * (R2D / control->dt);
+        joint_velocities_target[i] = joint_step_deltas[i] * (R2D / control->dt);
+
+    vector_mult_scalar(joint_velocities_current, R2D);
 
     /* Process the coupling between pairs of axes for at least two reasons:
      * 1. to tell the motor PIDs to anticipate an external force => acceleration.  When two
