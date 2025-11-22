@@ -293,7 +293,7 @@ static int8_t pwm_convert(unsigned long usecs) {
     int val = ((int) usecs - PWM_CENTER) / 6;
 
     return abs(val) < config.control.rc_deadband / 2 ? 0 :
-        constrain(val - (val > 0 ? 1 : -1) * (config.control.rc_deadband / 2), -100, 100);
+        clamp(val - (val > 0 ? 1 : -1) * (config.control.rc_deadband / 2), -100, 100);
 }
 
 static unsigned long rc_yaw_start_ts, rc_pitch_start_ts, rc_roll_start_ts, mode_start_ts;

@@ -46,4 +46,6 @@
     typedef char __check_##struct_type##_size[(sizeof(struct_type) <= (max_size)) ? 1 : -1] __attribute__((unused))
 #endif
 
+#define clamp constrain /* Better name */
+
 #endif /* UTIL_H */

@@ -9,6 +9,7 @@
 #include "moremath.h"
 #include "encoder.h"
 #include "main.h"
+#include "util.h"
 
 #include "axes.h"
 
@@ -430,10 +431,8 @@ void axes_apply_limits_simple(const struct axes_data_s *data, float limit_margin
                 angles_delta[i] = 2 * M_PI - dist_from_max;
             else /* TODO: respect acceleration/speed limits though */
                 angles_delta[i] = dist_from_min - 2 * M_PI;
-        } else if (angles_delta[i] > dist_from_min) /* We're about to cross upwards over limit_min */
-            angles_delta[i] = dist_from_min;        /* Stop at the limit (minus margin) */
-        else if (-angles_delta[i] > dist_from_max)  /* We're about to cross downwards over limit_max */
-            angles_delta[i] = -dist_from_max;       /* Stop at the limit (plus margin) */
+        } else
+            angles_delta[i] = clamp(angles_delta[i], -dist_from_max, dist_from_min);
     }
 }
 

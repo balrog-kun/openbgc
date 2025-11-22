@@ -309,7 +309,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
      * Since we expect low angular velocities in our use cases, don't bother with non-zero
      * direct voltages for now.
      */
-    vq = constrain(torque / 12.0f, -params->v_max, params->v_max); /* TODO: divide vq by current VBAT and multiply by winding resistance */
+    vq = clamp(torque / 12.0f, -params->v_max, params->v_max); /* TODO: divide vq by current VBAT and multiply by winding resistance */
     vd = 0.0f;
 
     /* TODO: take a temperature sensor as input to init() or if NULL, estimate temperature from vq, VBAT, resistance, dissipation rate.
