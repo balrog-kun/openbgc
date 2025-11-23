@@ -27,6 +27,15 @@ boot: $(port) stm32ld
 com: $(port)
 	# Show serial port, ^a q to exit
 	picocom -b 115200 $(port)
+bl: $(port)
+	# Use the official serial-api command to reset firmware to bootloader,
+	# command a 5s delay to avoid the bootloader seeing any extra serial input,
+	# should be compatible with both the original firmware and openbgc
+	#
+	# V1 protocol:
+	picocom -b 115200 -t $$(bash -c "echo -ne '\x3e\x33\x03\x36\x01\x88\x13\x9c'") -X $(port)
+	# V2:
+	#picocom -b 115200 -t $$(bash -c "echo -ne '\x24\x33\x03\x36\x01\x88\x13\x62\x1c'") -r -X $(port)
 
 # This is mainly for documentation and a bit of a hack
 stm32ld: utils/stm32ld.patch

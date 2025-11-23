@@ -1475,10 +1475,31 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
 
             if (payload_len) {
                 flags = payload[0];
-                delay_ms = payload[0] | ((uint16_t) payload[1] << 8);
+                delay_ms = payload[1] | ((uint16_t) payload[2] << 8);
             }
 
             sbgc_api_reset(flags & 1, (flags >> 1) & 1, delay_ms);
+        }
+        break;
+    case CMD_BOOT_MODE_3:
+        if (payload_len != 0 && payload_len != 3) {
+            sbgc_api.rx_error_cnt++;
+            break;
+        }
+
+        {
+            bool confirm = false;
+            uint16_t delay_ms = 0;
+
+            if (payload_len) {
+                confirm = payload[0] == 1;
+                delay_ms = payload[1] | ((uint16_t) payload[2] << 8);
+            }
+
+            /* TODO: handle reply */
+            serial->println("Serial API reset to bootloader");
+            delay(delay_ms);
+            shutdown_to_bl();
         }
         break;
     case CMD_MOTORS_ON:
