@@ -1074,6 +1074,23 @@ handle_set_param:
         config.axes.encoder_scale[1] = copysignf(1.0f, config.axes.encoder_scale[1]);
         config.axes.encoder_scale[2] = copysignf(1.0f, config.axes.encoder_scale[2]);
         break;
+    case 'o':
+        {
+            float cross[3];
+
+            vector_cross(config.axes.axes[0], config.axes.axes[1], cross);
+            vector_cross(cross, config.axes.axes[0], config.axes.axes[1]);
+            vector_normalize(config.axes.axes[1]);
+            /* Maybe should also rotate axes[2] by the same amount */
+
+            vector_cross(config.axes.axes[1], config.axes.axes[2], cross);
+            vector_cross(cross, config.axes.axes[1], config.axes.axes[2]);
+            vector_normalize(config.axes.axes[2]);
+        }
+
+        config.axes.orthogonal = true;
+        serial->println("Consecutive axes pairs assumed orthogonal");
+        break;
     case 'k':
         if (control_enable) {
             serial->println("Control must be disabled (' ')");

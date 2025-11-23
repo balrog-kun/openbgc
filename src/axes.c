@@ -630,7 +630,10 @@ void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_
     float q[4], q_conj_mount[4] = INIT_CONJ_Q(data->main_imu_mount_q);
     int i;
 
-    /* TODO: check data->orthogonal */
+    if (data->orthogonal) {
+        axes_q_to_angles_orthogonal(data, to_q, out_angles);
+        return;
+    }
 
     quaternion_mult_to(to_q, q_conj_mount, q);
     vector_rotate_by_quaternion(v, q); /* a₂ in frame coordinates after full rotation */
