@@ -27,6 +27,12 @@ static inline void vector_add(float *v, const float *dv) {
     v[2] += dv[2];
 }
 
+static inline float vector_dist(const float *v0, const float *v1) {
+    float v[3] = { v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2] };
+
+    return vector_norm(v);
+}
+
 static inline void vector_mult_scalar(float *v, float factor) {
     v[0] *= factor;
     v[1] *= factor;

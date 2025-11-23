@@ -243,6 +243,32 @@ static void control_calc_path_step_joint(struct control_data_s *control, const f
     vector_mult_scalar(out_joint_deltas, control->dt * new_v / delta_norm);
 }
 
+static void control_calc_path_step_euler(struct control_data_s *control, const float *target_ypr,
+        float *out_joint_deltas) {
+    float conj_aligned_home_q[4] = INIT_CONJ_Q(control->aligned_home_q);
+    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
+    float current_rel_q[4], current_ypr[3], ypr_dist, factor;
+    float step_rel_q[4], step_q[4], step_ypr[3], delta_q[4];
+    float delta_axis[3], delta_angle;
+    int i;
+
+    quaternion_mult_to(control->main_ahrs->q, conj_aligned_home_q, current_rel_q);
+    quaternion_to_euler(current_rel_q, current_ypr);
+
+    /* Use the rotation between current and 0.1deg away from current orientation to calculate
+     * the axis, but use the actual Euler angle difference as rotation angle, for velocity control.
+     */
+    ypr_dist = vector_dist(current_ypr, target_ypr);
+    factor = 0.1f * D2R / ypr_dist; /* step = current + (target - current) * factor */
+    vector_weighted_sum(current_ypr, 1.0f - factor, target_ypr, factor, step_ypr);
+    quaternion_from_euler(step_ypr, step_rel_q);
+    quaternion_mult_to(step_rel_q, control->aligned_home_q, step_q);
+    quaternion_mult_to(step_q, conj_main_q, delta_q);
+    quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
+
+    control_calc_path_step_orientation(control, delta_axis, ypr_dist, out_joint_deltas);
+}
+
 void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
@@ -275,9 +301,13 @@ void control_step(struct control_data_s *control) {
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);
-    } else {
+    } else if (control->path_type == CONTROL_PATH_INTERPOLATE_EULER) {
+        control_calc_path_step_euler(control, target_ypr, joint_step_deltas);
+
+        axes_apply_limits_step(control->axes, control->settings->limit_margin,
+                joint_angles_current, joint_step_deltas);
+    } else
         control_calc_path_step_joint(control, target_q, joint_angles_current, joint_step_deltas);
-    }
 
     /* Divide the deltas by dt to get velocities, go from rad/dt to °/unit time */
     for (i = 0; i < 3; i++)
