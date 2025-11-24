@@ -38,10 +38,15 @@ bl: $(port)
 	#picocom -b 115200 -t $$(bash -c "echo -ne '\x24\x33\x03\x36\x01\x88\x13\x62\x1c'") -r -X $(port)
 
 # This is mainly for documentation and a bit of a hack
-stm32ld: utils/stm32ld.patch
-	[ -d stm32ld.git ] || git clone https://github.com/jsnyder/stm32ld.git stm32ld.git
-	cd stm32ld.git && (patch --forward -p1 < ../utils/stm32ld.patch; make)
-	ln -s stm32ld.git/stm32ld $@
+stm32ld.git:
+	git clone https://github.com/jsnyder/stm32ld.git stm32ld.git
+stm32ld.git/patched: stm32ld.git utils/stm32ld.patch
+	# Could unpatch but meh
+	[ -e $@ ] || (cd stm32ld.git && patch --forward -p1 < ../utils/stm32ld.patch) && cp utils/stm32ld.patch $@ && touch $@
+stm32ld.git/stm32ld: stm32ld.git/patched
+	make -C stm32ld.git && touch $@
+stm32ld: stm32ld.git/stm32ld
+	ln -sf stm32ld.git/stm32ld $@
 
 tags:
 	ctags src/*.{c,h,cpp}

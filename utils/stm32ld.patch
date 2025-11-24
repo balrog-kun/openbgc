@@ -27,10 +27,55 @@ index 549f2d0..6be4e3b 100644
      // Erase flash
      if( major == 3 )
 diff --git a/stm32ld.c b/stm32ld.c
-index 4bac7a8..6bff768 100644
+index 4bac7a8..e967003 100644
 --- a/stm32ld.c
 +++ b/stm32ld.c
-@@ -99,6 +99,9 @@ int stm32_init( const char *portname, u32 baud )
+@@ -21,14 +21,17 @@ static ser_handler stm32_ser_id = ( ser_handler )-1;
+ // Check received byte
+ #define STM32_EXPECT( expected )\
+   if( stm32h_read_byte() != expected )\
+-    return STM32_COMM_ERROR;
++  {\
++    stm32h_flush();\
++    return STM32_COMM_ERROR;\
++  }
+ 
+ #define STM32_READ_AND_CHECK( x )\
+   if( ( x = stm32h_read_byte() ) == -1 )\
+     return STM32_COMM_ERROR;
+ 
+ // Helper: send a command to the STM32 chip
+-static int stm32h_send_command( u8 cmd )
++static void stm32h_send_command( u8 cmd )
+ {
+   ser_write_byte( stm32_ser_id, cmd );
+   ser_write_byte( stm32_ser_id, ~cmd );
+@@ -65,15 +68,20 @@ static int stm32h_send_address( u32 address )
+   return stm32h_send_packet_with_checksum( addr_buf, 4 );
+ }
+ 
+-// Helper: intiate BL communication
+-static int stm32h_connect_to_bl()
++static void stm32h_flush()
+ {
+-  int res;
+-
+   // Flush all incoming data
+   ser_set_timeout_ms( stm32_ser_id, SER_NO_TIMEOUT );
+   while( stm32h_read_byte() != -1 );
+   ser_set_timeout_ms( stm32_ser_id, STM32_COMM_TIMEOUT );
++}
++
++// Helper: intiate BL communication
++static int stm32h_connect_to_bl()
++{
++  int res;
++
++  stm32h_flush();
+ 
+   // Initiate communication
+   ser_write_byte( stm32_ser_id, STM32_CMD_INIT );
+@@ -99,6 +107,9 @@ int stm32_init( const char *portname, u32 baud )
  
  // Get bootloader version
  // Expected response: ACK version OPTION1 OPTION2 ACK
@@ -40,3 +85,12 @@ index 4bac7a8..6bff768 100644
  int stm32_get_version( u8 *major, u8 *minor )
  {
    u8 i, version;
+@@ -159,7 +170,7 @@ int stm32_erase_flash()
+   STM32_EXPECT( STM32_COMM_ACK );
+   return STM32_OK;
+ }
+-    
++
+ // Extended erase flash
+ int stm32_extended_erase_flash()
+ {
