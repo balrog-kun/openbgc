@@ -149,7 +149,7 @@ static void motor_drv_pwm_set_phase_voltage(struct obgc_foc_driver_s *drv_obj, f
         return;
 
     motor->sfoc_motor->setPhaseVoltage(v_q * motor->sfoc_driver->voltage_power_supply,
-            v_d * motor->sfoc_driver->voltage_power_supply, theta * D2R);
+            v_d * motor->sfoc_driver->voltage_power_supply, angle_normalize_0_2pi(theta * D2R));
 }
 
 static int motor_drv_pwm_on(struct obgc_foc_driver_s *drv_obj) {

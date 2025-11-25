@@ -10,7 +10,13 @@
 /* TODO: perhaps add a .c to avoid all the inlining */
 
 static inline float angle_normalize_pi(float angle) {
-    return angle >= 0.0f ? fmodf(angle + M_PI, 2 * M_PI) - M_PI : fmodf(angle - M_PI, 2 * M_PI) + M_PI;
+    angle = fmodf(angle, 2 * M_PI);
+    return angle < M_PI ? angle >= -M_PI ? angle : (angle + 2 * M_PI) : (angle - 2 * M_PI);
+}
+
+static inline float angle_normalize_0_2pi(float angle) {
+    angle = fmodf(angle, 2 * M_PI);
+    return angle >= 0.0f ? angle : (angle + 2 * M_PI);
 }
 
 static inline float vector_normsq(const float *v) {

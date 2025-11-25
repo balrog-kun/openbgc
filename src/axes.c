@@ -394,20 +394,11 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
         memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
 }
 
-/* Simpler than angle_normalize_pi in moremath.h but may affect resolution more */
-static float angle_normalize_0_2pi(float angle) {
-    return fmodf(angle + 4 * M_PI, 2 * M_PI);
-}
-
 static bool angle_greater(float a, float b) {
     return angle_normalize_0_2pi(a - b) < M_PI;
 }
 
-/* Assuming angles normalized to the -720-+720deg range or smaller.
- * We will add 720deg in some places to ensure angle is positive.  This reduces FP resolution
- * but assuming the margin is wide enough that it doesn't matter.
- * 2x limit_margin cannot be wider than the range left after removing limit_min to limit_max.
- */
+/* 2x limit_margin cannot be wider than the range left after removing limit_min to limit_max. */
 void axes_apply_limits_step(const struct axes_data_s *data, float limit_margin,
         const float *angles_current, float *angles_delta) {
     int i;
