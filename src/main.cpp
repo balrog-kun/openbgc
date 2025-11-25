@@ -112,7 +112,7 @@ static int vbat;
 static int vbat_ok;
 static bool motors_on;
 
-static struct main_loop_cb_s *cbs;
+static struct main_loop_cb_s *cbs, *cb_next;
 
 #define TARGET_LOOP_RATE 128
 
@@ -1949,8 +1949,10 @@ void loop(void) {
     if (control_enable)
         control_step(&control);
 
-    for (struct main_loop_cb_s *entry = cbs; entry; entry = entry->next)
+    for (struct main_loop_cb_s *entry = cbs; entry; entry = cb_next) {
+        cb_next = entry->next;
         entry->cb(entry->data);
+    }
 }
 void loop_end(void) {}
 
@@ -1959,7 +1961,8 @@ void main_loop_cb_add(struct main_loop_cb_s *cb) {
 
     for (ptr = &cbs; *ptr; ptr = &(*ptr)->next);
 
-    *ptr = cb;
+    if (!cb->next && ptr != &cb->next)
+        *ptr = cb;
 }
 
 void main_loop_cb_remove(struct main_loop_cb_s *cb) {
@@ -1971,6 +1974,9 @@ void main_loop_cb_remove(struct main_loop_cb_s *cb) {
         else
             ptr = &(*ptr)->next;
     }
+
+    if (cb_next == cb)
+        cb_next = cb->next;
 
     cb->next = NULL;
 }
