@@ -1065,10 +1065,13 @@ handle_set_param:
             quiet = prev_quiet;
         }
 
-        /* Other code here and seemingly also that in the SimpleBGC firmware just assumes 1.0 scale from
-         * the encoders (i.e. trust whatever scale is documented in the spec and applied in encoder_update())
-         * and so far this seems to work well.  The scales from axes_calibrate() inherently include some
-         * amount of noise so for now we'll bet on the 1.0 scale giving lower error and override the scales.
+        if (!config.have_axes)
+            break;
+
+        /* Other code here just assumes 1.0 scale from the encoders (i.e. trust whatever scale is
+         * documented in the spec and applied in encoder_update()) and so far this seems to work
+         * well.  The scales from axes_calibrate() inherently include some amount of noise so for
+         * now we'll bet on the 1.0 scale giving lower error and override the scales.
          */
         config.axes.encoder_scale[0] = copysignf(1.0f, config.axes.encoder_scale[0]);
         config.axes.encoder_scale[1] = copysignf(1.0f, config.axes.encoder_scale[1]);
