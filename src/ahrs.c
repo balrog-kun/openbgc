@@ -177,45 +177,16 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     }
 
     if (ahrs->encoder_q) {
-        float y_local[3], z_local[3];
         float conj_q[4] = INIT_CONJ_Q(ahrs->q);
-        float compound_q[4];
-        float enc_error[3];
+        float enc_error_q[4], enc_error[3];
 
-        /*
-         * We can either multiply the quaternions (requiring full 16 float multiplications) and then
-         * rotate each vector by the resulting quaternion once (but most ops optimize away) or rotate
-         * each vector by each quaternion separately (some of the ops can be skipped).  The former
-         * wins in number of float ops so do that.
-         */
-        quaternion_mult_to(ahrs->encoder_q, conj_q, compound_q);
-        ahrs->encoder_q = NULL;
+        quaternion_mult_to(conj_q, steal_ptr(ahrs->encoder_q), enc_error_q);
+        quaternion_to_axis_angle(enc_error_q, enc_error, &norm); /* _to_rotvec() + vector_norm() in one step */
 
-        /* Basically vector_rotate_by_quaternion([0 1 0], compound_q) */
-        y_local[0] = 2 * (compound_q[2] * compound_q[1] - compound_q[0] * compound_q[3]);
-        y_local[2] = 2 * (compound_q[0] * compound_q[1] + compound_q[2] * compound_q[3]);
-
-        /* Basically vector_rotate_by_quaternion([0 0 1], compound_q) */
-        z_local[0] = 2 * (compound_q[0] * compound_q[2] + compound_q[3] * compound_q[1]);
-        z_local[1] = 2 * (compound_q[3] * compound_q[2] - compound_q[0] * compound_q[1]);
-
-        /*
-         * y_local x [0 1 0] + z_local x [0 0 1] -- sum of errors for both vectors.
-         * Maybe we should go one by one but let's simplify this.  The length of this
-         * is going to be the sum of the sines of angles between reference and
-         * measured vectors.
-         */
-        enc_error[0] = y_local[2] - z_local[1];
-        enc_error[1] = z_local[0];
-        enc_error[2] = -y_local[0];
-
-        /* TODO: instead of all this, just enc_error = quaternion_to_rotvec(compound_q)?? */
-
-        norm = vector_norm(enc_error);
         /* TODO: probably also need to take into account encoder stddev due to noise */
 #       define MIN_ENC_ERROR (1.5f * ahrs->encoder_step)
         if (norm >= MIN_ENC_ERROR) { /* sin(x) ~= x in this range */
-            vector_mult_scalar(enc_error, (norm - MIN_ENC_ERROR) / norm);
+            vector_mult_scalar(enc_error, norm - MIN_ENC_ERROR);
             vector_add(error, enc_error);
             vector_mult_scalar(enc_error, ahrs->enc_kp);
             vector_add(error_scaled, enc_error);
