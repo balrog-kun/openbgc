@@ -60,7 +60,9 @@ void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_v
  * version doesn't make any assumptions and is significantly more expensive but still
  * constant/bounded time analytical solutions.
  */
-void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q, float *out_angles);
-void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q, float *out_angles);
+void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q,
+        const float *home_angles, float *out_angles);
+void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q,
+        const float *home_angles, float *out_angles);
 
 #endif /* AXES_H */

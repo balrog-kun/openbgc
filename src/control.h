@@ -7,6 +7,7 @@ struct control_settings_s {
     /* Geometry config */
     float home_q[4];
     float home_frame_q[4];
+    float home_angles[3]; /* [rad] */
     bool have_home;
     float forward_vec[3];
     bool have_forward;

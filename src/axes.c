@@ -545,10 +545,12 @@ void axes_rotvec_to_step_proj(const struct axes_data_s *data, float *new_omega_v
  * earlier rotations.
  */
 void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to_q,
-        float *out_angles) {
+        const float *home_angles, float *out_angles) {
     float r[3][3], q_axes[4], q_tmp1[4], q_tmp2[4], q_target[4], a2[3];
     float q_conj_mount[4] = INIT_CONJ_Q(data->main_imu_mount_q);
     bool invert;
+    int enc2_num = data->axis_to_encoder[2];
+    float enc2_home = home_angles[enc2_num] * data->encoder_scale[enc2_num];
 
     /*
      * Note: if this ever gets used in realtime, the following initial steps can be precaculated,
@@ -583,7 +585,7 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
     quaternion_to_euler(q_target, out_angles);
 
     /* Double-cover, select the orientation with inner angle in -90 - 90deg range */
-    if (fabsf(out_angles[2]) > M_PI * 0.5) {
+    if (fabsf(angle_normalize_pi(out_angles[2] - enc2_home)) > M_PI_2) {
         out_angles[0] = out_angles[0] - M_PI;
         out_angles[1] = -out_angles[1] - M_PI;
         out_angles[2] = out_angles[2] - M_PI;
@@ -597,7 +599,8 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
             out_angles[i] += 2 * M_PI;
 }
 
-void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q, float *out_angles) {
+void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q,
+        const float *home_angles, float *out_angles) {
     /* Closed-form solution for 3 arbitrary axes.  Solve for joint angles given target orientation
      * using geometric constraints.
      *
@@ -620,9 +623,11 @@ void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_
     float θ[3], θ1_candidates[2]; /* UTF-8 identifiers seem to work Ok */
     float q[4], q_conj_mount[4] = INIT_CONJ_Q(data->main_imu_mount_q);
     int i;
+    int enc2_num = data->axis_to_encoder[2];
+    float enc2_home = home_angles[enc2_num] * data->encoder_scale[enc2_num];
 
     if (data->orthogonal) {
-        axes_q_to_angles_orthogonal(data, to_q, out_angles);
+        axes_q_to_angles_orthogonal(data, to_q, home_angles, out_angles);
         return;
     }
 
@@ -731,11 +736,11 @@ void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_
          */
         θ[2] = atan2f(vector_dot(axes[2], q2 + 1), q2[0]) * 2;
 
-        if (fabsf(θ[2]) > M_PI_2)
+        if (fabsf(θ[2]) > M_PI)
             θ[2] -= θ[2] > 0 ? M_PI * 2 : -M_PI * 2;
 
         /* Select one of the two solutions based on theta2 (TODO: accept range center param?) */
-        if (fabsf(θ[2]) < M_PI_2 / 2)
+        if (fabsf(angle_normalize_pi(θ[2] - enc2_home)) < M_PI_2)
             break;
     }
 

@@ -220,7 +220,7 @@ static void control_calc_path_step_joint(struct control_data_s *control, const f
     int i;
 
     quaternion_mult_to(conj_frame_q, target_q, target_rel_q);
-    axes_q_to_angles_universal(control->axes, target_rel_q, angles_target);
+    axes_q_to_angles_universal(control->axes, target_rel_q, control->settings->home_angles, angles_target);
 
     /* Default to whichever direction to target angle is shorter */
     for (i = 0; i < 3; i++)

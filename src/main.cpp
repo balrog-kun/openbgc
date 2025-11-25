@@ -1016,7 +1016,7 @@ handle_set_param:
                     memcpy(q, main_ahrs->q, 4 * sizeof(float));
 
                 /* Try to estimate the same angles from IMU data */
-                axes_q_to_angles_orthogonal(&config.axes, q, angles_est);
+                axes_q_to_angles_orthogonal(&config.axes, q, config.control.home_angles, angles_est);
                 mapped[config.axes.axis_to_encoder[0]] = angles_est[0];
                 mapped[config.axes.axis_to_encoder[1]] = angles_est[1];
                 mapped[config.axes.axis_to_encoder[2]] = angles_est[2];
@@ -1100,6 +1100,8 @@ handle_set_param:
         serial->println("Saving current camera and base orientations as home orientations (0-pitch, 0-roll)"); /* And 0-yaw if not following */
         memcpy(control.settings->home_q, main_ahrs->q, sizeof(control.settings->home_q));
         memcpy(control.settings->home_frame_q, frame_q, sizeof(control.settings->home_frame_q));
+        for (i = 0; i < 3; i++)
+            control.settings->home_angles[i] = encoders[i] ? encoders[i]->reading_rad : 0;
         control.settings->have_home = 1;
         /* TODO: if have_forward, perhaps recalculate .forward_* and .aligned_* */
         control.settings->have_forward = 0;
