@@ -352,7 +352,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
 
 /* Get the relative rotation between IMUs from encoders and axis data.  Fill in frame_ahrs->q if no frame IMU */
 void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
-        const float *main_q, float *out_rel_q, float *out_frame_q) {
+        struct obgc_ahrs_s *main_ahrs, float *out_rel_q, float *frame_q, bool tripod_mode) {
     float q_tmp[4], q0[4], q1[4], q01[4], q2[4], angles[3];
     float damp_factor = 1e-4f;
 
@@ -374,9 +374,16 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
     quaternion_mult_to(q_tmp, data->main_imu_mount_q, out_rel_q);
     quaternion_normalize(out_rel_q);
 
-    memcpy(q_tmp, out_rel_q, 4 * sizeof(float));
-    q_tmp[0] = -q_tmp[0];
-    quaternion_mult_to(main_q, q_tmp, out_frame_q);
+    if (!tripod_mode) {
+        memcpy(q_tmp, out_rel_q, 4 * sizeof(float));
+        q_tmp[0] = -q_tmp[0];
+        quaternion_mult_to(main_ahrs->q, q_tmp, frame_q);
+    } else {
+        static float main_q[4]; /* FIXME */
+
+        quaternion_mult_to(frame_q, out_rel_q, main_q);
+        ahrs_set_encoder_q(main_ahrs, main_q);
+    }
 
     memcpy(data->jacobian_t, data->axes, 9 * sizeof(float));
     vector_rotate_by_quaternion(data->jacobian_t[1], q01); /* q0 and q01 should either work */

@@ -20,6 +20,8 @@ struct control_settings_s {
     float ahrs_velocity_kp;
     float limit_margin; /* [rad] */
 
+    bool tripod_mode;
+
     bool rc_mode_angle;
     float rc_gain;       /* [deg/s] or [deg/event] at full deflection */
     uint8_t rc_deadband; /* [% of full range] */

@@ -1168,6 +1168,17 @@ handle_set_param:
     case 't':
         set_use_motor = true;
         break;
+    case 'T':
+        /* This works at any time, however if this is being disabled with control on,
+         * control_step() will command a sudden jump when frame_q is first updated after
+         * being fixed from some time.  This could be avoided by recalculating home_frame_q
+         * and whatever depends on but this could be annoying in a different way.
+         */
+        /* TODO: auto tripod mode? */
+        control.settings->tripod_mode ^= 1;
+        serial->print("Tripod mode ");
+        serial->println(control.settings->tripod_mode ? "on" : "off");
+        break;
     case 'S':
         if (!motors[0] && !motors[1] && !motors[2]) {
             serial->println("We have no motors");
@@ -1913,8 +1924,9 @@ void loop(void) {
      * asynchronicity or queuing.
      */
 
-    /* These are the only users of the IMUs so they perform the reading internally */
-    ahrs_update(main_ahrs);
+    /* These are the only users of the IMUs so they perform the IMU reading internally */
+    if (!config.have_axes || !config.control.tripod_mode)
+        ahrs_update(main_ahrs);
 
     if (frame_ahrs)
         ahrs_update(frame_ahrs);
@@ -1923,8 +1935,13 @@ void loop(void) {
     for (i = 0; i < 3; i++)
         encoder_update(encoders[i]);
 
-    if (config.have_axes)
-        axes_precalc_rel_q(&config.axes, encoders, main_ahrs->q, rel_q, frame_q);
+    if (config.have_axes) {
+        axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
+                frame_q, config.control.tripod_mode);
+
+        if (config.control.tripod_mode)
+            ahrs_update(main_ahrs);
+    }
 
     if (control_enable)
         control_step(&control);
