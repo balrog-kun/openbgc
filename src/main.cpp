@@ -1265,6 +1265,14 @@ handle_set_param:
     case 'b':
         beep();
         break;
+    case 'g':
+        if (control.settings->rc_gain == 0.0f)
+            control.settings->rc_gain = 20.0f;
+        else
+            control.settings->rc_gain = 0.0f;
+        serial->print("rc_gain now ");
+        serial->println(control.settings->rc_gain);
+        break;
     case 27:
         if (!serial->available())
             delay(5);
@@ -1286,26 +1294,27 @@ handle_set_param:
 
         switch (cmd) {
         case 'D': /* Cursor Back or left arrow, param is modifier */
+#define UI_CMD_GAIN 20.0f
             if (control_enable)
-                control.target_ypr_offsets[0] += config.control.rc_gain * 0.5f * D2R;
+                control.target_ypr_offsets[0] += UI_CMD_GAIN * 0.5f * D2R;
             else if (motors[0])
                 motors[0]->cls->set_velocity(motors[0], -5);
             break;
         case 'C': /* Cursor Forward or right arrow, param is modifier */
             if (control_enable)
-                control.target_ypr_offsets[0] -= config.control.rc_gain * 0.5f * D2R;
+                control.target_ypr_offsets[0] -= UI_CMD_GAIN * 0.5f * D2R;
             else if (motors[0])
                 motors[0]->cls->set_velocity(motors[0], 5);
             break;
         case 'A': /* Cursor Up or up arrow, param is modifier */
             if (control_enable)
-                control.target_ypr_offsets[1] -= config.control.rc_gain * 0.5f * D2R;
+                control.target_ypr_offsets[1] -= UI_CMD_GAIN * 0.5f * D2R;
             else if (motors[1])
                 motors[1]->cls->set_velocity(motors[1], -5);
             break;
         case 'B': /* Cursor Down or down arrow, param is modifier */
             if (control_enable)
-                control.target_ypr_offsets[1] += config.control.rc_gain * 0.5f * D2R;
+                control.target_ypr_offsets[1] += UI_CMD_GAIN * 0.5f * D2R;
             else if (motors[1])
                 motors[1]->cls->set_velocity(motors[1], 5);
             break;
@@ -1322,13 +1331,13 @@ handle_set_param:
             switch (param) {
             case 5: /* Page Up */
                 if (control_enable)
-                    control.target_ypr_offsets[2] -= config.control.rc_gain * 0.5f * D2R;
+                    control.target_ypr_offsets[2] -= UI_CMD_GAIN * 0.5f * D2R;
                 else if (motors[2])
                     motors[2]->cls->set_velocity(motors[2], 5);
                 break;
             case 6: /* Page Down */
                 if (control_enable)
-                    control.target_ypr_offsets[2] += config.control.rc_gain * 0.5f * D2R;
+                    control.target_ypr_offsets[2] += UI_CMD_GAIN * 0.5f * D2R;
                 else if (motors[2])
                     motors[2]->cls->set_velocity(motors[2], -5);
                 break;
