@@ -507,6 +507,20 @@ static void control_setup(void) {
     }
 
     control_update_aux_values();
+
+    if (control.settings->tripod_mode) {
+        if (!config.have_axes)
+            control.settings->tripod_mode = false;
+        else {
+            /* Can't leave frame_q uninitialized */
+
+            if (control.settings->have_home)
+                memcpy(frame_q, control.settings->home_frame_q, 4 * sizeof(float));
+            else
+                axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
+                        frame_q, false);
+        }
+    }
 }
 
 static void control_stop(void) {
@@ -1095,8 +1109,8 @@ handle_set_param:
         serial->println("Consecutive axes pairs assumed orthogonal");
         break;
     case 'k':
-        if (control_enable) {
-            serial->println("Control must be disabled (' ')");
+        if (control_enable || config.control.tripod_mode) {
+            serial->println("Control, tripod mode must be disabled");
             break;
         }
 
@@ -1167,20 +1181,32 @@ handle_set_param:
         control.settings->have_forward = 1;
         control_update_aux_values();
         break;
+    case '[':
+        temp_scale -= 0.005f;
+        serial->println(temp_scale);
+        spower -= 0x10;
+        serial->println(spower);
+        break;
+    case ']':
+        temp_scale += 0.005f;
+        serial->println(temp_scale);
+        spower += 0x10;
+        serial->println(spower);
         break;
     case 't':
         set_use_motor = true;
         break;
     case 'T':
-        /* This works at any time, however if this is being disabled with control on,
-         * control_step() will command a sudden jump when frame_q is first updated after
-         * being fixed from some time.  This could be avoided by recalculating home_frame_q
-         * and whatever depends on but this could be annoying in a different way.
-         */
+        if (!config.have_axes)
+            break;
+
+        /* This works at any time, but control_step() will command a sudden jump */
         /* TODO: auto tripod mode? */
         control.settings->tripod_mode ^= 1;
         serial->print("Tripod mode ");
         serial->println(control.settings->tripod_mode ? "on" : "off");
+        if (control.settings->tripod_mode && control.settings->have_home) /* Optional */
+            memcpy(frame_q, control.settings->home_frame_q, 4 * sizeof(float));
         break;
     case 'S':
         if (!motors[0] && !motors[1] && !motors[2]) {
