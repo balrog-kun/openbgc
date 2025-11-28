@@ -215,7 +215,7 @@ static void control_calc_path_step_joint_target(struct control_data_s *control,
         const float *angles_target, const float *angles_current,
         float *out_joint_deltas) {
     float angles_diff[3];
-    float delta_axis[3], delta_norm, new_v;
+    float delta_axis[3], new_v;
     int i;
 
     /* Default to whichever direction to target angle is shorter */
@@ -228,15 +228,15 @@ static void control_calc_path_step_joint_target(struct control_data_s *control,
 
     memcpy(delta_axis, angles_diff, 3 * sizeof(float));
     vector_mult_matrix_t(delta_axis, control->axes->jacobian_t); /* Multiply by J^T^T == J */
-    delta_norm = vector_norm(delta_axis);
-    vector_mult_scalar(delta_axis, 1.0f / delta_norm); /* Normalize to get just the axis */
-    vector_rotate_by_quaternion(delta_axis, control->frame_q); /* Go back to global frame */
+    control->delta_angle = vector_norm(delta_axis);              /* Override the value from control_step */
+    vector_mult_scalar(delta_axis, 1.0f / control->delta_angle); /* Normalize to get just the axis */
+    vector_rotate_by_quaternion(delta_axis, control->frame_q);   /* Go back to global frame */
 
     /* Get the maximum velocity magnitude we're allowed in dt time without exceeding max_accel or max_vel */
-    new_v = control_apply_velocity_limits(control, delta_axis, delta_norm);
+    new_v = control_apply_velocity_limits(control, delta_axis, control->delta_angle);
 
     memcpy(out_joint_deltas, angles_diff, 3 * sizeof(float));
-    vector_mult_scalar(out_joint_deltas, control->dt * new_v / delta_norm);
+    vector_mult_scalar(out_joint_deltas, control->dt * new_v / control->delta_angle);
 }
 
 static void control_calc_path_step_joint(struct control_data_s *control, const float *target_q,
@@ -293,7 +293,7 @@ void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
     float target_q[4], delta_q[4];
-    float delta_angle, delta_axis[3];
+    float delta_axis[3];
     float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
     float joint_velocities_target[3];
     float joint_angles_current[3], joint_step_deltas[3], joint_extra_torque[3] = {};
@@ -313,11 +313,12 @@ void control_step(struct control_data_s *control) {
     /* Where do we want to go */
     control_calc_target(control, target_q, target_ypr);
     quaternion_mult_to(target_q, conj_main_q, delta_q); /* Global delta to target_q */
-    quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
+    quaternion_to_axis_angle(delta_q, delta_axis, &control->delta_angle);
 
     /* How we want to get there: least joint movement if > 5deg, least camera movement if <= 5deg (cheaper) */
-    if (delta_angle <= 5 * D2R || control->path_type == CONTROL_PATH_SHORT) {
-        control_calc_path_step_orientation(control, delta_axis, delta_angle, joint_step_deltas);
+    if (control->delta_angle <= 5 * D2R || control->path_type == CONTROL_PATH_SHORT) {
+        control_calc_path_step_orientation(control, delta_axis, control->delta_angle,
+                joint_step_deltas);
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);

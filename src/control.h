@@ -92,6 +92,7 @@ struct control_data_s {
     /* State */
     float velocity_vec[3];
     float target_ypr_offsets[3];
+    float delta_angle;
 };
 
 void control_step(struct control_data_s *control);
