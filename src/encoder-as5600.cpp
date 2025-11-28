@@ -44,9 +44,10 @@ static int32_t as5600_read(struct as5600_s *dev) {
 }
 
 static obgc_encoder_class as5600_encoder_class = {
-    .read  = (int32_t (*)(obgc_encoder *enc)) as5600_read,
-    .free  = (void (*)(obgc_encoder *enc)) as5600_free,
-    .scale = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
+    .read       = (int32_t (*)(obgc_encoder *enc)) as5600_read,
+    .free       = (void (*)(obgc_encoder *enc)) as5600_free,
+    .scale      = (4096 << 15) / 360, /* LSBs per 1deg, yields a pretty round value */
+    .resolution = 360.0 / 4096,
 };
 
 obgc_encoder *as5600_new(obgc_i2c *i2c) {

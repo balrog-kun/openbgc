@@ -54,9 +54,10 @@ static void sbgc32_i2c_drv_encoder_free(obgc_encoder *enc) {
 }
 
 static obgc_encoder_class sbgc32_i2c_drv_encoder_class = {
-    .read  = sbgc32_i2c_drv_encoder_read,
-    .free  = sbgc32_i2c_drv_encoder_free,
-    .scale = (0x4000 << 13) / 360, /* LSBs per 1deg */
+    .read       = sbgc32_i2c_drv_encoder_read,
+    .free       = sbgc32_i2c_drv_encoder_free,
+    .scale      = (0x4000 << 13) / 360, /* LSBs per 1deg */
+    .resolution = 360.0 / 4096, /* Actually depends on specific chip and the STM32 firmware */
 };
 
 static void sbgc32_i2c_drv_motor_set_phase_voltage(obgc_foc_driver *motor_drv, float v_q, float v_d, float theta) {

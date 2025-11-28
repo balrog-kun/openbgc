@@ -18,6 +18,7 @@ typedef struct obgc_encoder_class_s {
     int32_t (*read)(obgc_encoder *enc);
     void (*free)(obgc_encoder *enc);
     uint32_t scale;
+    float resolution;
 } obgc_encoder_class;
 
 static inline void encoder_update(struct obgc_encoder_s *enc) {
