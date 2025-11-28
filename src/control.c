@@ -212,19 +212,24 @@ static void control_calc_path_step_orientation(struct control_data_s *control, c
 }
 
 static void control_calc_path_step_joint_target(struct control_data_s *control,
-        const float *angles_target, const float *angles_current,
+        const float *angles_target, const float *angles_current, bool force_direction,
         float *out_joint_deltas) {
     float angles_diff[3];
     float delta_axis[3], new_v;
     int i;
 
-    /* Default to whichever direction to target angle is shorter */
-    for (i = 0; i < 3; i++)
-        angles_diff[i] = angle_normalize_pi(angles_target[i] - angles_current[i]);
+    if (force_direction) {
+        for (i = 0; i < 3; i++)
+            angles_diff[i] = angles_target[i] - angles_current[i];
+    } else {
+        /* Default to whichever direction to target angle is shorter */
+        for (i = 0; i < 3; i++)
+            angles_diff[i] = angle_normalize_pi(angles_target[i] - angles_current[i]);
 
-    /* But if that crosses a hard stop / limiter, may have to take the other way */
-    axes_apply_limits_full(control->axes, control->settings->limit_margin,
-            angles_current, angles_diff);
+        /* But if that crosses a hard stop / limiter, may have to take the other way */
+        axes_apply_limits_full(control->axes, control->settings->limit_margin,
+                angles_current, angles_diff);
+    }
 
     memcpy(delta_axis, angles_diff, 3 * sizeof(float));
     vector_mult_matrix_t(delta_axis, control->axes->jacobian_t); /* Multiply by J^T^T == J */
@@ -289,6 +294,122 @@ static void control_calc_path_step_park(struct control_data_s *control,
     /* TODO: possibly call back to power off when delta_angle below threshold */
 }
 
+/* Could also implement this in motor-bldc.c but here may be a little easier */
+static void control_calc_path_step_limit_search(struct control_data_s *control,
+        const float *angles_current, float *out_joint_deltas) {
+#define MIN_DIFF (0.1f * D2R) /* Should use encoder resolution+stddev instead */
+#define MIN_TIME_MS 1000
+    float diff1, diff2, diff3;
+    int i;
+    uint32_t now = millis();
+    __auto_type search = &control->limit_search;
+    uint8_t num = search->axis;
+    float angles_target[3];
+
+    for (i = 0; i < 3; i++)
+        out_joint_deltas[i] = 0.0f;
+
+    switch (search->step) {
+    case 0: /* Start */
+        search->start_angle = angles_current[num];
+        search->last_angle = angles_current[num];
+        search->last_angle_ts = now;
+        search->step++;
+        break;
+    case 1: /* limit_min search */
+        out_joint_deltas[num] = control->settings->limit_search_v;
+        diff1 = angle_normalize_pi(angles_current[num] - search->last_angle);
+        diff2 = angle_normalize_pi(angles_current[num] - search->start_angle);
+        diff3 = angle_normalize_pi(search->last_angle - search->start_angle);
+
+        if (diff1 > MIN_DIFF) {
+            if (diff2 >= 0 && diff3 < 0) {
+                error_print("No limit on this axis");
+                main_beep();
+                control->axes->has_limits[num] = false;
+                /* We should be close to start_angle so nothing else to do here */
+                search->step = 5; /* Next axis */
+                break;
+            }
+
+            search->last_angle = angles_current[num];
+            search->last_angle_ts = now;
+        } else if (now - search->last_angle_ts > MIN_TIME_MS) {
+            /* Found the limit? */
+            main_beep();
+            control->axes->limit_min[num] = search->last_angle;
+            search->step++;
+            break;
+        }
+
+        break;
+    case 2: /* Move back to start_angle at normal velocity */
+    case 4:
+        if (angle_normalize_pi(angles_current[num] - search->start_angle) < MIN_DIFF) {
+            search->step++;
+            break;
+        }
+
+        for (i = 0; i < 3; i++)
+            angles_target[i] = angles_current[i];
+        angles_target[num] = search->start_angle;
+
+        if (search->step == 2) {
+            /* Since we got here at positive velocity, the target delta must be negative so we
+             * go back the same way.
+             */
+            if (angles_target[num] > angles_current[num])
+                angles_target[num] -= 2 * M_PI;
+        } else {
+            /* Since we got here at negative velocity, the target delta must be positive so we
+             * go back the same way.
+             */
+            if (angles_target[num] < angles_current[num])
+                angles_target[num] += 2 * M_PI;
+        }
+
+        control_calc_path_step_joint_target(control, angles_target, angles_current, true,
+                out_joint_deltas);
+        break;
+    case 3: /* limit_max search */
+        out_joint_deltas[num] = -control->settings->limit_search_v;
+        diff1 = angle_normalize_pi(angles_current[num] - search->last_angle);
+        diff2 = angle_normalize_pi(angles_current[num] - control->axes->limit_min[num]);
+        diff3 = angle_normalize_pi(search->last_angle - control->axes->limit_min[num]);
+
+        if (diff1 < -MIN_DIFF) {
+            if (diff2 <= 0 && diff3 > 0) {
+                /* Something is wrong, don't set has_limits, exit */
+                error_print("Problem, found limit_min but not limit_max");
+                main_beep();
+                search->step = 5;
+                search->axis = 3;
+                break;
+            }
+
+            search->last_angle = angles_current[num];
+            search->last_angle_ts = now;
+        } else if (now - search->last_angle_ts > MIN_TIME_MS) {
+            /* Found the limit? */
+            main_beep();
+            control->axes->limit_max[num] = search->last_angle;
+            control->axes->has_limits[num] = true;
+            search->step++;
+            break;
+        }
+
+        break;
+    case 5: /* Move on to the next axis */
+        search->step = 0;
+        search->axis++;
+
+        if (search->axis >= 3) {
+            search->axis = 0;
+            control->path_type = control->settings->default_path;
+        }
+    }
+}
+
 void control_step(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
@@ -316,21 +437,42 @@ void control_step(struct control_data_s *control) {
     quaternion_to_axis_angle(delta_q, delta_axis, &control->delta_angle);
 
     /* How we want to get there: least joint movement if > 5deg, least camera movement if <= 5deg (cheaper) */
-    if (control->delta_angle <= 5 * D2R || control->path_type == CONTROL_PATH_SHORT) {
+    switch (control->path_type) {
+    path_short:
+    case CONTROL_PATH_SHORT:
         control_calc_path_step_orientation(control, delta_axis, control->delta_angle,
                 joint_step_deltas);
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);
-    } else if (control->path_type == CONTROL_PATH_INTERPOLATE_EULER) {
+        break;
+
+    case CONTROL_PATH_INTERPOLATE_EULER:
+        if (control->delta_angle <= 5 * D2R)
+            goto path_short;
+
         control_calc_path_step_euler(control, target_ypr, joint_step_deltas);
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);
-    } else if (control->path_type == CONTROL_PATH_PARK) {
-        control_calc_path_step_park(control, joint_angles_current, joint_step_deltas);
-    } else
+        break;
+
+    default:
+    case CONTROL_PATH_INTERPOLATE_JOINT:
+        if (control->delta_angle <= 5 * D2R)
+            goto path_short;
+
         control_calc_path_step_joint(control, target_q, joint_angles_current, joint_step_deltas);
+        break;
+
+    case CONTROL_PATH_PARK:
+        control_calc_path_step_park(control, joint_angles_current, joint_step_deltas);
+        break;
+
+    case CONTROL_PATH_LIMIT_SEARCH:
+        control_calc_path_step_limit_search(control, joint_angles_current, joint_step_deltas);
+        break;
+    }
 
     /* Divide the deltas by dt to get velocities, go from rad/dt to °/unit time */
     for (i = 0; i < 3; i++)

@@ -508,6 +508,14 @@ static void control_setup(void) {
 
         /* Stay at least 4 degrees away from mechanical joint limits, if any */
         control.settings->limit_margin = 4 * D2R;
+        /* Kind of important as during the limit search the arm will slam into the hard-stop at
+         * this velocity.  Consider your camera's weight (specifically moment of inertia), how
+         * fragile it is, and how fragile the hard-stop may be.
+         * Also consider motor current & heating.
+         * On the other hand the search is going to take forever if the value is too low.
+         * Do consider setting the limits manually if the search is not practical.
+         */
+        control.settings->limit_search_v = 5 * D2R;
     }
 
     control_update_aux_values();

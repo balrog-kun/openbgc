@@ -21,6 +21,8 @@ struct control_settings_s {
     float max_vel;      /* [rad/s] */
     float ahrs_velocity_kp;
     float limit_margin; /* [rad] */
+    float limit_search_v; /* [rad/s] */
+    uint8_t default_path;
 
     bool tripod_mode;
 
@@ -68,13 +70,25 @@ struct control_data_s {
         CONTROL_PATH_INTERPOLATE_EULER,
         /* Transition to predefined position using CONTROL_PATH_INTERPOLATE_JOINT */
         CONTROL_PATH_PARK,
+
+        /* Calibration sequences, these only need rough prior axes calibration for
+         * axis order, etc.
+         */
+
+        /* Search for joint limits / hard-stops */
+        CONTROL_PATH_LIMIT_SEARCH,
+        /* TODO: Re-calibrate joint axis vectors */
+        CONTROL_PATH_AXES_CALIBRATION,
+        /* TODO: Estimate main IMU distance from CoG for centrifugal force compensation */
+        CONTROL_PATH_IMU_COG_CALIBRATION,
     } path_type;
 
     /* Aux precalculated inputs */
     const float *rel_q, *frame_q;
 
     /* Geometry calibration + precalculated values */
-    const struct axes_data_s *axes;
+    struct axes_data_s *axes;
+    bool *have_axes;
     float aligned_home_q[4];
     float conj_aligned_home_frame_q[4];
     float forward_az, forward_sincos2[2];
@@ -93,6 +107,11 @@ struct control_data_s {
     float velocity_vec[3];
     float target_ypr_offsets[3];
     float delta_angle;
+    struct {
+        uint8_t axis, step;
+        float start_angle, last_angle;
+        uint32_t last_angle_ts;
+    } limit_search;
 };
 
 void control_step(struct control_data_s *control);
