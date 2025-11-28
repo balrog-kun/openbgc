@@ -307,6 +307,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
                 corr_enc[0] * 100.0f, corr_enc[1] * 100.0f, corr_enc[2] * 100.0f,
                 enc_scale_accum[0], enc_scale_accum[1], enc_scale_accum[2]);
         data->print(msg);
+        main_beep();
 
         accepted = corr_axis >= 0.9f && (best < 0 || corr_enc[best] >= 0.8f);
         if (!accepted)

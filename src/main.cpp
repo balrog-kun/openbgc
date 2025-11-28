@@ -431,6 +431,10 @@ static void error_beep(void) {
     }
 }
 
+void main_beep(void) {
+    beep();
+}
+
 static void control_update_aux_values(void) {
     /* The "az" may be a misnomer, we want the angle from positive X axis
      * (in the positive yaw direction) for quaternion_to/from_euler() to work consistently
@@ -1054,6 +1058,7 @@ handle_set_param:
         serial->println("Recalibrating main AHRS");
         delay(100);
         ahrs_calibrate(main_ahrs);
+        beep();
         break;
     case 'C':
         motors_on_off(false);
@@ -1273,6 +1278,7 @@ handle_set_param:
                         config.motor_calib[i].bldc_with_encoder.sensor_direction);
                 serial->println(msg);
             }
+            beep();
         }
 
         break;

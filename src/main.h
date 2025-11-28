@@ -16,6 +16,8 @@ void main_shutdown_high_level(void);
 void main_shutdown_low_level(void);
 void main_emergency_stop_low_level(void);
 
+void main_beep(void);
+
 #ifdef __cplusplus
 # ifndef Arduino_h
 class HardwareSerial;
