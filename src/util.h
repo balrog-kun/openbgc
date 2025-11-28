@@ -11,6 +11,9 @@
 #define STRINGIFY(val) STRINGIFY_ARG(val)
 #define STRINGIFY_ARG(contents) #contents
 
+#define _CONCAT(prefix, suffix) prefix ## suffix
+#define CONCAT(prefix, suffix) _CONCAT(prefix, suffix)
+
 #define AUTO_FREE_VAR(vartype, varname) vartype varname __attribute__((cleanup(auto_free)))
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))

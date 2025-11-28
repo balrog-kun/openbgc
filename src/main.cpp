@@ -16,6 +16,7 @@ extern "C" {
 #include "control.h"
 #include "util.h"
 #include "serial-api.h"
+#include "params.h"
 
 #include "main.h"
 }
@@ -118,13 +119,23 @@ static struct main_loop_cb_s *cbs, *cb_next;
 
 HardwareSerial *error_serial;
 
+static const char commit_str[64] = "openbgc " STRINGIFY(COMMIT_ID_SHORT);
+static const char build_str[64] = "openbgc " __TIMESTAMP__;
+static const char board_str[64] = "Unknown";
+static uint16_t mcu_id;
+static uint16_t mcu_rev_id;
+static uint32_t mcu_unique_id;
+static uint32_t now;
+
+#include "params.c.inc"
+
 void error_serial_print(const char *func, const char *msg) {
     error_serial->print(func);
     error_serial->print(": ");
     error_serial->println(msg);
 }
 
-static void print_mcu() {
+static void detect_mcu() {
     /*
      * Specific register addresses for F3 in RM0316, F4 RM0090:
      *  0x1ffff7ac or UID_BASE: Unique Device ID
@@ -138,12 +149,16 @@ static void print_mcu() {
         HAL_GetUIDw2(),
     };
 
+    mcu_id = DBGMCU->IDCODE & 0xfff;
+    mcu_rev_id = DBGMCU->IDCODE >> 16;
+    mcu_unique_id = uid[0];
+
     serial->print("MCU ID: ");
-    serial->print(DBGMCU->IDCODE & 0xfff, HEX);
+    serial->print(mcu_id, HEX);
     serial->print(", REV: ");
-    serial->print(DBGMCU->IDCODE >> 16, HEX);
+    serial->print(mcu_rev_id, HEX);
     serial->print(", Unique-dev-ID: ");
-    serial->print(uid[0], HEX);
+    serial->print(mcu_unique_id, HEX);
     serial->print(", Flash size: ");
     serial->print(*(uint16_t *) FLASH_SIZE_DATA_REGISTER);
     serial->print("kB, CPUID: ");
@@ -1794,7 +1809,7 @@ void setup(void) {
     /* Board debug info */
     // scan_i2c(i2c_main);
     // scan_i2c(i2c_int);
-    print_mcu();
+    detect_mcu();
     // probe_out_pins_setup();
     // probe_in_pins_setup();
 
