@@ -81,7 +81,13 @@ static inline void quaternion_mult_to(const float *q0, const float *q1, float *q
 static inline void quaternion_mult_add_xyz(float *q, const float *q1xyz) {
     float q0[4] = INIT_Q(q);
 
-    /* Same as quaternion_mult_to but q1[0] is 0, q1[1] is q1xyz[0], etc. */
+    /* Strictly, this is:
+     *   q += quaternion_mult(q, [0, *q1xyz])
+     * which should be equivalent to:
+     *   q = quaternion_mult(q, [1, *q1xyz])
+     * only optimizing away 4 multiplications.  [1, *q1xyz] is the small-angles
+     * approximation of quaternion_from_rotvec(2 * q1xyz).
+     */
     q[0] += -q [1] * q1xyz[0] - q [2] * q1xyz[1] - q [3] * q1xyz[2];
     q[1] +=  q0[0] * q1xyz[0] + q [2] * q1xyz[2] - q [3] * q1xyz[1];
     q[2] +=  q0[0] * q1xyz[1] - q0[1] * q1xyz[2] + q [3] * q1xyz[0];

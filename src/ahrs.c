@@ -139,7 +139,7 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
 
     memcpy(ahrs->gyro_lpf, omega, 3 * sizeof(float));
 
-//#define APPLY_GYRO_FIRST
+#define APPLY_GYRO_FIRST
 #ifdef APPLY_GYRO_FIRST
     /*
      * Apply the new weighted gyro data before calculating errors from other sources.
@@ -150,9 +150,9 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     quaternion_normalize(ahrs->q);
 
     ahrs->gyr_contrib += vector_norm(omega);
-    memset(&error_scaled, 0, sizeof(error_scaled));
+    memset(error_scaled, 0, 3 * sizeof(float));
 #else
-    ahrs->gyr_contrib += vector_norm(omega) * (dt / 2); /* omega components are multiplied later */
+    ahrs->gyr_contrib += vector_norm(omega) * dt; /* omega components are multiplied later */
 #endif
 
     /* See if we have any useful values from other sensors to contrast the gyro based angles and limit drift */
@@ -163,7 +163,7 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         float acc_error[3], sin_angle;
 
         get_ref_gravity(ahrs->q, g_local);
-        vector_cross(acc, g_local, acc_error);
+        vector_cross(acc, g_local, acc_error); /* Rotation vector from reference to estimated */
         vector_mult_scalar(acc_error, 1.0f / norm);
         sin_angle = vector_norm(acc_error);
         vector_add(error, acc_error);
@@ -180,12 +180,30 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         float conj_q[4] = INIT_CONJ_Q(ahrs->q);
         float enc_error_q[4], enc_error[3];
 
+        /* With the acceleration data we had local vectors so we needed the rotation
+         * from reference vector towards estimated.  Here we have global inputs so we
+         * need the opposite: estimated (q) to reference (encoder_q) orientation, but
+         * with output in body-local reference frame again:
+         *   q x enc_error_q = encoder_q
+         * Left-multiply by conj(q):
+         *   enc_error_q = conj(q) x encoder_q
+         */
         quaternion_mult_to(conj_q, steal_ptr(ahrs->encoder_q), enc_error_q);
-        quaternion_to_axis_angle(enc_error_q, enc_error, &norm); /* _to_rotvec() + vector_norm() in one step */
+        /* _to_rotvec() + vector_norm() in one step.  Still does atan2f().  We can afford
+         * that but could also have used the small-angle approximation in the spirit of
+         * the Mahony/Magdwick filters.
+         */
+        quaternion_to_axis_angle(enc_error_q, enc_error, &norm);
 
-        /* TODO: probably also need to take into account encoder stddev due to noise */
+        /* Don't correct if within deadband */
+        /* TODO: probably also need to take into account encoder stddev due to noise.  On
+         * the Pilotfly H2 the stddev is luckily way less than resolution */
 #       define MIN_ENC_ERROR (1.5f * ahrs->encoder_step)
-        if (norm >= MIN_ENC_ERROR) { /* sin(x) ~= x in this range */
+        if (norm >= MIN_ENC_ERROR) {
+            /* Note the amount of correction here scales with the error angle with a
+             * discontinuity at +/-Pi, but for the accelerometer it scales with
+             * sin(angle), no discontinuity.
+             */
             vector_mult_scalar(enc_error, norm - MIN_ENC_ERROR);
             vector_add(error, enc_error);
             vector_mult_scalar(enc_error, ahrs->enc_kp);
@@ -545,7 +563,7 @@ void ahrs_update(obgc_ahrs *ahrs) {
                 ypr[0] * R2D, ypr[1] * R2D, ypr[2] * R2D, gyr[0] * R2D, gyr[1] * R2D, gyr[2] * R2D,
                 acc[0], acc[1], acc[2], ahrs->beta, ahrs->gyr_contrib * R2D,
                 ahrs->acc_contrib * R2D, asinf(ahrs->acc_error_max) * R2D,
-                ahrs->enc_contrib * R2D, asinf(ahrs->enc_error_max) * R2D,
+                ahrs->enc_contrib * R2D, ahrs->enc_error_max * R2D,
                 (int) (dt * 1e6f), vector_norm(gyr), vector_norm(ahrs->gyro_lpf),
                 atan2f(-acc[0], sqrtf(acc[1] * acc[1] + acc[2] * acc[2])) * R2D, atan2f(acc[1], acc[2]) * R2D);
         ahrs->acc_contrib = ahrs->acc_error_avg = ahrs->acc_error_max = 0.0f;
