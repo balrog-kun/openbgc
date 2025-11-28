@@ -525,12 +525,7 @@ static void control_setup(void) {
             control.settings->tripod_mode = false;
         else {
             /* Can't leave frame_q uninitialized */
-
-            if (control.settings->have_home)
-                memcpy(frame_q, control.settings->home_frame_q, 4 * sizeof(float));
-            else
-                axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
-                        frame_q, false);
+            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q, frame_q, false);
         }
     }
 }
@@ -1213,13 +1208,11 @@ handle_set_param:
         if (!config.have_axes)
             break;
 
-        /* This works at any time, but control_step() will command a sudden jump */
+        /* This works at any time but control_step() may command a sudden jump */
         /* TODO: auto tripod mode? */
         control.settings->tripod_mode ^= 1;
         serial->print("Tripod mode ");
         serial->println(control.settings->tripod_mode ? "on" : "off");
-        if (control.settings->tripod_mode && control.settings->have_home) /* Optional */
-            memcpy(frame_q, control.settings->home_frame_q, 4 * sizeof(float));
         break;
     case 'S':
         if (!motors[0] && !motors[1] && !motors[2]) {
