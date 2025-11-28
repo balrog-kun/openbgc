@@ -11,6 +11,8 @@ struct control_settings_s {
     bool have_home;
     float forward_vec[3];
     bool have_forward;
+    float park_angles[3]; /* [rad] */
+    bool have_parking;
 
     /* Control config */
     bool keep_yaw;
@@ -60,10 +62,12 @@ struct control_data_s {
          * around them.  Cheapest calculation.
          */
         CONTROL_PATH_SHORT,
-        /* TODO: Interpolate euler angles for a more cinematic movement, e.g. if start roll
+        /* Interpolate euler angles for a more cinematic movement, e.g. if start roll
          * and end roll are 0, keep camera roll at 0 throughout the whole movement.
          */
         CONTROL_PATH_INTERPOLATE_EULER,
+        /* Transition to predefined position using CONTROL_PATH_INTERPOLATE_JOINT */
+        CONTROL_PATH_PARK,
     } path_type;
 
     /* Aux precalculated inputs */

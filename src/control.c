@@ -211,16 +211,12 @@ static void control_calc_path_step_orientation(struct control_data_s *control, c
     vector_mult_matrix(out_joint_deltas, control->axes->jacobian_pinv);
 }
 
-static void control_calc_path_step_joint(struct control_data_s *control, const float *target_q,
-        const float *angles_current, float *out_joint_deltas) {
-    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
-    float target_rel_q[4];
-    float angles_target[3], angles_diff[3];
+static void control_calc_path_step_joint_target(struct control_data_s *control,
+        const float *angles_target, const float *angles_current,
+        float *out_joint_deltas) {
+    float angles_diff[3];
     float delta_axis[3], delta_norm, new_v;
     int i;
-
-    quaternion_mult_to(conj_frame_q, target_q, target_rel_q);
-    axes_q_to_angles_universal(control->axes, target_rel_q, control->settings->home_angles, angles_target);
 
     /* Default to whichever direction to target angle is shorter */
     for (i = 0; i < 3; i++)
@@ -241,6 +237,20 @@ static void control_calc_path_step_joint(struct control_data_s *control, const f
 
     memcpy(out_joint_deltas, angles_diff, 3 * sizeof(float));
     vector_mult_scalar(out_joint_deltas, control->dt * new_v / delta_norm);
+}
+
+static void control_calc_path_step_joint(struct control_data_s *control, const float *target_q,
+        const float *angles_current, float *out_joint_deltas) {
+    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+    float target_rel_q[4];
+    float angles_target[3];
+
+    quaternion_mult_to(conj_frame_q, target_q, target_rel_q);
+    axes_q_to_angles_universal(control->axes, target_rel_q, control->settings->home_angles,
+            angles_target);
+
+    control_calc_path_step_joint_target(control, angles_target, angles_current, false,
+            out_joint_deltas);
 }
 
 static void control_calc_path_step_euler(struct control_data_s *control, const float *target_ypr,
@@ -267,6 +277,16 @@ static void control_calc_path_step_euler(struct control_data_s *control, const f
     quaternion_to_axis_angle(delta_q, delta_axis, &delta_angle);
 
     control_calc_path_step_orientation(control, delta_axis, ypr_dist, out_joint_deltas);
+}
+
+static void control_calc_path_step_park(struct control_data_s *control,
+        const float *angles_current, float *out_joint_deltas) {
+    const float *angles_target = control->settings->have_parking ?
+        control->settings->park_angles : control->settings->home_angles;
+
+    control_calc_path_step_joint_target(control, angles_target, angles_current, false,
+            out_joint_deltas);
+    /* TODO: possibly call back to power off when delta_angle below threshold */
 }
 
 void control_step(struct control_data_s *control) {
@@ -306,6 +326,8 @@ void control_step(struct control_data_s *control) {
 
         axes_apply_limits_step(control->axes, control->settings->limit_margin,
                 joint_angles_current, joint_step_deltas);
+    } else if (control->path_type == CONTROL_PATH_PARK) {
+        control_calc_path_step_park(control, joint_angles_current, joint_step_deltas);
     } else
         control_calc_path_step_joint(control, target_q, joint_angles_current, joint_step_deltas);
 
