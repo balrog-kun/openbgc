@@ -96,6 +96,11 @@ static obgc_motor *motors[3];
 static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs */
 static HardwareSerial *serial;
 
+#ifdef PERF
+unsigned long perf_ts[12];
+uint8_t perf_cnt;
+#endif
+
 static struct serial_api_port_state_s sbgc_api;
 
 static bool use_motor[3], set_use_motor;
@@ -125,7 +130,7 @@ static const char board_str[64] = "Unknown";
 static uint16_t mcu_id;
 static uint16_t mcu_rev_id;
 static uint32_t mcu_unique_id;
-static uint32_t now;
+uint32_t now;
 
 #include "params.c.inc"
 
@@ -422,8 +427,16 @@ static void calibrate_print(const char *str) {
 }
 
 void main_loop_sleep(void) {
-    static unsigned long next_update = 0;
-    unsigned long now = micros();
+    static uint32_t next_update = 0;
+#ifdef PERF
+    uint32_t prev = now;
+#endif
+
+    now = (uint32_t) micros();
+
+#ifdef PERF
+    perf_ts[perf_cnt++] = now - prev;
+#endif
 
 #define TARGET_INTERVAL (1e6 / TARGET_LOOP_RATE)
 
@@ -433,6 +446,12 @@ void main_loop_sleep(void) {
         delayMicroseconds(next_update - now);
 
     next_update += TARGET_INTERVAL;
+    now = (uint32_t) micros();
+
+#ifdef PERF
+    perf_ts[perf_cnt] = now - prev;
+    perf_cnt = 0;
+#endif
 }
 
 static void beep(void) {
@@ -1335,6 +1354,16 @@ handle_set_param:
         serial->print("rc_gain now ");
         serial->println(control.settings->rc_gain);
         break;
+#ifdef PERF
+    case '-':
+        for (i = 1; i < 12; i++) {
+            serial->print(i);
+            serial->print(": ");
+            serial->print(perf_ts[i]);
+            serial->println("us");
+        }
+        break;
+#endif
     case 27:
         if (!serial->available())
             delay(5);
@@ -1982,20 +2011,30 @@ void loop(void) {
     if (frame_ahrs)
         ahrs_update(frame_ahrs);
 
+    PERF_SAVE_TS;
+
     /* Read the encoders for everyone, there are multiple users */
     for (i = 0; i < 3; i++)
         encoder_update(encoders[i]);
+
+    PERF_SAVE_TS;
 
     if (config.have_axes) {
         axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
                 frame_q, config.control.tripod_mode);
 
+        PERF_SAVE_TS;
+
         if (config.control.tripod_mode)
             ahrs_update(main_ahrs);
+
+        PERF_SAVE_TS;
     }
 
     if (control_enable)
         control_step(&control);
+
+    PERF_SAVE_TS;
 
     for (struct main_loop_cb_s *entry = cbs; entry; entry = cb_next) {
         cb_next = entry->next;

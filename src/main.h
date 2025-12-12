@@ -2,6 +2,8 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#include <stdint.h>
+
 struct main_loop_cb_s {
     void *data; /* Just a favor to the users, they could as well use container_of() if space was an issue */
     void (*cb)(void *data);
@@ -26,5 +28,12 @@ extern HardwareSerial *error_serial;
 #endif
 void error_serial_print(const char *func, const char *msg);
 #define error_print(msg) error_serial_print(__func__, (msg))
+
+extern uint32_t now;
+
+extern uint32_t perf_ts[];
+extern uint8_t perf_cnt;
+#define PERF
+#define PERF_SAVE_TS perf_ts[perf_cnt++] = micros() - now;
 
 #endif /* MAIN_H */

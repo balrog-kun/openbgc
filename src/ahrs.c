@@ -4,6 +4,9 @@
 #include <math.h>
 
 #include "moremath.h"
+#include "util.h"
+#include "main.h"
+
 #include "ahrs.h"
 
 /*
@@ -29,7 +32,7 @@ static void get_ref_gravity(const float *q, float *g) {
 }
 
 #define DBG_PRINT(fmt, ...) { \
-        if (ahrs->debug_print && !(ahrs->debug_cnt & 127)) { \
+        if (ahrs->debug_print && !(ahrs->debug_cnt & 255)) { \
             char buf[200]; \
             sprintf(buf, fmt, __VA_ARGS__); \
             ahrs->debug_print(buf); \
@@ -464,6 +467,7 @@ void ahrs_update(obgc_ahrs *ahrs) {
 
     /* Read sensor data */
     ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
+    PERF_SAVE_TS;
 
     if (ahrs->debug_print) {
         if (abs(gyr_raw[0]) > 0x7f00)
@@ -549,10 +553,12 @@ void ahrs_update(obgc_ahrs *ahrs) {
      */
 
     /* Update filter */
+    PERF_SAVE_TS;
     //madgwick_update(ahrs, gyr, acc, dt);
     mahony_update(ahrs, gyr, acc, dt);
+    PERF_SAVE_TS;
 
-    if (ahrs->debug_print && !(ahrs->debug_cnt++ & 127)) {
+    if (ahrs->debug_print && !(ahrs->debug_cnt++ & 1023)) {
         char output[256];
         float ypr[3];
 
