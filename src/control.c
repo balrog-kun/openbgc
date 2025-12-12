@@ -126,6 +126,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
         error_print("Bad state, resetting velocity_vec");
         current_v = 0.0f;
         memset(control->velocity_vec, 0, 3 * sizeof(float));
+        memset(v_vec, 0, 3 * sizeof(float));
     }
 
     /*
@@ -173,7 +174,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
          * From the earlier calc we also get:
          *   deceleration_required = current_v^2 / 2 / decelration_distance;
          */
-        new_v = current_v - (0.5f * current_v * current_v / delta_angle) * control->dt;
+        new_v = current_v - (0.5f * current_v * current_v / max(delta_angle, M_PI / 20)) * control->dt;
     else
         new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
 
