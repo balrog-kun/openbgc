@@ -9,9 +9,8 @@
     .ptr = (void **) &_ptr, _ptr->offset, (1 << param_flag_ptr) | (1 << param_flag_ro))
 #define PARAM_DEF_SETTER(data, _setter) PARAM_DEF_FULL(.addr = &data, .setter = _setter, data, 1 << param_flag_setter)
 
-/* Note: line is already a number so we could use it as the ID directly, but the idea is to
- * replace it with something that doesn't depend on the line number, only the order.
- * The enum will then be actually useful.
+/* Note: line is already a number so we could use it as the ID directly, but the enum makes the
+ * IDs independent of the line numbers and only dependent on the definition order.
  */
 #define PARAM_DEF_FULL(addr_def, ptr_def, data, flags) CONCAT(param_, __LINE__),
 #define PARAM_UNUSED(data) PARAM_DEF_FULL(NULL, NULL, data, 0)
@@ -45,7 +44,7 @@ void *params_data_ptr(const struct obgc_param_s *param) {
         if (!*param->ptr)
             return NULL;
 
-        return *param->ptr + param->ptr_offset;
+        return (uint8_t *) *param->ptr + param->ptr_offset;
     } else
         return param->addr;
 }

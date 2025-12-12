@@ -1,6 +1,30 @@
 /* Rules for adding or changing parameter definitions:
+ *
+ * 1. Do not reorder the definitions, add or remove them from anywhere other
+ *    than at the end.  That would break the parameter IDs which are part of
+ *    the client API and the storage format, and are based strictly on the
+ *    order here.
+ *
+ *    The IDs are not supposed to be user-visible though so logical grouping
+ *    is not a priority -- always add new parameters at the end.
+ *
+ * 2. If a parameter needs to be removed or deprecated, replace the definition
+ *    with a PARAM_UNUSED() to keep its ID reserved from reuse and preserve
+ *    other IDs.  It uses no flash space.
+ *
+ * 3. Lines other than PARAM_DEF_*() can be added anywhere.
+ *
+ * 4. Name changes are Ok as long as the usage and format of a parameter
+ *    isn't changing.
+ *
+ * 5. Size changes would be bad but not as bad as format changes without a
+ *    size change.  Both the firmware and the client can detect size
+ *    mismatch and fall back to defaults, report error, etc.  Without a size
+ *    difference a critical parameter value could be misinterpreted and
+ *    cause physical damage.  Think motor overheating, excess vibration on
+ *    fragile camera optics, hitting a hard stop too hard, battery
+ *    overdischarge or twisted cables.
  */
-#line 0
 PARAM_DEF_RO(commit_str)
 PARAM_DEF_RO(build_str)
 PARAM_DEF_RO(board_str)
