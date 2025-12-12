@@ -72,15 +72,22 @@ struct control_data_s {
         CONTROL_PATH_PARK,
 
         /* Calibration sequences, these only need rough prior axes calibration for
-         * axis order, etc.
+         * axis order, etc.  There are many things that are interesting to have,
+         * including:
+         *   * Axes re-calibration, like axes_calibrate() but automated,
+         *   * IMU direct and cross-axis sensitivity (various papers out there
+         *     with different procedures),
+         *   * IMU distance from each axis for centrifugal force compensation,
+         *   * Motor PID auto-tuning.
+         *
+         * But instead we want to save flash space and struggle to have a complete
+         * enough API coverage of motion commands and IMU data to enable these
+         * algorithms to run on the host script or in an app, and the results
+         * written back through the API as well.  Only keep a minimum set here.
          */
 
         /* Search for joint limits / hard-stops */
         CONTROL_PATH_LIMIT_SEARCH,
-        /* TODO: Re-calibrate joint axis vectors */
-        CONTROL_PATH_AXES_CALIBRATION,
-        /* TODO: Estimate main IMU distance from CoG for centrifugal force compensation */
-        CONTROL_PATH_IMU_COG_CALIBRATION,
     } path_type;
 
     /* Aux precalculated inputs */
