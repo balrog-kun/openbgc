@@ -1780,14 +1780,21 @@ static void sbgc_api_bytes_tx_cb(const uint8_t *data, uint16_t len) {
 
 void setup(void) {
     int i;
+    bool force_defaults = false;
 
     error_serial = serial = new HardwareSerial(USART1);
     serial->begin(115200);
     for (i = 0; i < 20000; i++) serial->println("debug");////
     while (!*serial); /* Wait for serial port connection */
     delay(2000);
-    if (serial->available() && serial->read() == 'q')
-        shutdown_to_bl(false);
+    if (serial->available()) {
+        uint8_t cmd = serial->read();
+        if (cmd == 'q')
+            shutdown_to_bl(false);
+        if (cmd == 'd')
+            force_defaults = true;
+    }
+
     serial->println("Initializing");
 
 #if 0
@@ -1863,7 +1870,11 @@ void setup(void) {
     /* Initialize storage */
     // storage_init_internal_flash();
     storage_init_i2c_eeprom(MC_24FC256_BASE_ADDR + 0, i2c_int, 0x8000);
-    config_read();
+
+    if (!force_defaults)
+        config_read();
+    else
+        memset(&config, 0, sizeof(config));
 
     /* Initialize IMUs */
     main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c_main);
