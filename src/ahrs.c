@@ -358,15 +358,15 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
         delay(10); /* Use main_loop_sleep();? */
     }
 
-    ahrs->gyro_bias[0] = (float) sum[0] * (factor / SAMPLES_NUM);
-    ahrs->gyro_bias[1] = (float) sum[1] * (factor / SAMPLES_NUM);
-    ahrs->gyro_bias[2] = (float) sum[2] * (factor / SAMPLES_NUM);
+    ahrs->config->gyro_bias[0] = (float) sum[0] * (factor / SAMPLES_NUM);
+    ahrs->config->gyro_bias[1] = (float) sum[1] * (factor / SAMPLES_NUM);
+    ahrs->config->gyro_bias[2] = (float) sum[2] * (factor / SAMPLES_NUM);
 
     for (i = 0; i < SAMPLES_NUM; i++) {
         float diff[3] = {
-            gyr_raw[i][0] * factor - ahrs->gyro_bias[0],
-            gyr_raw[i][1] * factor - ahrs->gyro_bias[1],
-            gyr_raw[i][2] * factor - ahrs->gyro_bias[2],
+            gyr_raw[i][0] * factor - ahrs->config->gyro_bias[0],
+            gyr_raw[i][1] * factor - ahrs->config->gyro_bias[1],
+            gyr_raw[i][2] * factor - ahrs->config->gyro_bias[2],
         };
 
         /* Summing floats won't give us the best accuracy but we're good with approx values here */
@@ -376,6 +376,7 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
     }
 
     ahrs->gyro_stddev = sqrtf((dev[0] + dev[1] + dev[2]) / (SAMPLES_NUM * 3));
+    remap_axes(ahrs, ahrs->config->gyro_bias);
     /*
      * TODO: with Magdwick we can get the beta directly from this, instead of from user configuration?
      *
@@ -402,9 +403,9 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
         float ypr[3];
 
         quaternion_to_euler(ahrs->q, ypr);
-        sprintf(output, "Calib reset to (non-remapped): bias = (%.3f, %.3f, %.3f), stddev = (%.3f, %.3f, %.3f), "
+        sprintf(output, "Calib reset to: bias = (%.3f, %.3f, %.3f), stddev = (%.3f, %.3f, %.3f), "
                 "ypr = (%.2f, %.2f, %.2f), acc was (%.2f, %.2f, %.2f)",
-                ahrs->gyro_bias[0] * R2D, ahrs->gyro_bias[1] * R2D, ahrs->gyro_bias[2] * R2D,
+                ahrs->config->gyro_bias[0] * R2D, ahrs->config->gyro_bias[1] * R2D, ahrs->config->gyro_bias[2] * R2D,
                 sqrtf(dev[0] / SAMPLES_NUM) * R2D, sqrtf(dev[1] / SAMPLES_NUM) * R2D, sqrtf(dev[2] / SAMPLES_NUM) * R2D,
                 ypr[0] * R2D, ypr[1] * R2D, ypr[2] * R2D, acc[0], acc[1], acc[2]);
         ahrs->debug_print(output);
@@ -423,9 +424,9 @@ void ahrs_reset_orientation(obgc_ahrs *ahrs) {
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
     acc[2] = (float) acc_raw[2] / ahrs->imu->cls->accel_scale;
-    gyr[0] = gyr_raw[0] * factor - ahrs->gyro_bias[0];
-    gyr[1] = gyr_raw[1] * factor - ahrs->gyro_bias[1];
-    gyr[2] = gyr_raw[2] * factor - ahrs->gyro_bias[2];
+    gyr[0] = gyr_raw[0] * factor - ahrs->config->gyro_bias[0];
+    gyr[1] = gyr_raw[1] * factor - ahrs->config->gyro_bias[1];
+    gyr[2] = gyr_raw[2] * factor - ahrs->config->gyro_bias[2];
 
     /* Remap axes */
     remap_axes(ahrs, acc);
@@ -486,9 +487,9 @@ void ahrs_update(obgc_ahrs *ahrs) {
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
     acc[2] = (float) acc_raw[2] / ahrs->imu->cls->accel_scale;
-    gyr[0] = gyr_raw[0] * factor - ahrs->gyro_bias[0];
-    gyr[1] = gyr_raw[1] * factor - ahrs->gyro_bias[1];
-    gyr[2] = gyr_raw[2] * factor - ahrs->gyro_bias[2];
+    gyr[0] = gyr_raw[0] * factor - ahrs->config->gyro_bias[0];
+    gyr[1] = gyr_raw[1] * factor - ahrs->config->gyro_bias[1];
+    gyr[2] = gyr_raw[2] * factor - ahrs->config->gyro_bias[2];
 
     /* Remap axes */
     remap_axes(ahrs, acc);

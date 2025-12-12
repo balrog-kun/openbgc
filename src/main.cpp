@@ -1781,6 +1781,9 @@ static void sbgc_api_bytes_tx_cb(const uint8_t *data, uint16_t len) {
 static void ahrs_defaults(struct obgc_ahrs_config_s *ahrs_cfg) {
     ahrs_cfg->acc_kp = 0.1f;
     ahrs_cfg->enc_kp = 0.5f;
+    ahrs_cfg->calibrate_on_start = true;
+
+    memset(&ahrs_cfg->gyro_bias, 0, 3 * sizeof(float));
 }
 
 void setup(void) {
@@ -1918,7 +1921,11 @@ void setup(void) {
             M_PI / 0x800 /*encoder[0]->cls->resolution * D2R*/);
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
-    ahrs_calibrate(main_ahrs);
+
+    if (!have_config || config.main_ahrs.calibrate_on_start)
+        ahrs_calibrate(main_ahrs);
+    else
+        ahrs_reset_orientation(main_ahrs);
 
     serial->println("Main AHRS initialized!");
     /* TODO: make AHRS an abstract class, then convert the current AHRS to its subclass and add another that exposes the mpu6050

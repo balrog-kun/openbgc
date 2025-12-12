@@ -28,7 +28,6 @@ typedef struct obgc_ahrs_s {
     uint32_t last_update; /* in micros */
     uint8_t axis_map[3];  /* 0:X, 1:Y, 2:Z (Deprecated) */
     int8_t axis_sign[3];  /* 1 or -1 (Deprecated) */
-    float gyro_bias[3];
     float gyro_stddev;
     float gyro_lpf[3];
     float encoder_step;
@@ -46,8 +45,10 @@ typedef struct obgc_ahrs_s {
 
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 struct obgc_ahrs_config_s {
+    float gyro_bias[3];
     float acc_kp;
     float enc_kp;
+    bool calibrate_on_start;
 };
 
 /*
