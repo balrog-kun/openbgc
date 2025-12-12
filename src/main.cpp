@@ -1649,14 +1649,14 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                     break;
                 case 1: /* MODE_SPEED */
                     control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_SPEED;
-                    control.sbgc_api_override_ts = millis();
+                    control.sbgc_api_override_ts = now;
                     control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
                     break;
                 case 2: /* MODE_ANGLE */
                 case 8: /* MODE_ANGLE_SHORTEST */
                 case 3: /* MODE_SPEED_ANGLE */
                     control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_ANGLE;
-                    control.sbgc_api_override_ts = millis();
+                    control.sbgc_api_override_ts = now;
                     control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PI / 32768);
                     control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
                     break;
@@ -1664,7 +1664,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                 case 6: /* MODE_RC_HIGH_RES */
                     range = ((mode & 0xf) == 4) ? 500 : 16384;
                     control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_RC;
-                    control.sbgc_api_override_ts = millis();
+                    control.sbgc_api_override_ts = now;
                     if (abs(req.value[i].angle) > range)
                         control.sbgc_api_ypr_offsets[ypr_num] = 0;
                     else {

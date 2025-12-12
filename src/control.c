@@ -1,5 +1,5 @@
 /* vim: set ts=4 sw=4 sts=4 et : */
-#include <Arduino.h> /* For millis() */
+#include <Arduino.h> /* For max(), stdint, stdbool, string etc. */
 #include <math.h>
 
 #include "ahrs.h"
@@ -16,7 +16,6 @@ static void control_calc_target(struct control_data_s *control,
         float *out_target_q, float *out_target_ypr) {
     float frame_rel_q[4], frame_ypr[3], target_rel_q[4];
     int i;
-    unsigned long now = millis();
 
     /*
      * We go through Euler/Tait-Bryan angles here to handle the three axes simultaneously.  This cannot be
@@ -34,12 +33,13 @@ static void control_calc_target(struct control_data_s *control,
     quaternion_mult_to(control->frame_q, control->conj_aligned_home_frame_q, frame_rel_q);
     quaternion_to_euler(frame_rel_q, frame_ypr);
 
+    static int cnt;////
     for (i = 0; i < 3; i++) {
         bool follow = control->settings->follow[i];
         float rc;
 
         if (control->sbgc_api_override_mode[i] != SBGC_API_OVERRIDE_NONE) {
-            if ((unsigned long) (now - control->sbgc_api_override_ts) > 5000) /* TODO: is the timeout configurable? */
+            if ((uint32_t) (now - control->sbgc_api_override_ts) > 5000000) /* TODO: is the timeout configurable? */
                 control->sbgc_api_override_mode[i] = SBGC_API_OVERRIDE_NONE;
         }
 
@@ -298,10 +298,9 @@ static void control_calc_path_step_park(struct control_data_s *control,
 static void control_calc_path_step_limit_search(struct control_data_s *control,
         const float *angles_current, float *out_joint_deltas) {
 #define MIN_DIFF (0.1f * D2R) /* Should use encoder resolution+stddev instead */
-#define MIN_TIME_MS 1000
+#define MIN_TIME_US 1000000
     float diff1, diff2, diff3;
     int i;
-    uint32_t now = millis();
     __auto_type search = &control->limit_search;
     uint8_t num = search->axis;
     float angles_target[3];
@@ -334,7 +333,7 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
 
             search->last_angle = angles_current[num];
             search->last_angle_ts = now;
-        } else if (now - search->last_angle_ts > MIN_TIME_MS) {
+        } else if (now - search->last_angle_ts > MIN_TIME_US) {
             /* Found the limit? */
             main_beep();
             control->axes->limit_min[num] = search->last_angle;
@@ -389,7 +388,7 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
 
             search->last_angle = angles_current[num];
             search->last_angle_ts = now;
-        } else if (now - search->last_angle_ts > MIN_TIME_MS) {
+        } else if (now - search->last_angle_ts > MIN_TIME_US) {
             /* Found the limit? */
             main_beep();
             control->axes->limit_max[num] = search->last_angle;

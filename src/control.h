@@ -46,7 +46,7 @@ struct control_data_s {
         SBGC_API_OVERRIDE_ANGLE,
         SBGC_API_OVERRIDE_RC,
     } sbgc_api_override_mode[3];
-    unsigned long sbgc_api_override_ts;
+    uint32_t sbgc_api_override_ts;
     float sbgc_api_ypr_offsets[3];
     float sbgc_api_ypr_speeds[3];
     bool sbgc_api_follow_override[3];
