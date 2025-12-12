@@ -784,12 +784,9 @@ static bool mode_down_1s_handle(void) {
 
 static void process_rc_input(void *) {
     static bool mode_handled;
-    static uint16_t cnt;
-
-    cnt++;
 
     if (control.rc_ypr_readings[0]) {
-        if (!(cnt & 127)) {
+        if (INFO_CYCLE) {
             serial->print("RC_YAW reads ");
             serial->println(control.rc_ypr_readings[0]);
             /* Resetting the commanded angles like this may cause a discontinuity in the
@@ -802,7 +799,7 @@ static void process_rc_input(void *) {
     }
 
     if (control.rc_ypr_readings[1]) {
-        if (!(cnt & 127)) {
+        if (INFO_CYCLE) {
             serial->print("RC_PITCH reads ");
             serial->println(control.rc_ypr_readings[1]);
             control.rc_ypr_readings[1] = 0;
@@ -810,7 +807,7 @@ static void process_rc_input(void *) {
     }
 
     if (control.rc_ypr_readings[2]) {
-        if (!(cnt & 127)) {
+        if (INFO_CYCLE) {
             serial->print("RC_ROLL reads ");
             serial->println(control.rc_ypr_readings[2]);
             control.rc_ypr_readings[2] = 0;
@@ -901,7 +898,6 @@ static struct main_loop_cb_s vbat_cb = { .cb = vbat_update };
 static void misc_debug_update(void *) {
     static uint16_t i2c_main_err_cnt;
     static uint16_t i2c_int_err_cnt;
-    static uint16_t cnt;
 
     // imu_debug_update();
     // probe_out_pins_update();
@@ -910,7 +906,7 @@ static void misc_debug_update(void *) {
     if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
         main_ahrs_from_encoders_debug();
 
-    if (!(cnt++ & 127)) {
+    if (INFO_CYCLE) {
         if (i2c_main_err_cnt != i2c_main->error_cnt) {
             if (!i2c_main_err_cnt)
                 error_beep();
