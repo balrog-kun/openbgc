@@ -568,6 +568,11 @@ static void control_setup(void) {
         if (!config.have_axes)
             control.settings->tripod_mode = false;
         else {
+            int i;
+
+            for (i = 0; i < 3; i++)
+                encoder_update(encoders[i]);
+
             /* Can't leave frame_q uninitialized */
             axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q, frame_q, false);
         }
