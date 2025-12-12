@@ -120,7 +120,16 @@ static bool motors_on;
 
 static struct main_loop_cb_s *cbs, *cb_next;
 
-#define TARGET_LOOP_RATE 128
+/* Just the I2C comms at highest rates take about 400+500+500us, add the maths and
+ * some buffer time and we get 400Hz.
+ */
+#define TARGET_LOOP_RATE 400
+
+static uint16_t cycle_cnt;
+#define EVERY_2_CYCLES(n)   ((cycle_cnt & 1) == n)
+#define EVERY_4_CYCLES(n)   ((cycle_cnt & 3) == n)
+#define INFO_CYCLE          ((cycle_cnt & 255) == 0)
+#define CYCLE_MASK_INFO  255
 
 HardwareSerial *error_serial;
 
@@ -446,6 +455,7 @@ void main_loop_sleep(void) {
         delayMicroseconds(next_update - now);
 
     next_update += TARGET_INTERVAL;
+    cycle_cnt++;
     now = (uint32_t) micros();
 
 #ifdef PERF
@@ -2031,15 +2041,18 @@ void loop(void) {
 
     PERF_SAVE_TS;
 
-    /* Read the encoders for everyone, there are multiple users */
-    for (i = 0; i < 3; i++)
-        encoder_update(encoders[i]);
+    if (EVERY_4_CYCLES(0)) {
+        /* Read the encoders for everyone, there are multiple users */
+        for (i = 0; i < 3; i++)
+            encoder_update(encoders[i]);
+    }
 
     PERF_SAVE_TS;
 
     if (config.have_axes) {
-        axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
-                frame_q, config.control.tripod_mode);
+        if (EVERY_4_CYCLES(1))
+            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
+                    frame_q, config.control.tripod_mode);
 
         PERF_SAVE_TS;
 
@@ -2051,7 +2064,7 @@ void loop(void) {
         control_update_joint_vel(&control);
     }
 
-    if (control_enable)
+    if (control_enable && EVERY_4_CYCLES(2))
         control_step(&control);
 
     PERF_SAVE_TS;
