@@ -485,12 +485,53 @@ void control_step(struct control_data_s *control) {
      * 2. TODO: to anticipate Coriolis effect.  We have rotating bodies mounted on top
      *    of other rotating bodies (rotating frame of reference) and there's bound to be an
      *    effect.
+     *
+     * (Note the alignment is fixed between consecutive axes and could be precalculated, only
+     * at i == 0 and j == 2 there is any variation)
      */
-    for (i = 0; i < 3; i++)
+    for (i = 0; i < 2; i++)
         for (j = i + 1; j < 3; j++) {
-            float delta_v_i = joint_velocities_target[i] - joint_velocities_current[i];
-            float delta_v_j = joint_velocities_target[j] - joint_velocities_current[j];
+            float delta_v_i = joint_velocities_target[i] - control->joint_velocities[i];
+            float delta_v_j = joint_velocities_target[j] - control->joint_velocities[j];
             float alignment = vector_dot(control->axes->jacobian_t[i], control->axes->jacobian_t[j]);
+
+            if (fabsf(alignment) > 0.9f /* ~cos(25deg) */) {
+                /* On the other hand if the axes are too close, we're approaching gimbal lock
+                 * and we have a different problem (not opposite.)  If two axes, A and B are
+                 * close to each other then regardless of how C is oriented, there's at least
+                 * one physical direction that is not covered by any of the axes, roughly
+                 * perpendicular to C and perpendicular to A & B (remember A & B are roughly
+                 * the same).  Let's say D == C x ((A + B) / 2).  Any changes aligned with D
+                 * in the target orientation, including those resulting from sensor noise and
+                 * from shaky hands, will cause big amplified swings in all 3 joint axes
+                 * (although visually the movement in A&B may be the most annoying to the
+                 * user?)
+                 *
+                 * The amplification happens specifically in axes->jacobian_pinv as we use
+                 * it in CONTROL_PATH_SHORT.  Or in axes_q_to_angles_orthogonal() (which uses
+                 * quaternion_to_euler()), or in axes_q_to_angles_universal().  But
+                 * CONTROL_PATH_SHORT is really the problematic case.  So we should either
+                 * try to modify the matrix itself to handle the gimbal lock case by
+                 * gradually ignoring the movements in D as gimbal lock is approached, or
+                 * CONTROL_PATH_SHORT should try to pull the target angle in D axis close to
+                 * the current orientation.  This is not a linear transformation so it may
+                 * not be possible to handle it directly in axes->jacobian_pinv (?)
+                 *
+                 * For now try to just reduce requested joint delta V in A&B as if assuming
+                 * *most* of the movement is the result of noise in D, which is a big
+                 * oversimplifcation.  Reduce by a lower factor in C as we will need to
+                 * move in C in order to exit the gimbal lock.
+                 */
+                float factor = (fabsf(alignment) - 0.9f) * 10.0f;
+                int c = i + (3 - (j - i));
+                float delta_v_c = joint_velocities_target[c] - control->joint_velocities[c];
+
+                joint_velocities_target[i] -= delta_v_i * factor;
+                joint_velocities_target[j] -= delta_v_j * factor;
+                joint_velocities_target[c] -= delta_v_c * factor * 0.75f;
+                delta_v_i = joint_velocities_target[i] - control->joint_velocities[i];
+                delta_v_j = joint_velocities_target[j] - control->joint_velocities[j];
+            }
 
             joint_extra_torque[i] += alignment * delta_v_j;
             joint_extra_torque[j] += alignment * delta_v_i;
