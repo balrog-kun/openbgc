@@ -30,6 +30,7 @@ typedef struct obgc_ahrs_s {
     int8_t axis_sign[3];  /* 1 or -1 (Deprecated) */
     float gyro_stddev;
     float gyro_lpf[3];
+    float error_integral[3];
     float encoder_step;
     const float *encoder_q; /* If set, gets consumed by update(), calibrate() or reset_orientation() */
     void (*debug_print)(const char *);
@@ -51,6 +52,7 @@ struct obgc_ahrs_config_s {
     float gyro_sensitivity[3][3];
     float acc_kp;
     float enc_kp;
+    float ki;
     bool calibrate_on_start;
 };
 

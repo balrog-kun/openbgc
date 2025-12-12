@@ -1781,6 +1781,7 @@ static void sbgc_api_bytes_tx_cb(const uint8_t *data, uint16_t len) {
 static void ahrs_defaults(struct obgc_ahrs_config_s *ahrs_cfg) {
     ahrs_cfg->acc_kp = 0.1f;
     ahrs_cfg->enc_kp = 0.5f;
+    ahrs_cfg->ki = 0.01f;
     ahrs_cfg->calibrate_on_start = true;
 
     memset(&ahrs_cfg->acc_bias, 0, 3 * sizeof(float));

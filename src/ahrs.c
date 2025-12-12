@@ -136,9 +136,8 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         ahrs->beta = BETA_MIN;
 
     mbeta = 1.0f - ahrs->beta;
-    omega[0] = ahrs->gyro_lpf[0] * mbeta + gyr[0] * ahrs->beta;
-    omega[1] = ahrs->gyro_lpf[1] * mbeta + gyr[1] * ahrs->beta;
-    omega[2] = ahrs->gyro_lpf[2] * mbeta + gyr[2] * ahrs->beta;
+    vector_weighted_sum(ahrs->gyro_lpf, mbeta, gyr, ahrs->beta, omega);
+    vector_add(omega, ahrs->error_integral);
 
     memcpy(ahrs->gyro_lpf, omega, 3 * sizeof(float));
 
@@ -224,18 +223,21 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
     quaternion_mult_add_xyz(ahrs->q, error_scaled);
     quaternion_normalize(ahrs->q);
 
-    /* TODO: calc the error integral too? if so we need to remove omega from error_scaled (or use "error"?) */
-    /*
-     * if so, apply the spin_rate_limit as in https://github.com/cleanflight/cleanflight/blob/master/src/main/flight/imu.c
-     *   but does the lpf kindof cover the same needs as the integral?
-     *
-     *   also can we autocalibrate not only the offset but scale variations??
-     *   we'd have to be sure we know the sign. if sign is different, we skip this cycle?
-     *   in any case, we shouldn't be calculating it only based on the single latest reading but on the lpf of gyro and lpf or error data
-     */
+    if (vector_normsq(gyr) < (20 * D2R) * (20 * D2R)) { /* Don't apply if spin rate over 20 deg/s */
+        vector_mult_scalar(error, dt * ahrs->config->ki);
+        vector_add(ahrs->error_integral, error);//// we apply dt in a lot of places, could have done it when we normalized this or at other points in time
+        /* TODO: should we be updating gyro_bias directly? eventually yes but gyro_bias is
+         * applied before gyro_sensitivity so we would have to multiply error by the inverse of
+         * that matrix?
+         */
+    }
 
+    /*
+     * also can we keep the gyro scale variations up to date in the same way we do the bias?
+     * we'd have to be sure we know the sign. if sign is different, we skip this cycle?
+     * in any case, we shouldn't be calculating it only based on the single latest reading but on the lpf of gyro and lpf or error data
+     */
     /* TODO: do we want to consider the error magnitude in updating beta, too? */
-    /* TODO: do we want to update ahrs->gyro_bias using the error * ahrs->ki? */
 }
 
 static void velocity_update(obgc_ahrs *ahrs, float *gyr, float dt) {
@@ -402,6 +404,10 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
     ahrs->gyro_lpf[1] = 0.0f;
     ahrs->gyro_lpf[2] = 0.0f;
     ahrs->beta = 1.0f;
+
+    ahrs->error_integral[0]  = 0.0f;
+    ahrs->error_integral[1]  = 0.0f;
+    ahrs->error_integral[2]  = 0.0f;
 
     ahrs->last_update = micros();
 
