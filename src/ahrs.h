@@ -21,11 +21,10 @@ typedef enum {
 
 typedef struct obgc_ahrs_s {
     obgc_imu *imu;
+    struct obgc_ahrs_config_s *config;
     float q[4];           /* Quaternion (w, x, y, z) */
     float velocity_vec[3];
     float beta;           /* Should map to SBGC gyro trust param? used differently with Mahony, user setting ignored */
-    float acc_kp;
-    float enc_kp;
     uint32_t last_update; /* in micros */
     uint8_t axis_map[3];  /* 0:X, 1:Y, 2:Z (Deprecated) */
     int8_t axis_sign[3];  /* 1 or -1 (Deprecated) */
@@ -45,19 +44,25 @@ typedef struct obgc_ahrs_s {
     float enc_error_max;
 } obgc_ahrs;
 
+/* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
+struct obgc_ahrs_config_s {
+    float acc_kp;
+    float enc_kp;
+};
+
 /*
  * TODO: make the calibration non-blocking, only save a flag in calibrate(), do the actual maths in update()
  * When ready and some time has passed set a ready flag.  The main loop should look at ready flags from all
  * components and only enable motors when all are ready, disable them again when something becomes not ready
  */
 
-obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right);
+obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right,
+        struct obgc_ahrs_config_s *config, float encoder_step);
 void ahrs_free(obgc_ahrs *ahrs);
 void ahrs_calibrate(obgc_ahrs *ahrs);
 void ahrs_reset_orientation(obgc_ahrs *agrs);
 void ahrs_update(obgc_ahrs *ahrs);
 void ahrs_set_encoder_q(obgc_ahrs *ahrs, const float *encoder_q);
-void ahrs_set_weights(obgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step);
 void ahrs_set_debug(obgc_ahrs *ahrs, void (*fn)(const char *));
 
 #endif /* AHRS_H */

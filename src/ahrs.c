@@ -170,10 +170,10 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
         vector_mult_scalar(acc_error, 1.0f / norm);
         sin_angle = vector_norm(acc_error);
         vector_add(error, acc_error);
-        vector_mult_scalar(acc_error, ahrs->acc_kp);
+        vector_mult_scalar(acc_error, ahrs->config->acc_kp);
         vector_add(error_scaled, acc_error);
 
-        ahrs->acc_contrib += sin_angle * ahrs->acc_kp * dt;
+        ahrs->acc_contrib += sin_angle * ahrs->config->acc_kp * dt;
         ahrs->acc_error_avg += sin_angle;
         if (sin_angle > ahrs->acc_error_max)
             ahrs->acc_error_max = sin_angle;
@@ -209,10 +209,10 @@ static void mahony_update(obgc_ahrs *ahrs, float *gyr, float *acc, float dt) {
              */
             vector_mult_scalar(enc_error, norm - MIN_ENC_ERROR);
             vector_add(error, enc_error);
-            vector_mult_scalar(enc_error, ahrs->enc_kp);
+            vector_mult_scalar(enc_error, ahrs->config->enc_kp);
             vector_add(error_scaled, enc_error);
 
-            ahrs->enc_contrib += (norm - MIN_ENC_ERROR) * ahrs->enc_kp * dt;
+            ahrs->enc_contrib += (norm - MIN_ENC_ERROR) * ahrs->config->enc_kp * dt;
             ahrs->enc_error_avg += norm;
             if (norm > ahrs->enc_error_max)
                 ahrs->enc_error_max = norm;
@@ -261,15 +261,19 @@ static void compute_y_axis(uint8_t x_map, uint8_t *y_map, uint8_t z_map,
         *y_map = (x_map + 2) % 3;
         *y_sign = -x_sign * z_sign;
     } else {
-        /* Bad configuration */
+        error_print("Bad axis mapping");
     }
 }
 
-obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right) {
+obgc_ahrs *ahrs_new(obgc_imu *imu, sbgc_imu_axis axis_top, sbgc_imu_axis axis_right,
+        struct obgc_ahrs_config_s *config, float encoder_step) {
     obgc_ahrs *ahrs = malloc(sizeof(obgc_ahrs));
 
     memset(ahrs, 0, sizeof(obgc_ahrs));
     ahrs->imu = imu;
+    ahrs->config = config;
+    ahrs->beta = 0.5f;
+    ahrs->encoder_step = encoder_step;
 
     /* Convert axis_right to X mapping */
     ahrs->axis_map[0] = abs(axis_right) - 1;
@@ -581,13 +585,6 @@ void ahrs_update(obgc_ahrs *ahrs) {
 
 void ahrs_set_encoder_q(obgc_ahrs *ahrs, const float *encoder_q) {
     ahrs->encoder_q = encoder_q;
-}
-
-void ahrs_set_weights(obgc_ahrs *ahrs, float beta, float acc_kp, float enc_kp, float encoder_step) {
-    ahrs->beta = beta;
-    ahrs->acc_kp = acc_kp;
-    ahrs->enc_kp = enc_kp;
-    ahrs->encoder_step = encoder_step;
 }
 
 void ahrs_set_debug(obgc_ahrs *ahrs, void (*fn)(const char *)) {

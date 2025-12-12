@@ -7,6 +7,7 @@
 extern "C" {
 #include "axes.h"
 #include "control.h"
+#include "ahrs.h"
 }
 #include "motor.h"
 #include "i2c.h"
@@ -24,6 +25,8 @@ extern struct obgc_storage_config_s {
     struct axes_data_s axes;
     bool have_axes;
     struct obgc_motor_pid_params_s motor_pid[3];
+    struct obgc_ahrs_config_s main_ahrs;
+    struct obgc_ahrs_config_s frame_ahrs;
 
     /* User settings -- if we ever want profiles, they'd encapsualte these */
     struct control_settings_s control;

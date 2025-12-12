@@ -1778,6 +1778,11 @@ static void sbgc_api_bytes_tx_cb(const uint8_t *data, uint16_t len) {
     serial->write(data, len);
 }
 
+static void ahrs_defaults(struct obgc_ahrs_config_s *ahrs_cfg) {
+    ahrs_cfg->acc_kp = 0.1f;
+    ahrs_cfg->enc_kp = 0.5f;
+}
+
 void setup(void) {
     int i;
     bool force_defaults = false;
@@ -1906,8 +1911,11 @@ void setup(void) {
 
     serial->println("Main MPU6050 initialized!");
 
-    main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z);
-    ahrs_set_weights(main_ahrs, 0.5f, 0.05f, 0.5f, M_PI / 0x800);
+    ahrs_defaults(&config.main_ahrs);
+    ahrs_defaults(&config.frame_ahrs);
+
+    main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z, &config.main_ahrs,
+            M_PI / 0x800 /*encoder[0]->cls->resolution * D2R*/);
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
     ahrs_calibrate(main_ahrs);
