@@ -13,6 +13,7 @@ struct obgc_param_s {
         void *addr;
         const void *addr_ro;
         uint32_t ptr_offset;
+        uint32_t val;
     };
     union {
         uint32_t unused;
@@ -26,6 +27,7 @@ enum obgc_param_flag_num_e {
     param_flag_ro,
     param_flag_ptr,
     param_flag_setter,
+    param_flag_const,
 };
 
 extern const struct obgc_param_s params[];

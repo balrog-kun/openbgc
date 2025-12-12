@@ -8,6 +8,8 @@
 #define PARAM_DEF_PTR_RO(_ptr, offset)  PARAM_DEF_FULL(.ptr_offset = offsetof(typeof(*_ptr), offset), \
     .ptr = (void **) &_ptr, _ptr->offset, (1 << param_flag_ptr) | (1 << param_flag_ro))
 #define PARAM_DEF_SETTER(data, _setter) PARAM_DEF_FULL(.addr = &data, .setter = _setter, data, 1 << param_flag_setter)
+#define PARAM_DEF_CONST(value)          PARAM_DEF_FULL(.val = (value),, uint32_t, \
+    (1 << param_flag_const) | (1 << param_flag_ro))
 
 /* Note: line is already a number so we could use it as the ID directly, but the enum makes the
  * IDs independent of the line numbers and only dependent on the definition order.
