@@ -45,7 +45,10 @@ typedef struct obgc_ahrs_s {
 
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 struct obgc_ahrs_config_s {
+    float acc_bias[3];
+    float acc_sensitivity[3][3];
     float gyro_bias[3];
+    float gyro_sensitivity[3][3];
     float acc_kp;
     float enc_kp;
     bool calibrate_on_start;

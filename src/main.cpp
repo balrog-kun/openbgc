@@ -1783,7 +1783,16 @@ static void ahrs_defaults(struct obgc_ahrs_config_s *ahrs_cfg) {
     ahrs_cfg->enc_kp = 0.5f;
     ahrs_cfg->calibrate_on_start = true;
 
+    memset(&ahrs_cfg->acc_bias, 0, 3 * sizeof(float));
+    memset(&ahrs_cfg->acc_sensitivity, 0, 9 * sizeof(float));
+    ahrs_cfg->acc_sensitivity[0][0] = 1.0f;
+    ahrs_cfg->acc_sensitivity[1][1] = 1.0f;
+    ahrs_cfg->acc_sensitivity[2][2] = 1.0f;
     memset(&ahrs_cfg->gyro_bias, 0, 3 * sizeof(float));
+    memset(&ahrs_cfg->gyro_sensitivity, 0, 9 * sizeof(float));
+    ahrs_cfg->gyro_sensitivity[0][0] = 1.0f;
+    ahrs_cfg->gyro_sensitivity[1][1] = 1.0f;
+    ahrs_cfg->gyro_sensitivity[2][2] = 1.0f;
 }
 
 void setup(void) {

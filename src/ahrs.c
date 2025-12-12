@@ -245,11 +245,16 @@ static void velocity_update(obgc_ahrs *ahrs, float *gyr, float dt) {
 }
 
 static void remap_axes(obgc_ahrs *ahrs, float *vec) {
-    float input[3] = { vec[0], vec[1], vec[2] };
+    float input[3] = INIT_VEC(vec);
 
     vec[0] = ahrs->axis_sign[0] == 1 ? input[ahrs->axis_map[0]] : -input[ahrs->axis_map[0]];
     vec[1] = ahrs->axis_sign[1] == 1 ? input[ahrs->axis_map[1]] : -input[ahrs->axis_map[1]];
     vec[2] = ahrs->axis_sign[2] == 1 ? input[ahrs->axis_map[2]] : -input[ahrs->axis_map[2]];
+}
+
+static void apply_calib(float *vec, const float *bias, const float s[][3]) {
+    vector_mult_matrix(vec, s);
+    vector_sub(vec, bias);
 }
 
 static void compute_y_axis(uint8_t x_map, uint8_t *y_map, uint8_t z_map,
@@ -389,6 +394,8 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
     acc[2] = (float) acc_raw[2] / ahrs->imu->cls->accel_scale;
     remap_axes(ahrs, acc);
+
+    apply_calib(acc, ahrs->config->acc_bias, ahrs->config->acc_sensitivity);
     ahrs_init_q_with_a(ahrs, acc);
 
     ahrs->gyro_lpf[0] = 0.0f;
@@ -424,13 +431,15 @@ void ahrs_reset_orientation(obgc_ahrs *ahrs) {
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
     acc[2] = (float) acc_raw[2] / ahrs->imu->cls->accel_scale;
-    gyr[0] = gyr_raw[0] * factor - ahrs->config->gyro_bias[0];
-    gyr[1] = gyr_raw[1] * factor - ahrs->config->gyro_bias[1];
-    gyr[2] = gyr_raw[2] * factor - ahrs->config->gyro_bias[2];
+    gyr[0] = gyr_raw[0] * factor;
+    gyr[1] = gyr_raw[1] * factor;
+    gyr[2] = gyr_raw[2] * factor;
 
     /* Remap axes */
     remap_axes(ahrs, acc);
     remap_axes(ahrs, gyr);
+    apply_calib(acc, ahrs->config->acc_bias, ahrs->config->acc_sensitivity);
+    apply_calib(gyr, ahrs->config->gyro_bias, ahrs->config->gyro_sensitivity);
 
     ahrs_init_q_with_a(ahrs, acc);
 
@@ -487,13 +496,15 @@ void ahrs_update(obgc_ahrs *ahrs) {
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
     acc[1] = (float) acc_raw[1] / ahrs->imu->cls->accel_scale;
     acc[2] = (float) acc_raw[2] / ahrs->imu->cls->accel_scale;
-    gyr[0] = gyr_raw[0] * factor - ahrs->config->gyro_bias[0];
-    gyr[1] = gyr_raw[1] * factor - ahrs->config->gyro_bias[1];
-    gyr[2] = gyr_raw[2] * factor - ahrs->config->gyro_bias[2];
+    gyr[0] = gyr_raw[0] * factor;
+    gyr[1] = gyr_raw[1] * factor;
+    gyr[2] = gyr_raw[2] * factor;
 
     /* Remap axes */
     remap_axes(ahrs, acc);
     remap_axes(ahrs, gyr);
+    apply_calib(acc, ahrs->config->acc_bias, ahrs->config->acc_sensitivity);
+    apply_calib(gyr, ahrs->config->gyro_bias, ahrs->config->gyro_sensitivity);
 
     velocity_update(ahrs, gyr, dt);
 
