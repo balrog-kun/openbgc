@@ -1294,6 +1294,9 @@ handle_set_param:
     case 'D':
         set_param = BLDC_PARAM_KD;
         break;
+    case 'E':
+        set_param = BLDC_PARAM_KP_TRUST;
+        break;
     case 'F':
         set_param = BLDC_PARAM_KI_FALLOFF;
         break;
@@ -2004,9 +2007,10 @@ void setup(void) {
             continue;
 
         /* Set defaults */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.06f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.03f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.03f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.01f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.002f); /* Look 0.002s ahead */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.5f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Limit to 0.2 x VBAT */
         motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);

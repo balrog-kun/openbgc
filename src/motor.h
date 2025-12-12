@@ -33,7 +33,7 @@ typedef struct obgc_motor_calib_data_s {
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 typedef struct obgc_motor_pid_params_s {
     float kp, ki, kd;
-    float ki_falloff;
+    float kp_trust, ki_falloff;
     float v_max;
     float kdrag;
     /* The below would have been more flexible but at the end of the day the loop code

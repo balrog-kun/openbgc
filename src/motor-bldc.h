@@ -9,6 +9,7 @@ typedef enum obgc_motor_bldc_param_e {
     BLDC_PARAM_KP = 1, /* roughly [V / (deg/s)], should be [A / (deg/s)] */
     BLDC_PARAM_KI,     /* eventually should be same as Kp by time? */
     BLDC_PARAM_KD,     /* [s] */
+    BLDC_PARAM_KP_TRUST,
     BLDC_PARAM_KI_FALLOFF,
     BLDC_PARAM_K_DRAG,
     BLDC_PARAM_K_COULOMB,

@@ -21,6 +21,7 @@ struct motor_bldc_s {
     float i;
     float prev_theta;
     float prev_omega;
+    float prev_target;
     uint32_t prev_ts;
     float ext_omega;
     bool have_ext_omega;
@@ -81,6 +82,7 @@ static int motor_bldc_on(struct motor_bldc_s *motor) {
     motor_bldc_update_theta(motor);
     motor->prev_omega = 0;
     motor->i = 0;
+    motor->prev_target = 0;
     return 0;
 }
 
@@ -245,7 +247,7 @@ static obgc_motor_class motor_bldc_class = {
 };
 
 static void motor_bldc_loop(struct motor_bldc_s *motor) {
-    float prev_theta, theta, dtheta, invdt, omega, accel, error, torque, vq, vd;
+    float prev_theta, theta, dtheta, invdt, raw_omega, omega, accel, error, torque, vq, vd;
     uint32_t prev_ts;
     const struct obgc_motor_pid_params_s *params = motor->obj.pid_params;
     int idx;
@@ -266,17 +268,23 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         dtheta += 360.0f;
 
     invdt = 1000000.0f / (motor->prev_ts - prev_ts); /* TODO: zero check */
-    omega = motor->have_ext_omega ? motor->ext_omega : (dtheta * invdt);
-    ////omega = dtheta * invdt;////
-    ////ppserial(omega * 1000, motor->ext_omega * 1000);////
-    accel = (omega - motor->prev_omega) * invdt;
-    motor->prev_omega = omega;
+    raw_omega = motor->have_ext_omega ? motor->ext_omega : (dtheta * invdt);
+    accel = (raw_omega - motor->prev_omega) * invdt;
+    motor->prev_omega = raw_omega;
     motor->have_ext_omega = false;
 
+    omega = (1.0f - params->kp_trust) * raw_omega + params->kp_trust * motor->prev_target;
+    motor->prev_target = motor->target_omega;
+
     error = motor->target_omega - (omega + accel * params->kd) + steal_num(motor->ext_minus_dv);
+#if 0
+    if (error >= 0)
+        error = powf(error, params->kp_expo);
+    else
+        error = -powf(-error, params->kp_expo);
+#endif
     /* Basic PID (note we applied Kd before Kp so Kd is strictly in time units) */
     torque = error * params->kp + motor->i * params->ki;
-    motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
     /* Friction torque */
     torque += omega * params->kdrag;
     if (omega > 0.01f)
@@ -287,6 +295,9 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         torque += motor->kstiction;
     else if (error < 0.01f)
         torque -= motor->kstiction;
+
+    error = motor->target_omega - raw_omega;
+    motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
 
     /* TODO: get frame acceleration from AHRS and add some amount of torque to counter that.
      * Actually, since the frame acceleration will have already acted on the motor, probably just
@@ -362,6 +373,9 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         break;
     case BLDC_PARAM_KD:
         params->kd = val;
+        break;
+    case BLDC_PARAM_KP_TRUST:
+        params->kp_trust = val;
         break;
     case BLDC_PARAM_KI_FALLOFF:
         params->ki_falloff = val;
