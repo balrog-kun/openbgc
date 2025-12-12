@@ -3,7 +3,9 @@
 #define I2C_H
 
 #include <Arduino.h>
-#include <Wire.h>
+
+/* Work around FlexWire providing its own Wire.h and overriding the TwoWire identifier */
+#include <TwoWire.h>
 #include <FlexWire.h>
 
 /* Common base class for TwoWire and other I2C imlpementations (software or hardware) since
@@ -24,7 +26,7 @@ public:
     virtual void setClock(uint32_t) = 0;
     virtual void beginTransmission(uint8_t address) = 0;
     virtual uint8_t endTransmission(bool stop_condition = true) = 0;
-    virtual uint8_t requestFrom(uint8_t address, uint8_t quantity, bool stop_condition = true) = 0;
+    virtual uint8_t requestFrom(uint8_t address, uint8_t quantity, uint8_t stop_condition = true) = 0;
     virtual uint8_t requestFrom(uint8_t, uint8_t, uint32_t, uint8_t, bool) = 0;
     virtual size_t write(uint8_t data) = 0;
     virtual size_t write(const uint8_t *data, size_t length) = 0;
@@ -77,7 +79,7 @@ public:
     uint8_t endTransmission(bool stop_condition = true) override {
         return wire->endTransmission(stop_condition);
     }
-    uint8_t requestFrom(uint8_t address, uint8_t quantity, bool stop_condition = true) override {
+    uint8_t requestFrom(uint8_t address, uint8_t quantity, uint8_t stop_condition = true) override {
         return wire->requestFrom(address, quantity, stop_condition);
     }
     uint8_t requestFrom(uint8_t address, uint8_t quantity, uint32_t iaddress, uint8_t isize,
@@ -90,7 +92,7 @@ public:
                 return 0xff;
             }
         endTransmission(false);
-        return requestFrom(address, quantity, send_stop);
+        return requestFrom(address, quantity, (uint8_t) send_stop);
     }
     size_t write(uint8_t data) override { return wire->write(data); }
     size_t write(const uint8_t *data, size_t length) override { return wire->write(data, length); }

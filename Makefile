@@ -4,8 +4,13 @@ endif
 
 all: compile
 compile build: .pio/build/simplebgc32_regular/firmware.bin
-.pio/build/simplebgc32_regular/firmware.bin: src/*.c src/*.cpp src/*.h
+.pio/build/simplebgc32_regular/firmware.bin: src/*.c src/*.cpp src/*.h src/TwoWire.h
 	pio run $(pio_verbose)
+
+# Until FlexWire stops doing this or we switch to a different library, work around FlexWire shipping
+# its own Wire.h and overriding the TwoWire identifier (https://github.com/felias-fogg/FlexWire/issues/10)
+src/TwoWire.h:
+	ln -s ~/.platformio/packages/framework-arduinoststm32/libraries/Wire/src/Wire.h $@
 
 # Bootloader detects the baudrate from our first byte sent to it so we decide the baudrate between 1200 and 115200
 bl_baudrate = 115200
