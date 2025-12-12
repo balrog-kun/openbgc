@@ -410,19 +410,13 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
 }
 
 void control_step(struct control_data_s *control) {
-    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
     float target_q[4], delta_q[4];
     float delta_axis[3];
-    float joint_velocities_current[3] = INIT_VEC(control->main_ahrs->velocity_vec);
     float joint_velocities_target[3];
     float joint_angles_current[3], joint_step_deltas[3], joint_extra_torque[3] = {};
     float target_ypr[3];
     int i, j;
-
-    /* Collect some info */
-    vector_rotate_by_quaternion(joint_velocities_current, conj_frame_q);
-    vector_mult_matrix(joint_velocities_current, control->axes->jacobian_pinv);
 
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
@@ -477,8 +471,6 @@ void control_step(struct control_data_s *control) {
     for (i = 0; i < 3; i++)
         joint_velocities_target[i] = joint_step_deltas[i] * (R2D / control->dt);
 
-    vector_mult_scalar(joint_velocities_current, R2D);
-
     /* Process the coupling between pairs of axes for at least two reasons:
      * 1. to tell the motor PIDs to anticipate an external force => acceleration.  When two
      *    axes are aligned and we command one of the motors to exert a torque on its axis, the
@@ -527,12 +519,27 @@ void control_step(struct control_data_s *control) {
          */
         motor->cls->set_velocity(motor, joint_velocities_target[i] / control->axes->encoder_scale[num]);
 
-        if (motor->cls->override_cur_velocity)
-            motor->cls->override_cur_velocity(motor,
-                    joint_velocities_current[i] / control->axes->encoder_scale[num]);
-
         if (motor->cls->set_external_torque)
             motor->cls->set_external_torque(motor,
                     joint_extra_torque[i] / control->axes->encoder_scale[num]);
+    }
+}
+
+void control_update_joint_vel(struct control_data_s *control) {
+    float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+    int i;
+
+    memcpy(control->joint_velocities, control->main_ahrs->velocity_vec, 3 * sizeof(float));
+    vector_rotate_by_quaternion(control->joint_velocities, conj_frame_q);
+    vector_mult_matrix(control->joint_velocities, control->axes->jacobian_pinv);
+    vector_mult_scalar(control->joint_velocities, R2D);
+
+    for (i = 0; i < 3; i++) {
+        int num = control->axes->axis_to_encoder[i];
+        struct obgc_motor_s *motor = control->motors[num];
+
+        if (motor->cls->override_cur_velocity)
+            motor->cls->override_cur_velocity(motor,
+                    control->joint_velocities[i] / control->axes->encoder_scale[num]);
     }
 }

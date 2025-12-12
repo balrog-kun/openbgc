@@ -2047,6 +2047,8 @@ void loop(void) {
             ahrs_update(main_ahrs);
 
         PERF_SAVE_TS;
+
+        control_update_joint_vel(&control);
     }
 
     if (control_enable)

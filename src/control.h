@@ -105,6 +105,7 @@ struct control_data_s {
 
     /* State */
     float velocity_vec[3];
+    float joint_velocities[3];
     float target_ypr_offsets[3];
     float delta_angle;
     struct {
@@ -115,5 +116,6 @@ struct control_data_s {
 };
 
 void control_step(struct control_data_s *control);
+void control_update_joint_vel(struct control_data_s *control);
 
 #endif /* CONTROL_H */
