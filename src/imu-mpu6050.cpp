@@ -33,6 +33,9 @@ static void mpu6050_free(struct mpu6050_s *dev) {
     free(dev);
 }
 
+#define USE_FIFO
+#define BLOCK_UNTIL_NEW_DATA
+
 static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gyro) {
 #ifdef USE_FIFO
     uint16_t byte_cnt = 0;
@@ -110,7 +113,8 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
          * this scenario, neither with nor without the wait for FIFO_RESET to become 0.
          */
         while (byte_cnt) {
-            uint8_t byte_cnt_chunk = min((int) byte_cnt, 255);
+# define MAX_CHUNK_SIZE 255
+            uint8_t byte_cnt_chunk = min((int) byte_cnt, MAX_CHUNK_SIZE);
 
             byte_cnt -= byte_cnt_chunk;
             if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt_chunk, MPU6050_REG_FIFO_R_W, 1, true) !=
@@ -170,7 +174,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
         goto failsafe;
 
     for (uint8_t i = 0; i < sample_cnt;) {
-        uint8_t sample_cnt_chunk = min((int) sample_cnt - i, 255 / FIFO_SAMPLE_SIZE);
+        uint8_t sample_cnt_chunk = min((int) sample_cnt - i, MAX_CHUNK_SIZE / FIFO_SAMPLE_SIZE);
 
         i += sample_cnt_chunk;
         byte_cnt = sample_cnt_chunk * FIFO_SAMPLE_SIZE;
@@ -256,9 +260,6 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
         free(dev);
         return NULL;
     }
-
-#define USE_FIFO
-#define BLOCK_UNTIL_NEW_DATA
 
     /* Initialization sequence */
     static uint8_t init_sequence[] = {
