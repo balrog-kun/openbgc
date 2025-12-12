@@ -1029,7 +1029,7 @@ handle_set_param:
 
         motors_on_off(false);
         serial->println("Setting new MPU6050 sample rate");
-        /* Sample rate becomes (dlpf ? 8k : 1k) / (param + 1) */
+        /* Sample rate becomes (dlpf ? 1k : 8k) / (param + 1) */
         mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
         delay(100);
         break;
@@ -1858,9 +1858,26 @@ void setup(void) {
         while (1);
     }
 
+    /* We control the LPF cut-off frequency and the sampling rate of the MPU6050.  We want
+     * to minimize the noise, which would be achieved by setting the highest sample rate,
+     * reading all the samples from the FIFO and suming/averaging them ourselves.  But we
+     * also need to minimize the amount of data received over I2C as I2C is by far the
+     * biggest bottleneck in our loop.  The MPU6050 doesn't do any averaging when reducing
+     * the sample rate.  Judging from the noise levels, the sampling time is fixed,
+     * egardless of the rate.  So the DLPF (digital LPF) is our only way to have some
+     * noise reduction performed on the IMU side.  Enable it at the lowest factor or the
+     * highest bandwidth and cut-off frequency.  The 188Hz cut-off is already a little too
+     * low for our use in the motor PID feedback, but ok for the AHRS.  Then sample at the
+     * lowest rate higher than our main loop rate, but the base rate is already only 1kHz
+     * with the DLPF enabled, so just leave it at that.  For speed keep USE_FIFO off in
+     * imu-mpu6050.cpp to receive only the last sample at any given time.
+     *
+     * In practice the noise, DLPF settings, sample rate / integration rate (AHRS update
+     * rate) and clock settings don't seem to affect the orientation precision anywhere
+     * close to what the chip axis alignment errors do.
+     */
     // mpu6050_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
-    /* The above minimzes number of samples to read, the below seems to reduce noise */
-    mpu6050_set_srate(main_imu, 3, 0); /* 2000 Hz, no DLPF */
+    mpu6050_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
     serial->println("Main MPU6050 initialized!");
 
@@ -1869,6 +1886,7 @@ void setup(void) {
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
     ahrs_calibrate(main_ahrs);
+
     serial->println("Main AHRS initialized!");
     /* TODO: make AHRS an abstract class, then convert the current AHRS to its subclass and add another that exposes the mpu6050
      * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions

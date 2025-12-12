@@ -33,8 +33,8 @@ static void mpu6050_free(struct mpu6050_s *dev) {
     free(dev);
 }
 
-#define USE_FIFO
-#define BLOCK_UNTIL_NEW_DATA
+// #define USE_FIFO
+// #define BLOCK_UNTIL_NEW_DATA
 
 static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gyro) {
 #ifdef USE_FIFO
@@ -266,10 +266,13 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
         /* Values 0-5 all work and it looks like other factors dominate gyro stddev, hard to see any dependency */
         MPU6050_REG_PWR_MGMT_1,   0x01, /* X-gyro as PLL clock source */
         MPU6050_REG_SMPLRT_DIV,   0x00, /* 1kHz gyro sample rate (8kHz without DLPF) */
-        MPU6050_REG_CONFIG,       0x02, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
+        MPU6050_REG_CONFIG,       0x01, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
         MPU6050_REG_ACCEL_CONFIG, 0x00,
         MPU6050_REG_GYRO_CONFIG,  0x00,
 #ifdef USE_FIFO
+        /* With USE_FIFO, make sure the sample rate+DLPF settings above generate less
+         * than about 44kB/s which is the fastest we can read over I2C at 400kHz.
+         */
         MPU6050_REG_USER_CTRL,    0x04, /* Reset FIFO */
         MPU6050_REG_FIFO_EN,      0x70, /* Enable FIFO for gyro readings */
         MPU6050_REG_USER_CTRL,    0x40, /* Enable FIFO in general */
