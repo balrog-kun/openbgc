@@ -696,9 +696,10 @@ void main_shutdown_low_level(void) {
     }
 }
 
-static void shutdown_to_bl(void) __attribute__((noreturn));
-static void shutdown_to_bl(void) {
-    main_shutdown_high_level();
+static void shutdown_to_bl(bool) __attribute__((noreturn));
+static void shutdown_to_bl(bool clean) {
+    if (clean)
+        main_shutdown_high_level();
     main_shutdown_low_level();
 
     /*
@@ -976,7 +977,7 @@ start:
     switch (cmd) {
     case 'q':
         serial->println("Shutting down and jumping to bootloader");
-        shutdown_to_bl();
+        shutdown_to_bl(true);
         break;
     case 'Q':
         motors_on_off(false);
@@ -1612,7 +1613,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
             /* TODO: handle reply */
             serial->println("Serial API reset to bootloader");
             delay(delay_ms);
-            shutdown_to_bl();
+            shutdown_to_bl(true);
         }
         break;
     case CMD_MOTORS_ON:
@@ -1785,6 +1786,8 @@ void setup(void) {
     for (i = 0; i < 20000; i++) serial->println("debug");////
     while (!*serial); /* Wait for serial port connection */
     delay(2000);
+    if (serial->available() && serial->read() == 'q')
+        shutdown_to_bl(false);
     serial->println("Initializing");
 
 #if 0
