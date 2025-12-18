@@ -352,7 +352,7 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
     float dev[3] = { 0.0f, 0.0f, 0.0f };
     float acc[3];
     unsigned int i;
-    float factor = M_PI / (180.0f * ahrs->imu->cls->gyro_scale);
+    float factor = M_PIf / (180.0f * ahrs->imu->cls->gyro_scale);
 
     for (i = 0; i < SAMPLES_NUM; i++) {
         /* Read sensor data */
@@ -428,7 +428,7 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
 void ahrs_reset_orientation(obgc_ahrs *ahrs) {
     int32_t acc_raw[3], gyr_raw[3];
     float acc[3], gyr[3];
-    float factor = M_PI / (180.0f * ahrs->imu->cls->gyro_scale);
+    float factor = M_PIf / (180.0f * ahrs->imu->cls->gyro_scale);
 
     /* Read sensor data */
     ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
@@ -472,7 +472,7 @@ void ahrs_update(obgc_ahrs *ahrs) {
     int32_t acc_raw[3], gyr_raw[3];
     float acc[3], gyr[3];
     float dt;
-    float factor = M_PI / (180.0f * ahrs->imu->cls->gyro_scale);
+    float factor = M_PIf / (180.0f * ahrs->imu->cls->gyro_scale);
     uint32_t now = micros();
 
     /* Calculate time delta */

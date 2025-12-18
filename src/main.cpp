@@ -489,7 +489,7 @@ static void control_update_aux_values(void) {
     if (control.settings->have_forward)
         control.forward_az = atan2f(control.settings->forward_vec[1], control.settings->forward_vec[0]);
     else
-        control.forward_az = M_PI / 2;
+        control.forward_az = M_PIf / 2;
 
     control.forward_sincos2[0] = sinf(control.forward_az / 2);
     control.forward_sincos2[1] = cosf(control.forward_az / 2);
@@ -1217,7 +1217,7 @@ handle_set_param:
             quaternion_mult_to(main_ahrs->q, conj_q0, roll_q);
             quaternion_to_axis_angle(roll_q, control.settings->forward_vec, &angle);
 
-            if (angle < M_PI / 6 || angle > M_PI * (2.0f / 3)) {
+            if (angle < M_PIf / 6 || angle > M_PIf * (2.0f / 3)) {
                 serial->println("No rotation within 30-120 deg detected");
                 break;
             }
@@ -1672,7 +1672,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                 case 3: /* MODE_SPEED_ANGLE */
                     control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_ANGLE;
                     control.sbgc_api_override_ts = now;
-                    control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PI / 32768);
+                    control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PIf / 32768);
                     control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
                     break;
                 case 4: /* MODE_RC */
@@ -1931,7 +1931,7 @@ void setup(void) {
     ahrs_defaults(&config.frame_ahrs);
 
     main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z, &config.main_ahrs,
-            M_PI / 0x800 /*encoder[0]->cls->resolution * D2R*/);
+            M_PIf / 0x800 /*encoder[0]->cls->resolution * D2R*/);
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
 

@@ -88,8 +88,8 @@ static void control_calc_target(struct control_data_s *control,
         quaternion_mult_to(control->main_ahrs->q, conj_home_q, main_rel_q);
         quaternion_to_euler(main_rel_q, main_ypr);
         diff = angle_normalize_pi(out_target_ypr[0] - main_ypr[0]);
-        if (fabsf(diff) > M_PI / 2)
-            out_target_ypr[0] += M_PI;
+        if (fabsf(diff) > M_PIf / 2)
+            out_target_ypr[0] += M_PIf;
     }
 
     quaternion_from_euler(out_target_ypr, target_rel_q);
@@ -174,7 +174,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
          * From the earlier calc we also get:
          *   deceleration_required = current_v^2 / 2 / decelration_distance;
          */
-        new_v = current_v - (0.5f * current_v * current_v / max(delta_angle, M_PI / 20)) * control->dt;
+        new_v = current_v - (0.5f * current_v * current_v / max(delta_angle, M_PIf / 20)) * control->dt;
     else
         new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
 
@@ -421,13 +421,13 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
              * go back the same way.
              */
             if (angles_target[num] > angles_current[num])
-                angles_target[num] -= 2 * M_PI;
+                angles_target[num] -= 2 * M_PIf;
         } else {
             /* Since we got here at negative velocity, the target delta must be positive so we
              * go back the same way.
              */
             if (angles_target[num] < angles_current[num])
-                angles_target[num] += 2 * M_PI;
+                angles_target[num] += 2 * M_PIf;
         }
 
         control_calc_path_step_joint_target(control, angles_target, angles_current, true,

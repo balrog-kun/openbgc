@@ -168,13 +168,13 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
         else
             halfangle = acosf(diff_q[0]); /* 0 - 1 * M_PI range */
         angle = 2 * halfangle;            /* 0 - 2 * M_PI range */
-        if (angle > M_PI)
-            angle -= 2 * M_PI; /* Now discontinuous at diff_q[0] == 0 */
+        if (angle > M_PIf)
+            angle -= 2 * M_PIf; /* Now discontinuous at diff_q[0] == 0 */
 
         if (reinit_wait) {
             unsigned long now = millis();
 
-            if (fabsf(angle) > 0.5f * M_PI / 180) {
+            if (fabsf(angle) > 0.5f * M_PIf / 180) {
                 reinit_move_ts = now;
                 memcpy(conj_prev_q, q, sizeof(q));
                 conj_prev_q[0] = -conj_prev_q[0];
@@ -194,7 +194,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
         }
 
         /* Do nothing until angle difference of 10 degrees or more */
-        if (fabsf(angle) < 10.0f * M_PI / 180)
+        if (fabsf(angle) < 10.0f * D2R)
             continue;
 
         get_enc(data, enc);
@@ -244,7 +244,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
              * decide if this new delta has the wrong sign and is roughly off by 2 * M_PI
              * scaled by enc_scale_accum.
              */
-            if (fabsf(enc_diff) > M_PI)
+            if (fabsf(enc_diff) > M_PIf)
                 continue;
 
             /*
@@ -461,7 +461,7 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
 }
 
 static bool angle_greater(float a, float b) {
-    return angle_normalize_0_2pi(a - b) < M_PI;
+    return angle_normalize_0_2pi(a - b) < M_PIf;
 }
 
 /* 2x limit_margin cannot be wider than the range left after removing limit_min to limit_max. */
@@ -477,17 +477,17 @@ void axes_apply_limits_step(const struct axes_data_s *data, float limit_margin,
 
         dist_from_min = angle_normalize_0_2pi(data->limit_min[i] - limit_margin - angles_current[i]);
         dist_from_max = angle_normalize_0_2pi(angles_current[i] - limit_margin - data->limit_max[i]);
-        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PI);
+        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PIf);
         zone_width = angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i] + 2 * limit_margin);
 
-        if (dist_from_min > 2 * M_PI - zone_width) { /* Current angle already within the avoid zone */
+        if (dist_from_min > 2 * M_PIf - zone_width) { /* Current angle already within the avoid zone */
             /* Perhaps control has been disabled and just got re-enabled.  Override angles_delta
              * to move the angle over whichever limit we're closer to.
              */
             if (dist_from_min < dist_from_max)
-                angles_delta[i] = 2 * M_PI - dist_from_max;
+                angles_delta[i] = 2 * M_PIf - dist_from_max;
             else /* TODO: respect acceleration/speed limits though */
-                angles_delta[i] = dist_from_min - 2 * M_PI;
+                angles_delta[i] = dist_from_min - 2 * M_PIf;
         } else
             angles_delta[i] = clamp(angles_delta[i], -dist_from_max, dist_from_min);
     }
@@ -508,25 +508,25 @@ void axes_apply_limits_full(const struct axes_data_s *data, float limit_margin,
 
         dist_from_min = angle_normalize_0_2pi(data->limit_min[i] - limit_margin - angles_current[i]);
         dist_from_max = angle_normalize_0_2pi(angles_current[i] - limit_margin - data->limit_max[i]);
-        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PI);
+        // assert(angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i]) + 2 * limit_margin < 2 * M_PIf);
         zone_width = angle_normalize_0_2pi(data->limit_max[i] - data->limit_min[i] + 2 * limit_margin);
 
         /* Step 1: check if we need to override the travel direction */
-        if (dist_from_min > 2 * M_PI - zone_width) { /* Current angle already within the avoid zone */
+        if (dist_from_min > 2 * M_PIf - zone_width) { /* Current angle already within the avoid zone */
             /* Perhaps control has been disabled and just got re-enabled.  Select the rotation
              * direction that will move us across a limit faster.
              */
             if (dist_from_min < dist_from_max) {
                 if (angles_delta[i] < 0)
-                    angles_delta[i] += 2 * M_PI;
+                    angles_delta[i] += 2 * M_PIf;
             } else {
                 if (angles_delta[i] > 0)
-                    angles_delta[i] -= 2 * M_PI;
+                    angles_delta[i] -= 2 * M_PIf;
             }
         } else if (angles_delta[i] > dist_from_min + zone_width * 0.5f)
-            angles_delta[i] -= 2 * M_PI;
+            angles_delta[i] -= 2 * M_PIf;
         else if (-angles_delta[i] > dist_from_max + zone_width * 0.5f)
-            angles_delta[i] += 2 * M_PI;
+            angles_delta[i] += 2 * M_PIf;
 
         /* Step 2: with the direction fixed limit how far we can travel */
         angles_delta[i] = clamp(angles_delta[i], -dist_from_max, dist_from_min);
@@ -651,10 +651,10 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
     quaternion_to_euler(q_target, out_angles);
 
     /* Double-cover, select the orientation with inner angle in -90 - 90deg range */
-    if (fabsf(angle_normalize_pi(out_angles[2] - enc2_home)) > M_PI_2) {
-        out_angles[0] = out_angles[0] - M_PI;
-        out_angles[1] = -out_angles[1] - M_PI;
-        out_angles[2] = out_angles[2] - M_PI;
+    if (fabsf(angle_normalize_pi(out_angles[2] - enc2_home)) > M_PI_2f) {
+        out_angles[0] = out_angles[0] - M_PIf;
+        out_angles[1] = -out_angles[1] - M_PIf;
+        out_angles[2] = out_angles[2] - M_PIf;
     }
 
     if (invert)
@@ -662,7 +662,7 @@ void axes_q_to_angles_orthogonal(const struct axes_data_s *data, const float *to
 
     for (int i = 0; i < 3; i++)
         while (out_angles[i] < 0)
-            out_angles[i] += 2 * M_PI;
+            out_angles[i] += 2 * M_PIf;
 }
 
 void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_q,
@@ -802,11 +802,11 @@ void axes_q_to_angles_universal(const struct axes_data_s *data, const float *to_
          */
         θ[2] = atan2f(vector_dot(axes[2], q2 + 1), q2[0]) * 2;
 
-        if (fabsf(θ[2]) > M_PI)
-            θ[2] -= θ[2] > 0 ? M_PI * 2 : -M_PI * 2;
+        if (fabsf(θ[2]) > M_PIf)
+            θ[2] -= θ[2] > 0 ? M_PIf * 2 : -M_PIf * 2;
 
         /* Select one of the two solutions based on theta2 (TODO: accept range center param?) */
-        if (fabsf(angle_normalize_pi(θ[2] - enc2_home)) < M_PI_2)
+        if (fabsf(angle_normalize_pi(θ[2] - enc2_home)) < M_PI_2f)
             break;
     }
 

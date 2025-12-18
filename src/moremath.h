@@ -4,19 +4,27 @@
 
 #include <math.h>
 
-#define R2D (180.0f / M_PI)
-#define D2R (M_PI / 180.0f)
+#ifndef M_PIf
+# define M_PIf ((float) M_PI)
+#endif
+
+#ifndef M_PI_2f
+# define M_PI_2f ((float) M_PI_2)
+#endif
+
+#define R2D (180.0f / M_PIf)
+#define D2R (M_PIf / 180.0f)
 
 /* TODO: perhaps add a .c to avoid all the inlining */
 
 static inline float angle_normalize_pi(float angle) {
-    angle = fmodf(angle, 2 * M_PI);
-    return angle < M_PI ? angle >= -M_PI ? angle : (angle + 2 * M_PI) : (angle - 2 * M_PI);
+    angle = fmodf(angle, 2 * M_PIf);
+    return angle < M_PIf ? angle >= -M_PIf ? angle : (angle + 2 * M_PIf) : (angle - 2 * M_PIf);
 }
 
 static inline float angle_normalize_0_2pi(float angle) {
-    angle = fmodf(angle, 2 * M_PI);
-    return angle >= 0.0f ? angle : (angle + 2 * M_PI);
+    angle = fmodf(angle, 2 * M_PIf);
+    return angle >= 0.0f ? angle : (angle + 2 * M_PIf);
 }
 
 static inline float vector_normsq(const float *v) {
@@ -174,7 +182,7 @@ static inline void quaternion_to_euler(const float *q, float *ypr) {
     if (fabsf(sinp) < 1.0f)
         ypr[1] = asinf(sinp);
     else
-        ypr[1] = sinp >= 0.0f ? M_PI_2 : -M_PI_2;
+        ypr[1] = sinp >= 0.0f ? M_PI_2f : -M_PI_2f;
 
     /* Yaw (Z-axis rotation) */
     siny_cosp = 2 * (q[0] * q[3] + q[1] * q[2]);
@@ -258,8 +266,8 @@ static inline void quaternion_to_rotvec(const float *q, float *v) {
          * inputs, i.e. removes the double-cover property of the quaternions by avoiding rotvec
          * magnitudes >= Pi.  Makes this function not reversible.
          */
-        if (half_angle >= M_PI_2)
-            half_angle -= M_PI;
+        if (half_angle >= M_PI_2f)
+            half_angle -= M_PIf;
 
         factor = 2 * half_angle / sin_half_angle;
     }
@@ -277,8 +285,8 @@ static inline void quaternion_to_axis_angle(const float *q, float *axis, float *
 
     if (!isnormal(factor))
         factor = 0.0f;
-    else if (half_angle >= M_PI_2) {
-        half_angle = M_PI - half_angle;
+    else if (half_angle >= M_PI_2f) {
+        half_angle = M_PIf - half_angle;
         factor = -factor;
     }
 
