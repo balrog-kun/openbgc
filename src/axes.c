@@ -355,7 +355,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
 void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
         struct obgc_ahrs_s *main_ahrs, float *out_rel_q, float *frame_q, bool tripod_mode) {
     float q_tmp[4], q0[4], q1[4], q01[4], q2[4], angles[3];
-    float damp_factor = 1e-4f;
+    static bool gl_zone = false;
 
     /* Get encoder angles */
     for (int i = 0; i < 3; i++) {
@@ -390,16 +390,74 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
     vector_rotate_by_quaternion(data->jacobian_t[1], q01); /* q0 and q01 should either work */
     vector_rotate_by_quaternion(data->jacobian_t[2], q01); /* and maybe q01 helps the compiler */
 
+    /* Also save how close we are to gimbal lock.  We already assume the angles between
+     * consecutive axes are fixed so only check the inner axis against outer.
+     */
+    data->cos_lock_angle = vector_dot(data->jacobian_t[0], data->jacobian_t[2]);
+
     /* Since we'll be using it more than once, pre-calculate the pseudo-inverse
      * rather than solve the equation once in axes_q_to_step_proj().
-     *
-     * The pseudo-inverse with regularization (non-zero damp factor) is supposed to better
-     * handle gimbal lock situations than matrix_inverse() would.  But near gimbal lock each
-     * user needs to have a different fallback (speed vs. angle vs. torque), so we may be able
-     * to switch to the cheaper matrix_inverse().
      */
-    if (!matrix_t_pseudo_invert(data->jacobian_t, damp_factor, data->jacobian_pinv))
-        memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
+    if (fabsf(data->cos_lock_angle) < 0.95f /* about cos(8 degrees) */) {
+        /* The pseudo-inverse with regularization (non-zero damp factor) is supposed to better
+         * handle gimbal lock situations than matrix_t_invert() would.  But near gimbal lock
+         * each user needs to have a different fallback (speed vs. angle vs. torque), so we use
+         * the cheaper, and more precise, matrix_t_invert() when we know the matrix is
+         * well-conditioned.  We checked that axes 0 and 2 are more than 1 deg away and we know
+         * that consecutive axes have fixed angles between them so we could only hit problems
+         * here if the calibration is wrong or there's a mechanical flaw.
+         */
+        // if (!matrix_t_pseudo_invert(data->jacobian_t, 1e-4f, data->jacobian_pinv))
+        if (!matrix_t_invert(data->jacobian_t, data->jacobian_pinv))
+            memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
+
+#ifdef DEBUG
+        if (gl_zone)
+            error_print("exiting gl zone");
+        gl_zone = false;
+#endif
+    } else {
+        /* We're basically in gimbal-lock, axes 0 and 2 are aligned.  There's one physical
+         * axis that cannot be reached from the current position so we'll build a pseudo-
+         * inverse matrix that basically ignores the rotation around that axis.
+         * matrix_t_invert() and matrix_t_pseudo_invert() would generate huge numbers or
+         * infinity in this situation (actually they'd return error because they have checks
+         * for division by ~0.)
+         *
+         * But there's also one physical axis that generates 2 solutions -- we can turn in
+         * either axis 0 or axis 2 to reach the same set of orientations from current.  So we
+         * could pick just one of these joints and keep the other one static when we want to
+         * move in that axis.
+         * (And since control.c only uses this matrix for calculating distances from current
+         * position, or speeds, or torques, 0 is basically a safe fallback.)
+         *
+         * Joint 0 (outer) necessarily rotates a larger mass: it carries an arm, the middle
+         * joint, another arm and the inner joint (2).  So using joint 2 would be simply
+         * more efficient to achieve the same effect.  For now though, split input vectors
+         * equally between joints 0 and 2 because our motor control uses the gyros rather
+         * than the encoders for PID feedback and it would be hard to keep one of the joints
+         * stationary and one moving with just one piece of feedback information.  We'd be
+         * also entering the realm of inertia and drag differences, etc.
+         *
+         * We leave smooth transition from one matrix to the other up to control.c, here
+         * it's only about numerical stability.
+         */
+        if (!matrix_2d_project_invert(data->jacobian_t[1], data->jacobian_t[2],
+                    &data->jacobian_pinv[1]))
+            memcpy(data->jacobian_pinv, data->jacobian_t, 9 * sizeof(float));
+
+        vector_mult_scalar(data->jacobian_pinv[2], 0.5);
+        memcpy(data->jacobian_pinv[0], data->jacobian_pinv[2], 3 * sizeof(float));
+
+        if (data->cos_lock_angle < 0)
+            vector_mult_scalar(data->jacobian_pinv[0], -1);
+
+#ifdef DEBUG
+        if (!gl_zone)
+            error_print("entering gl zone");
+        gl_zone = true;
+#endif
+    }
 }
 
 static bool angle_greater(float a, float b) {

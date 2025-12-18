@@ -423,26 +423,32 @@ static inline void matrix_jt_mult_j(const float j[][3], float jtj[][3]) {
     jtj[2][2] = j[0][2] * j[0][2] + j[1][2] * j[1][2] + j[2][2] * j[2][2];
 }
 
-static inline bool matrix_invert(const float m[][3], float m_inv[][3]) {
+static inline bool matrix_t_invert(const float m[][3], float m_inv[][3]) {
     /* Note: could also try Cholesky decomposition here for slight benefit */
     float det =
-        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
-        m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-        m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        m[0][0] * (m[1][1] * m[2][2] - m[2][1] * m[1][2]) -
+        m[1][0] * (m[0][1] * m[2][2] - m[2][1] * m[0][2]) +
+        m[2][0] * (m[0][1] * m[1][2] - m[1][1] * m[0][2]);
 
+    /* Interpretation tip: if two of the columns are close to parallel or anti-parallel,
+     * and the third one is near orthogonal to the other two, and all are unit vectors,
+     * the determinant is =~ sin(angle between the nearly-parallel columns), or roughly
+     * that angle in radians.  Even if the third column isn't near orthogonal this still
+     * gives us the right order of magnitude to expect here when close to gimbal lock.
+     */
     if (fabsf(det) < 1e-8f)
         return false; /* Singular matrix */
 
     det = 1.0f / det;
-    m_inv[0][0] =  (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * det;
-    m_inv[0][1] = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]) * det;
-    m_inv[0][2] =  (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * det;
-    m_inv[1][0] = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]) * det;
-    m_inv[1][1] =  (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * det;
-    m_inv[1][2] = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]) * det;
-    m_inv[2][0] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * det;
-    m_inv[2][1] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]) * det;
-    m_inv[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * det;
+    m_inv[0][0] =  (m[1][1] * m[2][2] - m[2][1] * m[1][2]) * det;
+    m_inv[0][1] = -(m[1][0] * m[2][2] - m[2][0] * m[1][2]) * det;
+    m_inv[0][2] =  (m[1][0] * m[2][1] - m[2][0] * m[1][1]) * det;
+    m_inv[1][0] = -(m[0][1] * m[2][2] - m[2][1] * m[0][2]) * det;
+    m_inv[1][1] =  (m[0][0] * m[2][2] - m[2][0] * m[0][2]) * det;
+    m_inv[1][2] = -(m[0][0] * m[2][1] - m[2][0] * m[0][1]) * det;
+    m_inv[2][0] =  (m[0][1] * m[1][2] - m[1][1] * m[0][2]) * det;
+    m_inv[2][1] = -(m[0][0] * m[1][2] - m[1][0] * m[0][2]) * det;
+    m_inv[2][2] =  (m[0][0] * m[1][1] - m[1][0] * m[0][1]) * det;
     return true;
 }
 
@@ -466,8 +472,9 @@ static inline bool matrix_t_pseudo_invert(const float j_t[][3], float damp_facto
         m01 * (m01 * m22 - m12 * m02) +
         m02 * (m01 * m12 - m11 * m02);
 
+    /* See comment in matrix_t_invert() */
     if (fabsf(det) < 1e-8f)
-        return false; /* Singular matrix */
+        return false;
 
     det = 1.0f / det;
     adj00 = (m11 * m22 - m12 * m12) * det;
@@ -488,6 +495,34 @@ static inline bool matrix_t_pseudo_invert(const float j_t[][3], float damp_facto
     j_pinv[2][0] = adj02 * j_t[0][0] + adj12 * j_t[1][0] + adj22 * j_t[2][0];
     j_pinv[2][1] = adj02 * j_t[0][1] + adj12 * j_t[1][1] + adj22 * j_t[2][1];
     j_pinv[2][2] = adj02 * j_t[0][2] + adj12 * j_t[1][2] + adj22 * j_t[2][2];
+    return true;
+}
+
+static inline bool matrix_2d_project_invert(const float j0[], const float j1[], float j_pinv[][3]) {
+    /* Find (J^T x J)^-1 x J^T for a 2-column J.
+     * This effectively projects a 3D vector onto a plane defined by two 3D vectors and
+     * returns the composition of the two vectors.
+     */
+    float jtj00, jtj01, jtj11, det;
+    float inv00, inv01, inv11;
+
+    jtj00 = vector_dot(j0, j0);
+    jtj01 = vector_dot(j0, j1);
+    jtj11 = vector_dot(j1, j1);
+
+    det = jtj00 * jtj11 - jtj01 * jtj01;
+
+    /* See comment in matrix_t_invert() */
+    if (fabsf(det) < 1e-8f)
+        return false;
+
+    det = 1.0f / det;
+    inv00 = jtj11 * det;
+    inv01 = -jtj01 * det;
+    inv11 = jtj00 * det;
+
+    vector_weighted_sum(j0, inv00, j1, inv01, j_pinv[0]);
+    vector_weighted_sum(j0, inv01, j1, inv11, j_pinv[1]);
     return true;
 }
 
