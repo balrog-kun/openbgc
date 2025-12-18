@@ -186,6 +186,69 @@ static float control_apply_velocity_limits(struct control_data_s *control,
     return new_v;
 }
 
+static void control_check_gimbal_lock(struct control_data_s *control) {
+    /* If two axes are too close, we're approaching gimbal lock.  Handle it here.  If two axes, A and
+     * B, are close to each other then regardless of how C is oriented, there's at least one physical
+     * direction that is not covered by any of the axes, perpendicular to C and roughly perpendicular
+     * to A & B (remember A & B are roughly the same).  Let's say D == C x ((A + B) / 2).  Any changes
+     * aligned with D in the target orientation, including those resulting from sensor noise and from
+     * shaky hands, will cause amplified swings in all 3 joint axes (although visually the movement in
+     * A&B may be the most annoying to the user?)
+     *
+     * The amplification happens specifically in axes->jacobian_pinv as we use it in
+     * CONTROL_PATH_SHORT.  Or in axes_q_to_angles_orthogonal() (which uses quaternion_to_euler()), or
+     * in axes_q_to_angles_universal().  But CONTROL_PATH_SHORT is really the problematic case.  So we
+     * should either try to modify the matrix itself to handle the gimbal lock case by gradually
+     * ignoring the movements in D as gimbal lock is approached, or CONTROL_PATH_SHORT should try to
+     * pull the target angle in D axis close to the current orientation.  This is not a linear
+     * transformation so it may not be possible to handle it directly in axes->jacobian_pinv.
+     *
+     * Save the axis along which we need to attenuate motor inputs, for control_apply_attenuation()
+     * to use where needed.  Note control_apply_attenuation works in frame-local frame of reference.
+     */
+    if (fabsf(control->axes->cos_lock_angle) > 0.8f /* ~cos(37deg) */) {
+        float ab_axis[3] = INIT_VEC(control->axes->jacobian_t[0]);
+
+        /* Increase from 0 at ~37deg to 1 at ~18deg */
+        control->att_factor = min((fabsf(control->axes->cos_lock_angle) - 0.8f) / 0.15f, 1.0f);
+
+        /* Find the average of inner and outer axis, use the cross product of that average and
+         * the middle axis to find a vector roughly perpendicular to all 3 axes.
+         */
+        if (control->axes->cos_lock_angle > 0)
+            vector_add(ab_axis, control->axes->jacobian_t[2]);
+        else
+            vector_sub(ab_axis, control->axes->jacobian_t[2]);
+        vector_cross(control->axes->jacobian_t[1], ab_axis, control->att_axis);
+        /* There are opportunities to use att_axis on frame-local vectors, but we need to
+         * ensure it is applied before control_apply_velocity_limits() so must be global.
+         */
+        vector_rotate_by_quaternion(control->att_axis, control->frame_q);
+        vector_normalize(control->att_axis);
+    } else
+        control->att_factor = 0;
+
+#if DEBUG
+    static bool tr_zone = false;
+    bool in_tr = (control->att_factor != 0.0f && control->att_factor != 1.0f);
+    if (in_tr && !tr_zone)
+        error_print("entering tr zone");
+    if (!in_tr && tr_zone)
+        error_print("exiting tr zone");
+    tr_zone = in_tr;
+#endif
+}
+
+static void control_apply_attenuation(struct control_data_s *control, float *outputs) {
+    if (control->att_factor > 0.0f) {
+        float proj[3] = INIT_VEC(control->att_axis);
+        float proj_len = vector_dot(outputs, proj);
+
+        vector_mult_scalar(proj, proj_len * control->att_factor);
+        vector_sub(outputs, proj);
+    }
+}
+
 static void control_calc_path_step_orientation(struct control_data_s *control, const float *delta_axis,
         float delta_angle, float *out_joint_deltas) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
@@ -199,7 +262,6 @@ static void control_calc_path_step_orientation(struct control_data_s *control, c
     vector_mult_scalar(step_delta_vec, control->dt);
 
     /* Convert the global step_delta_vec to frame_q-local then to per-joint delta angles.
-     * Do the same with current velocities from the IMU gyros while we're there.
      *
      * TODO: axes_precalc_rel_q() and axes_calibrate() start from the frame IMU frame of
      * reference and go through the joints from outer to inner.  Switch to using the main IMU as
@@ -425,10 +487,16 @@ void control_step(struct control_data_s *control) {
         joint_angles_current[i] = control->encoders[num]->reading_rad * control->axes->encoder_scale[num];
     }
 
+    control_check_gimbal_lock(control);
+
     /* Where do we want to go */
     control_calc_target(control, target_q, target_ypr);
     quaternion_mult_to(target_q, conj_main_q, delta_q); /* Global delta to target_q */
-    quaternion_to_axis_angle(delta_q, delta_axis, &control->delta_angle);
+    quaternion_to_rotvec(delta_q, delta_axis);
+    control_apply_attenuation(control, delta_axis);
+    control->delta_angle = vector_norm(delta_axis); /* Like q_to_axis_angle but we did the attenuation first */
+    if (control->delta_angle > 10e-7f)
+        vector_mult_scalar(delta_axis, 1.0f / control->delta_angle);
 
     /* How we want to get there: least joint movement if > 5deg, least camera movement if <= 5deg (cheaper) */
     switch (control->path_type) {
@@ -472,6 +540,8 @@ void control_step(struct control_data_s *control) {
     for (i = 0; i < 3; i++)
         joint_velocities_target[i] = joint_step_deltas[i] * (R2D / control->dt);
 
+    // TODO: make optional
+#if 0
     /* Process the coupling between pairs of axes for at least two reasons:
      * 1. to tell the motor PIDs to anticipate an external force => acceleration.  When two
      *    axes are aligned and we command one of the motors to exert a torque on its axis, the
@@ -495,44 +565,6 @@ void control_step(struct control_data_s *control) {
             float delta_v_j = joint_velocities_target[j] - control->joint_velocities[j];
             float alignment = vector_dot(control->axes->jacobian_t[i], control->axes->jacobian_t[j]);
 
-            if (fabsf(alignment) > 0.9f /* ~cos(25deg) */) {
-                /* On the other hand if the axes are too close, we're approaching gimbal lock
-                 * and we have a different problem (not opposite.)  If two axes, A and B are
-                 * close to each other then regardless of how C is oriented, there's at least
-                 * one physical direction that is not covered by any of the axes, roughly
-                 * perpendicular to C and perpendicular to A & B (remember A & B are roughly
-                 * the same).  Let's say D == C x ((A + B) / 2).  Any changes aligned with D
-                 * in the target orientation, including those resulting from sensor noise and
-                 * from shaky hands, will cause big amplified swings in all 3 joint axes
-                 * (although visually the movement in A&B may be the most annoying to the
-                 * user?)
-                 *
-                 * The amplification happens specifically in axes->jacobian_pinv as we use
-                 * it in CONTROL_PATH_SHORT.  Or in axes_q_to_angles_orthogonal() (which uses
-                 * quaternion_to_euler()), or in axes_q_to_angles_universal().  But
-                 * CONTROL_PATH_SHORT is really the problematic case.  So we should either
-                 * try to modify the matrix itself to handle the gimbal lock case by
-                 * gradually ignoring the movements in D as gimbal lock is approached, or
-                 * CONTROL_PATH_SHORT should try to pull the target angle in D axis close to
-                 * the current orientation.  This is not a linear transformation so it may
-                 * not be possible to handle it directly in axes->jacobian_pinv (?)
-                 *
-                 * For now try to just reduce requested joint delta V in A&B as if assuming
-                 * *most* of the movement is the result of noise in D, which is a big
-                 * oversimplifcation.  Reduce by a lower factor in C as we will need to
-                 * move in C in order to exit the gimbal lock.
-                 */
-                float factor = (fabsf(alignment) - 0.9f) * 10.0f;
-                int c = i + (3 - (j - i));
-                float delta_v_c = joint_velocities_target[c] - control->joint_velocities[c];
-
-                joint_velocities_target[i] -= delta_v_i * factor;
-                joint_velocities_target[j] -= delta_v_j * factor;
-                joint_velocities_target[c] -= delta_v_c * factor * 0.75f;
-                delta_v_i = joint_velocities_target[i] - control->joint_velocities[i];
-                delta_v_j = joint_velocities_target[j] - control->joint_velocities[j];
-            }
-
             joint_extra_torque[i] += alignment * delta_v_j;
             joint_extra_torque[j] += alignment * delta_v_i;
 
@@ -549,6 +581,7 @@ void control_step(struct control_data_s *control) {
              * smooth things out if available feedback is too noisy.
              */
         }
+#endif
 
     /* Request new values from motors directly */
     for (i = 0; i < 3; i++) {
@@ -572,6 +605,7 @@ void control_update_joint_vel(struct control_data_s *control) {
     int i;
 
     memcpy(control->joint_velocities, control->main_ahrs->velocity_vec, 3 * sizeof(float));
+    control_apply_attenuation(control, control->joint_velocities);
     vector_rotate_by_quaternion(control->joint_velocities, conj_frame_q);
     vector_mult_matrix(control->joint_velocities, control->axes->jacobian_pinv);
     vector_mult_scalar(control->joint_velocities, R2D);

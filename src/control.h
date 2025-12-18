@@ -115,6 +115,8 @@ struct control_data_s {
     float joint_velocities[3];
     float target_ypr_offsets[3];
     float delta_angle;
+    float att_factor; /* Attenuate motor inputs along this axis by this factor */
+    float att_axis[3];
     struct {
         uint8_t axis, step;
         float start_angle, last_angle;
