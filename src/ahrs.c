@@ -509,6 +509,8 @@ void ahrs_update(obgc_ahrs *ahrs) {
     /* Remap axes */
     remap_axes(ahrs, acc);
     remap_axes(ahrs, gyr);
+    memcpy(ahrs->acc_reading, acc, 3 * sizeof(float));
+    memcpy(ahrs->gyro_reading, gyr, 3 * sizeof(float));
     apply_calib(acc, ahrs->config->acc_bias, ahrs->config->acc_sensitivity);
     apply_calib(gyr, ahrs->config->gyro_bias, ahrs->config->gyro_sensitivity);
 

@@ -23,7 +23,9 @@ typedef struct obgc_ahrs_s {
     obgc_imu *imu;
     struct obgc_ahrs_config_s *config;
     float q[4];           /* Quaternion (w, x, y, z) */
-    float velocity_vec[3];
+    float velocity_vec[3];/* Global rotation vector */
+    float acc_reading[3]; /* Latest accelerometer reading before bias/sensitivity */
+    float gyro_reading[3];/* Latest gyro reading before bias/sensitivity applied */
     float beta;           /* Should map to SBGC gyro trust param? used differently with Mahony, user setting ignored */
     uint32_t last_update; /* in micros */
     uint8_t axis_map[3];  /* 0:X, 1:Y, 2:Z (Deprecated) */
