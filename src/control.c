@@ -9,6 +9,7 @@
 #include "motor-bldc.h"
 #include "main.h"
 #include "axes.h"
+#include "util.h"
 
 #include "control.h"
 
@@ -178,7 +179,11 @@ static float control_apply_velocity_limits(struct control_data_s *control,
                 0.5f * current_v * current_v / max(delta_angle, 10 * D2R)); /* Overshoot up to 10 deg */
         new_v = current_v - max_accel * control->dt;
     } else
-        new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
+        new_v = min(current_v + control->settings->max_accel * control->dt, max_v);
+
+    /* Make control->settings->max_vel a hard limit though, brake as hard as we can if over limit.
+     * Maybe should make the max_accel vs. max_vel vs. target priority configurable too */
+    new_v = clamp(new_v, -control->settings->max_vel, control->settings->max_vel);
 
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
@@ -305,6 +310,7 @@ static void control_calc_path_step_joint_target(struct control_data_s *control,
     /* Get the maximum velocity magnitude we're allowed in dt time without exceeding max_accel or max_vel */
     new_v = control_apply_velocity_limits(control, delta_axis, control->delta_angle);
 
+    /* Multiply local angles_diff by global new_v but it's Ok */
     memcpy(out_joint_deltas, angles_diff, 3 * sizeof(float));
     vector_mult_scalar(out_joint_deltas, control->dt * new_v / control->delta_angle);
 }
