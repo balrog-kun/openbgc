@@ -182,7 +182,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
 
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
-            max((vector_norm(perp_vec) - control->settings->max_accel * control->dt), 0),
+            max(1.0f - control->settings->max_accel * control->dt / max(vector_norm(perp_vec), 0.001f), 0),
             control->velocity_vec);
 
     return new_v;
