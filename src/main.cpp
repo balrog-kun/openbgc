@@ -129,7 +129,11 @@ static uint16_t cycle_cnt;
 #define EVERY_2_CYCLES(n)   ((cycle_cnt & 1) == n)
 #define EVERY_4_CYCLES(n)   ((cycle_cnt & 3) == n)
 #define INFO_CYCLE          ((cycle_cnt & 255) == 0)
-#define CYCLE_MASK_INFO  255
+
+#define ENCODERS_CYCLE      EVERY_4_CYCLES(0)
+#define AXES_JACOBIAN_CYCLE EVERY_4_CYCLES(1)
+#define CONTROL_CYCLE       EVERY_4_CYCLES(2)
+#define CONTROL_RATE        (TARGET_LOOP_RATE / 4)
 
 HardwareSerial *error_serial;
 
@@ -511,7 +515,7 @@ static void control_setup(void) {
     control.motors = motors;
     control.axes = &config.axes;
 
-    control.dt = 1.0f / TARGET_LOOP_RATE;
+    control.dt = 1.0f / CONTROL_RATE;
     control.rel_q = rel_q;
     control.frame_q = frame_q;
 
@@ -528,7 +532,7 @@ static void control_setup(void) {
 
         /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
          * rotational speed we need to get from current camera orientation to the desired one (target),
-         * we depend on the whole feedback look through the motor PID up to the IMU and AHRS to
+         * we depend on the whole feedback loop through the motor PID and the IMU and AHRS to
          * propagate and reflect the speed changes we command with little delay.  If there's any delay,
          * we'll be applying the acceleration limit to a velocity we commanded some iterations ago and
          * effectively the rate of acceleration will be much lower than what is requested.  And there's
@@ -2085,7 +2089,7 @@ void loop(void) {
 
     PERF_SAVE_TS;
 
-    if (EVERY_4_CYCLES(0)) {
+    if (ENCODERS_CYCLE) {
         /* Read the encoders for everyone, there are multiple users */
         for (i = 0; i < 3; i++)
             encoder_update(encoders[i]);
@@ -2094,7 +2098,7 @@ void loop(void) {
     PERF_SAVE_TS;
 
     if (config.have_axes) {
-        if (EVERY_4_CYCLES(1))
+        if (AXES_JACOBIAN_CYCLE)
             axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
                     frame_q, config.control.tripod_mode);
 
@@ -2108,7 +2112,7 @@ void loop(void) {
         control_update_joint_vel(&control);
     }
 
-    if (control_enable && EVERY_4_CYCLES(2))
+    if (control_enable && CONTROL_CYCLE)
         control_step(&control);
 
     PERF_SAVE_TS;
