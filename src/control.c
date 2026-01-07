@@ -158,7 +158,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
     /* TODO: filter current_v and use the filter response time in place of dt */
     if (delta_angle <= BUFFER_STEPS * control->settings->max_accel * control->dt * control->dt)
         new_v = delta_angle / (BUFFER_STEPS * control->dt);
-    else if (current_v >= max_v)
+    else if (current_v >= max_v) {
         /*
          * Two options here:
          *   * prioritize control->settings->max_accel, set
@@ -172,10 +172,12 @@ static float control_apply_velocity_limits(struct control_data_s *control,
          * distance left.
          *
          * From the earlier calc we also get:
-         *   deceleration_required = current_v^2 / 2 / decelration_distance;
+         *   const_deceleration_required = current_v^2 / 2 / decelration_distance;
          */
-        new_v = current_v - (0.5f * current_v * current_v / max(delta_angle, M_PIf / 20)) * control->dt;
-    else
+        float max_accel = max(control->settings->max_accel,
+                0.5f * current_v * current_v / max(delta_angle, 10 * D2R)); /* Overshoot up to 10 deg */
+        new_v = current_v - max_accel * control->dt;
+    } else
         new_v = min(control->settings->max_vel, current_v + control->settings->max_accel * control->dt);
 
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
