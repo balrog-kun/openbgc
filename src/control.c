@@ -118,7 +118,7 @@ static float control_apply_velocity_limits(struct control_data_s *control,
      *
      * TODO: force control->settings->ahrs_velocity_kp of 1 every first iteration after control enable.
      */
-    vector_weighted_sum(control->main_ahrs->velocity_vec, -control->settings->ahrs_velocity_kp,
+    vector_weighted_sum(control->main_ahrs->velocity_vec, control->settings->ahrs_velocity_kp,
             control->velocity_vec, 1.0f - control->settings->ahrs_velocity_kp, v_vec);
     current_v = vector_dot(v_vec, delta_axis);
 
