@@ -128,6 +128,9 @@
 #define CMD_DEBUG_VARS_3 254
 #define CMD_ERROR 255
 
+/* Our "non-standard", OpenBGC-specific ID */
+#define CMD_OBGC 240
+
 enum serial_api_error_code_e {
     /* The most often used codes are: */
     ERR_CMD_SIZE = 1,
@@ -234,6 +237,11 @@ enum serial_api_menu_cmd_id_e {
     MENU_RETRACTED_POSITION = 76,
     MENU_SHAKE_GENERATOR_OFF = 77,
     MENU_SHAKE_GENERATOR_ON = 78,
+};
+
+/* CMD_OBGC subcommands */
+enum serial_api_obgc_id_e {
+    CMD_OBGC_GET_PARAM = 0,
 };
 
 /* The only purpose of this for now is printing full messages for debug */

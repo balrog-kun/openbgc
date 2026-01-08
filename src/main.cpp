@@ -1586,6 +1586,38 @@ static void sbgc_api_menu_cmd(uint8_t cmd_id) {
     }
 }
 
+static void sbgc_api_obgc_cmd_get_param(const uint8_t *req_payload, uint8_t req_len) {
+    uint8_t resp_payload[240], resp_len = 0;
+
+    if (req_len & 1) {
+        sbgc_api_send_error(CMD_OBGC, ERR_OPERATION_FAILED, CMD_OBGC_GET_PARAM);
+        return;
+    }
+
+    while (req_len) {
+        uint16_t id = req_payload[0] | ((uint16_t) req_payload[1] << 8);
+        uint16_t i;
+        const struct obgc_param_s *param;
+
+        req_payload += 2;
+        req_len -= 2;
+
+        for (i = ARRAY_SIZE(params), param = params; i; param++, i--)
+            if (param->id == id)
+                break;
+        if (!i || resp_len + param->size > sizeof(resp_payload) ||
+                !param_data_const_ptr(param)) {
+            sbgc_api_send_error(CMD_OBGC, ERR_OPERATION_FAILED, CMD_OBGC_GET_PARAM);
+            return;
+        }
+
+        memcpy(resp_payload + resp_len, param_data_const_ptr(param), param->size);
+        resp_len += param->size;
+    }
+
+    serial_api_tx_cmd(&sbgc_api, CMD_OBGC, resp_payload, resp_len);
+}
+
 static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payload_len) {
     switch (cmd) {
     case CMD_RESET:
@@ -1764,6 +1796,24 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                 reply[i] = bus->read();
 
             serial_api_tx_cmd(&sbgc_api, cmd, reply, len);
+        }
+        break;
+    case CMD_OBGC:
+        if (payload_len == 0) {
+            sbgc_api_send_confirm(cmd, 0, 0);
+            break;
+        }
+
+        uint8_t subcmd = payload[0];
+        payload++;
+        payload_len--;
+
+        switch (subcmd) {
+        case CMD_OBGC_GET_PARAM:
+            sbgc_api_obgc_cmd_get_param(payload, payload_len);
+            break;
+        default:
+            sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, subcmd);
         }
         break;
     }
