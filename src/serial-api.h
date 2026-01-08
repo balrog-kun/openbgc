@@ -242,6 +242,9 @@ enum serial_api_menu_cmd_id_e {
 /* CMD_OBGC subcommands */
 enum serial_api_obgc_id_e {
     CMD_OBGC_GET_PARAM = 0,
+    CMD_OBGC_SET_PARAM,
+    CMD_OBGC_READ_CONFIG,
+    CMD_OBGC_SAVE_CONFIG,
 };
 
 /* The only purpose of this for now is printing full messages for debug */

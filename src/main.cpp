@@ -942,7 +942,7 @@ static void misc_debug_update(void *) {
 }
 static struct main_loop_cb_s misc_debug_cb = { .cb = misc_debug_update };
 
-static void config_read(void) {
+static int config_read(void) {
     if (storage_read() == 0) {
         int i;
 
@@ -952,17 +952,27 @@ static void config_read(void) {
         for (i = 0; i < 3; i++)
             if (motors[i] && motors[i]->cls->set_calibration)
                 motors[i]->cls->set_calibration(motors[i], &config.motor_calib[i]);
-    } else if (have_config)
+
+        return 0;
+    }
+
+    if (have_config)
         serial->println("Config failed to load");
     else {
         serial->println("Config failed to load, will reset to defaults");
         memset(&config, 0, sizeof(config));
     }
+
+    return -1;
 }
 
-static void config_write(void) {
-    if (storage_write() == 0)
+static int config_write(void) {
+    if (storage_write() == 0) {
         serial->println("Config version " STRINGIFY(STORAGE_CONFIG_VERSION) " saved");
+        return 0;
+    }
+
+    return -1;
 }
 
 static void serial_ui_run(void *) {
@@ -1618,6 +1628,34 @@ static void sbgc_api_obgc_cmd_get_param(const uint8_t *req_payload, uint8_t req_
     serial_api_tx_cmd(&sbgc_api, CMD_OBGC, resp_payload, resp_len);
 }
 
+static void sbgc_api_obgc_cmd_set_param(const uint8_t *req_payload, uint8_t req_len) {
+    uint16_t id;
+    uint16_t i;
+    const struct obgc_param_s *param;
+
+    if (req_len < 3) {
+        sbgc_api_send_error(CMD_OBGC, ERR_OPERATION_FAILED, CMD_OBGC_SET_PARAM);
+        return;
+    }
+
+    id = req_payload[0] | ((uint16_t) req_payload[1] << 8);
+    req_payload += 2;
+    req_len -= 2;
+
+    for (i = ARRAY_SIZE(params), param = params; i; param++, i--)
+        if (param->id == id)
+            break;
+    if (!i || req_len != param->size || !param_data_ptr(param)) {
+        sbgc_api_send_error(CMD_OBGC, ERR_OPERATION_FAILED, CMD_OBGC_SET_PARAM);
+        return;
+    }
+
+    /* No checks, we just overwrite the value, assume the user knows what they're doing */
+    /* NOTE: motor calibration change requires a save and re-read but it's not commonly set by client */
+    memcpy(param_data_ptr(param), req_payload, req_len);
+    sbgc_api_send_confirm(CMD_OBGC, CMD_OBGC_SET_PARAM, 1);
+}
+
 static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payload_len) {
     switch (cmd) {
     case CMD_RESET:
@@ -1811,6 +1849,21 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         switch (subcmd) {
         case CMD_OBGC_GET_PARAM:
             sbgc_api_obgc_cmd_get_param(payload, payload_len);
+            break;
+        case CMD_OBGC_SET_PARAM:
+            sbgc_api_obgc_cmd_set_param(payload, payload_len);
+            break;
+        case CMD_OBGC_READ_CONFIG:
+            if (config_read() == 0)
+                sbgc_api_send_confirm(CMD_OBGC, subcmd, 1);
+            else
+                sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, subcmd);
+            break;
+        case CMD_OBGC_SAVE_CONFIG:
+            if (config_write() == 0)
+                sbgc_api_send_confirm(CMD_OBGC, subcmd, 1);
+            else
+                sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, subcmd);
             break;
         default:
             sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, subcmd);
