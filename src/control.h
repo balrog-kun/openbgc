@@ -19,6 +19,10 @@ struct control_settings_s {
     bool follow[3]; /* Per euler angle, not gimbal axis */
     float max_accel;    /* [rad/s/s] */
     float max_vel;      /* [rad/s] */
+    bool prio_max_accel_over_target;
+    float prio_target_max_overshoot;
+    bool prio_max_accel_over_max_vel;
+    bool prio_target_dir_over_max_accel;
     float ahrs_velocity_kp;
     float limit_margin; /* [rad] */
     float limit_search_v; /* [rad/s] */

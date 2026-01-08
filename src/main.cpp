@@ -527,8 +527,12 @@ static void control_setup(void) {
         control.settings->follow[0] = true;  /* Yaw only */
         control.settings->follow[1] = false;
         control.settings->follow[2] = false;
-        control.settings->max_accel = 30 * D2R; /* rad/s/s */
-        control.settings->max_vel = 60 * D2R;   /* rad/s */
+        control.settings->max_accel = 20 * D2R; /* rad/s/s */
+        control.settings->max_vel = 40 * D2R;   /* rad/s */
+        control.settings->prio_max_accel_over_target = false;
+        control.settings->prio_target_max_overshoot = 5 * D2R;
+        control.settings->prio_max_accel_over_max_vel = false;
+        control.settings->prio_target_dir_over_max_accel = false;
 
         /* As we apply .max_accel, i.e. the max change in velocity from current value to get to the
          * rotational speed we need to get from current camera orientation to the desired one (target),

@@ -175,18 +175,24 @@ static float control_apply_velocity_limits(struct control_data_s *control,
          * From the earlier calc we also get:
          *   const_deceleration_required = current_v^2 / 2 / decelration_distance;
          */
-        float max_accel = max(control->settings->max_accel,
-                0.5f * current_v * current_v / max(delta_angle, 10 * D2R)); /* Overshoot up to 10 deg */
+        float max_accel = control->settings->max_accel;
+
+        if (!control->settings->prio_max_accel_over_target)
+            max_accel = max(max_accel, 0.5f * current_v * current_v /
+                    max(delta_angle, control->settings->prio_target_max_overshoot));
+
         new_v = current_v - max_accel * control->dt;
     } else
-        new_v = min(current_v + control->settings->max_accel * control->dt, max_v);
+        new_v = min(current_v + control->settings->max_accel * control->dt,
+                min(control->settings->max_vel, max_v));
 
-    /* Make control->settings->max_vel a hard limit though, brake as hard as we can if over limit.
-     * Maybe should make the max_accel vs. max_vel vs. target priority configurable too */
-    new_v = clamp(new_v, -control->settings->max_vel, control->settings->max_vel);
+    if (!control->settings->prio_max_accel_over_max_vel)
+        /* Make control->settings->max_vel a hard limit, brake as hard as we can if over limit */
+        new_v = clamp(new_v, -control->settings->max_vel, control->settings->max_vel);
 
     vector_weighted_sum(v_vec, 1, delta_axis, -current_v, perp_vec);
     vector_weighted_sum(delta_axis, new_v, perp_vec,
+            control->settings->prio_target_dir_over_max_accel ? 0.0f :
             max(1.0f - control->settings->max_accel * control->dt / max(vector_norm(perp_vec), 0.001f), 0),
             control->velocity_vec);
 
