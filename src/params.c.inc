@@ -41,12 +41,21 @@ const struct obgc_param_s params[] = {
 #undef PARAM_UNUSED
 #undef PARAM_DEF_FULL
 
-void *params_data_ptr(const struct obgc_param_s *param) {
+const void *param_data_const_ptr(const struct obgc_param_s *param) {
     if (param->flags & (1 << param_flag_ptr)) {
         if (!*param->ptr)
             return NULL;
 
         return (uint8_t *) *param->ptr + param->ptr_offset;
-    } else
+    } else if (param->flags & (1 << param_flag_const))
+        return &param->val;
+    else
         return param->addr;
+}
+
+void *param_data_ptr(const struct obgc_param_s *param) {
+    if (param->flags & (1 << param_flag_ro))
+        return NULL;
+    else
+        return (void *) param_data_const_ptr(param);
 }
