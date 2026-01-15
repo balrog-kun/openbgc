@@ -107,7 +107,7 @@ def frame_cb(in_frame):
 
         val = list_convert(param_type_cls.parse(vbytes))
         print("Type:", pdef.typ)
-        print("New value:", val)
+        print("New value:", json.dumps(val) if args.j else str(val))
     else:
         if in_frame.hdr.cmd_id != int(cmd_obgc.CmdId.CMD_OBGC):
             print("error: Unexpected response", in_frame)
@@ -123,7 +123,7 @@ def frame_cb(in_frame):
         ### TODO: undefined params requesting???
         val = list_convert(param_type_cls.parse(in_payload))
         print("Type:", pdef.typ)
-        print("Value:", val)
+        print("Value:", json.dumps(val) if args.j else str(val))
 
 def line_cb(line):
     print(f'{sbgc_port_path}: {line}')
