@@ -7,22 +7,33 @@ import sbgcserialapi.frame as fr
 import param_defs
 import param_utils
 
-import math, time, sys, codecs
+import math, time, sys, codecs, argparse
 import serial, serial.tools.list_ports
 import selectors
 import construct
 
-if len(sys.argv) not in [2, 3] or sys.argv[1] in ['-l', '-h', '--help']:
-    print(f'Usage: {sys.argv[0]} <param-id> [<value>]')
-    print(f'Pass <value> to set a parameter, skip to read current value.')
-    print(f'<param-id> can be a <num-id> or <name>.  <value> must be a hexstring.')
-    print(f'Known parameters (<num-id>: <name>) are:')
-    for num in param_defs.params:
-        pdef = param_defs.params[num]
-        print(f'{pdef.id}: {pdef.name}')
-    sys.exit(-1)
+description = '''Get or set OpenBGC parameters over serial
+Pass <value> to set a parameter, skip to read current value.'''
 
-pid = sys.argv[1]
+lst = 'Known parameters (<num-id>: <name>) are:\n'
+for num in param_defs.params:
+    pdef = param_defs.params[num]
+    lst += f'{pdef.id}: {pdef.name}\n'
+
+parser = argparse.ArgumentParser(add_help=False,
+        formatter_class=argparse.RawTextHelpFormatter, description=description, epilog=lst)
+parser.add_argument('param-id', help='Can be a <num-id> or <name>, see below')
+parser.add_argument('value', nargs='?', help='Optional, must be a hexstring', default=None)
+parser.add_argument('-h', '-l', '--help', action='help', help='Show help and list known <param-id>s')
+parser.add_argument('-p', help='Serial port path, defaults to /dev/ttyUSB0, pass /dev/rfcommN for Bluetooth', default='/dev/ttyUSB0')
+parser.add_argument('-v', '-d', action='store_true', help='Enable verbose mode')
+
+if len(sys.argv) <= 1:
+    parser.print_help()
+    sys.exit(0)
+
+args = parser.parse_args()
+pid = getattr(args, 'param-id')
 try:
     pdef = param_defs.params[int(pid, 0)]
 except:
@@ -35,14 +46,13 @@ except:
 
 param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
 
-if len(sys.argv) == 2:
+if args.value is None:
     op_set = False
     out_payload = cmd_obgc.GetParamRequest.build(dict(param_id=pdef.id))
 else:
     op_set = True
-    vstr = sys.argv[2]
     # TODO: maybe parse as json, then pass to param_type_cls.build()?
-    vbytes = codecs.decode(vstr, 'hex')
+    vbytes = codecs.decode(args.value, 'hex')
     if pdef.size != len(vbytes):
         print(f'{pdef.name} value must be {pdef.size} bytes, got {len(vbytes)}')
         sys.exit(-1)
@@ -50,7 +60,7 @@ else:
 
 out_frame = fr.FrameV1.build(dict(hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC), size=len(out_payload)), pld=out_payload))
 
-sbgc_port_path = '/dev/ttyUSB0' # TODO: accept different port as optional cmdline arg
+sbgc_port_path = args.p
 sbgc_port = serial.Serial(sbgc_port_path, baudrate=115200, timeout=0, write_timeout=1)
 
 sbgc_port.write(out_frame)
@@ -103,10 +113,9 @@ def line_cb(line):
     print(f'{sbgc_port_path}: {line}')
 
 def debug_cb(info):
-    # TODO: only in -v mode
     print('dbg:', info)
 
-sbgc_stream = fr.InStream(line_cb=line_cb, frame_cb=frame_cb, debug_cb=debug_cb)
+sbgc_stream = fr.InStream(line_cb=line_cb, frame_cb=frame_cb, debug_cb=debug_cb if args.v else None)
 
 def sbgc_read_cb(port, mask):
     """Callback triggered when data is ready to be read."""
