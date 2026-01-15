@@ -13,6 +13,7 @@ PerAxis = lambda subcon: Array(3, subcon)
 # to add optional fields with a default value
 
 ErrorCode = Enum(Int8ul,
+    NO_ERROR = 0,
     CMD_SIZE = 1,
     WRONG_PARAMS = 2,
     CRYPTO = 4,
@@ -21,7 +22,9 @@ ErrorCode = Enum(Int8ul,
     NOT_SUPPORTED = 9,
     OPERATION_FAILED = 10,
     TEMPORARY = 11,
-    # File operation errors TODO: split these into a separate type, use in ErrorResponse if cmd_id matches an FS operation
+)
+
+FsErrorCode = Enum(Int8ul,
     NO_ERROR = 0,
     EEPROM_FAULT = 1,
     FILE_NOT_FOUND = 2,
@@ -32,7 +35,7 @@ ErrorCode = Enum(Int8ul,
     CRC = 7,
     LIMIT_REACHED = 8,
     FILE_CORRUPTED = 9,
-    FILE_WRONG_PARAMS = 10,
+    WRONG_PARAMS = 10,
 )
 
 CmdId = Int8ul # TODO: how do we replace this with the CmdId declaration from the end of the file?
@@ -2596,7 +2599,7 @@ ConfirmResponse = Struct(
 # CMD_ERROR (#255)
 ErrorResponse = Struct(
     "cmd_id" / CmdId,
-    "error_code" / ErrorCode,
+    "error_code" / IfThenElse(lambda ctx: ctx.cmd_id in [53, 54, 55, 47, 48], FsErrorCode, ErrorCode),
     "error_data" / Bytes(4),
 )
 
@@ -3041,7 +3044,7 @@ ReadFileResponse = Struct(
 
 # CMD_READ_FILE (#53) Response - Error
 ReadFileErrorResponse = Struct(
-    "err_code" / ErrorCode,
+    "err_code" / FsErrorCode,
 )
 
 # CMD_WRITE_FILE (#54)

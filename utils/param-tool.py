@@ -94,7 +94,7 @@ def frame_cb(in_frame):
 
     if in_frame.hdr.cmd_id == cmd.CmdId.CMD_ERROR:
         in_payload = cmd.ErrorResponse.parse(in_frame.pld.data)
-        print('error:', repr(in_payload)) # TODO: ensure ERR_OPERATION_FAILED doesn't print as ERR_FS_WRONG_PARAMS
+        print('remote error:', repr(in_payload))
         exit_code = -1
         return
 
