@@ -62,3 +62,7 @@ utils/param_map.py: utils/build-param-map-py.txt src/param-defs.c.inc src/util.h
 	cpp utils/build-param-map-py.txt -o $@
 utils/param_defs.py: .pio/build/simplebgc32_regular/firmware.elf utils/param_map.py utils/param_utils.py utils/build-param-defs.py
 	gdb-multiarch .pio/build/simplebgc32_regular/firmware.elf -x utils/param_map.py -x utils/param_utils.py -x utils/build-param-defs.py
+
+utils/sbgcserialapi:
+	git clone https://github.com/balrog-kun/sbgcserialapi.git $@
+client: utils/param_defs.py utils/sbgcserialapi utils/param-tool.py
