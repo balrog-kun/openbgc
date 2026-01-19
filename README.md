@@ -1,8 +1,8 @@
 ## Summary
 
-This code is a basic opensource firmware for SimpleBGC32 camera gimbals.
+This code is a basic opensource firmware for SimpleBGC32 camera gimbals.  It is completely independent of the authentic SimpleBGC32 firmware.
 
-Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design, possibly drop-in compatible with H2-45 and Adventurer) and the necessary mathematical algorithms implemented but little in the way of a user interface, companion app, API, or any other niceties to make it usable.  PID calibration manual-only.
+Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design, possibly drop-in compatible with H2-45 and Adventurer) and the necessary mathematical algorithms implemented but little more than that.  PID calibration is manual-only.
 
 ## Licensing
 
@@ -33,6 +33,8 @@ SimpleBGC32 GUI communication is *not* supported.  It's doable but many of the s
 
 The SimpleBGC serial API is only support to the (small) extent needed for bluetooth remote support (tested with the RM-1 model) and the 2-hand base controls.
 
+An early-stage GUI companion app is present as utils/app.py.
+
 ## OpenBGC -- SimpleBGC32 opensource firmware
 
 This repository hosts a basic firmware for camera gimbals, specifically for the gimbals that run SimpleBGC32 gimbal firmware created by BasecamElectronics.  There are many models that use that firmware and are manufactured by others.  They use either the electronic boards from SimpleBGC32 (the main controller board, the motor driver+encoder extension boards, etc.) or custom boards based on the SimpleBGC32 schematics, probably with proper licensing from BasecamElectronics.
@@ -53,4 +55,4 @@ While I like the idea to eventually support some STorM32 gimbals (3-axis, 2 IMUs
 
 ## Development
 
-If anyone ventures to make improvements to this code, I recommend to communicate your intent early by perhaps opening a GitHub issue for coordination.
+If anyone ventures to make improvements to this code, I recommend you communicate your intent early by perhaps opening a GitHub issue for coordination.
