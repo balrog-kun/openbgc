@@ -11,6 +11,7 @@ import threading
 import time
 import logging
 import argparse
+import traceback
 from typing import Optional, Callable, Dict, Any
 
 try:
@@ -19,7 +20,7 @@ try:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
     from PyQt6.QtGui import QColor
     PYQT_VERSION = 6
@@ -78,8 +79,6 @@ class GimbalConnection(QObject):
         self.debug = debug
         self.port: Optional[serial.Serial] = None
         self.port_path: Optional[str] = None
-        self.read_thread: Optional[threading.Thread] = None
-        self.running = False
         self.pending_requests: list = []  # Queue of (param_id, callback, param_type_cls, pdef, param_name) - waiting for response
         self.queued_requests: list = []  # Queue of (param_name, callback) - waiting to be sent
         self.max_pending_requests = 4
@@ -88,6 +87,7 @@ class GimbalConnection(QObject):
             frame_cb=self._frame_cb,
             debug_cb=self._debug_cb if debug else None
         )
+        self.serial_notifier: Optional[QSocketNotifier] = None
 
     def _debug_cb(self, info):
         """Debug callback for InStream."""
@@ -101,11 +101,10 @@ class GimbalConnection(QObject):
 
         try:
             self.port = serial.Serial(port_path, baudrate=115200, timeout=0, write_timeout=1)
+            self.serial_notifier = QSocketNotifier(self.port.fileno(), QSocketNotifier.Type.Read, self)
+            self.serial_notifier.activated.connect(self._read_serial_data)
+            self.serial_notifier.setEnabled(True)
             self.port_path = port_path
-            self.running = True
-            # TODO: get rid of threading if possible
-            self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
-            self.read_thread.start()
             self.connection_changed.emit(True)
             return True
         except Exception as e:
@@ -119,11 +118,11 @@ class GimbalConnection(QObject):
         if self.port is None:
             return
 
-        self.running = False
-        if self.read_thread:
-            self.read_thread.join(timeout=1.0)
-
         if self.port:
+            if self.serial_notifier:
+                self.serial_notifier.setEnabled(False)
+                self.serial_notifier.deleteLater()
+                self.serial_notifier = None
             self.port.close()
             self.port = None
         self.port_path = None
@@ -135,20 +134,17 @@ class GimbalConnection(QObject):
         """Check if connected."""
         return self.port is not None and self.port.is_open
 
-    def _read_loop(self):
-        """Background thread for reading serial data."""
-        while self.running and self.port and self.port.is_open:
-            try:
-                if self.port.in_waiting > 0:
-                    data = self.port.read(self.port.in_waiting)
-                    self.in_stream.feed(data)
-                time.sleep(0.01)  # Small delay to avoid busy-waiting
-            except Exception as e:
-                if self.running:
-                    error_msg = f"Read error: {e}"
-                    logger.error(error_msg)
-                    self.error_occurred.emit(error_msg)
-                break
+    def _read_serial_data(self):
+        """Read available data from the serial port and feed it to the InStream."""
+        try:
+            if self.port and self.port.is_open and self.port.in_waiting > 0:
+                data = self.port.read(self.port.in_waiting)
+                self.in_stream.feed(data)
+        except Exception as e:
+            error_msg = f"Serial read error: {e}:\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+            self.disconnect()
 
     def _line_cb(self, line: str):
         """Handle text lines from serial port."""
