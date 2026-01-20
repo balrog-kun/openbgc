@@ -325,6 +325,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.encoder_scale = [1.0, 1.0, 1.0]  # Default scales
         self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]  # Identity quaternion
         self.home_q = [1.0, 0.0, 0.0, 0.0]  # Identity quaternion
+        self.home_angles = [0.0, 0.0, 0.0]  # Home position angles
 
         # Current pose
         self.encoder_angles = [0.0, 0.0, 0.0]  # degrees
@@ -354,13 +355,14 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.have_forward = have_forward
         self.update()
 
-    def update_geometry(self, axes, axis_to_encoder, encoder_scale, main_imu_mount_q, home_q):
+    def update_geometry(self, axes, axis_to_encoder, encoder_scale, main_imu_mount_q, home_q, home_angles):
         """Update geometry parameters."""
         self.axes = axes
         self.axis_to_encoder = axis_to_encoder
         self.encoder_scale = encoder_scale
         self.main_imu_mount_q = main_imu_mount_q
         self.home_q = home_q
+        self.home_angles = home_angles
         self.update()
 
     def update_pose(self, encoder_angles, main_ahrs_q):
@@ -993,7 +995,12 @@ class StatusTab(QWidget):
             def callback(value):
                 if value is not None:
                     angle = float(value)
-                    self.encoder_labels[i].setText(f"{angle:.2f}°")
+                    # Display relative to home angles if available
+                    if self.view_3d.have_home:
+                        relative_angle = angle - math.degrees(self.view_3d.home_angles[i]) # TODO: normalize
+                        self.encoder_labels[i].setText(f"{relative_angle:.2f}°")
+                    else:
+                        self.encoder_labels[i].setText(f"{angle:.2f}°")
                     self.current_encoder_angles[i] = angle
 
             self.connection.read_param(f"encoders.{i}.reading", callback)
@@ -1101,15 +1108,16 @@ class StatusTab(QWidget):
         encoder_scale_data = {}
         mount_q_data = None
         home_q_data = None
+        home_angles_data = None
 
         def check_and_update():
             if len(axes_data) == 3 and len(axis_to_encoder_data) == 3 and \
-               len(encoder_scale_data) == 3 and mount_q_data is not None and home_q_data is not None:
+               len(encoder_scale_data) == 3 and mount_q_data is not None and home_q_data is not None and home_angles_data is not None:
                 # All data loaded, update view
                 axes = [axes_data[i] for i in range(3)]
                 axis_to_encoder = [axis_to_encoder_data[i] for i in range(3)]
                 encoder_scale = [encoder_scale_data[i] for i in range(3)]
-                self.view_3d.update_geometry(axes, axis_to_encoder, encoder_scale, mount_q_data, home_q_data)
+                self.view_3d.update_geometry(axes, axis_to_encoder, encoder_scale, mount_q_data, home_q_data, home_angles_data)
                 self.geometry_loaded = True
 
         for i in range(3):
@@ -1117,21 +1125,18 @@ class StatusTab(QWidget):
                 def callback(value):
                     if value is not None:
                         axes_data[idx] = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0]
-                        check_and_update()
                 return callback
 
             def make_callback_axis_to_encoder(idx):
                 def callback(value):
                     if value is not None:
                         axis_to_encoder_data[idx] = int(value)
-                        check_and_update()
                 return callback
 
             def make_callback_scale(idx):
                 def callback(value):
                     if value is not None:
                         encoder_scale_data[idx] = float(value)
-                        check_and_update()
                 return callback
 
             self.connection.read_param(f"config.axes.axes.{i}", make_callback_axes(i))
@@ -1142,16 +1147,21 @@ class StatusTab(QWidget):
             if value is not None:
                 nonlocal mount_q_data
                 mount_q_data = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-                check_and_update()
 
         def callback_home_q(value):
             if value is not None:
                 nonlocal home_q_data
                 home_q_data = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-                check_and_update()
+
+        def callback_home_angles(value):
+            if value is not None:
+                nonlocal home_angles_data
+                home_angles_data = list(value) if isinstance(value, list) else [0.0, 0.0, 0.0]
+            check_and_update()
 
         self.connection.read_param("config.axes.main-imu-mount-q", callback_mount_q)
         self.connection.read_param("config.control.home-q", callback_home_q)
+        self.connection.read_param("config.control.home-angles", callback_home_angles)
 
 
 class CalibrationTab(QWidget):
