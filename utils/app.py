@@ -83,7 +83,7 @@ class GimbalConnection(QObject):
         self.debug = debug
         self.port: Optional[serial.Serial] = None
         self.port_path: Optional[str] = None
-        self.pending_requests: list = []  # Queue of (param_id, callback, param_type_cls, pdef, param_name) - waiting for response
+        self.pending_requests: list = []  # Queue of (param_id, callback, pdef, param_name) - waiting for response
         self.queued_requests: list = []  # Queue of (param_name, callback) - waiting to be sent
         self.max_pending_requests = 4
         self.in_stream = fr.InStream(
@@ -182,10 +182,10 @@ class GimbalConnection(QObject):
 
             # Process the first pending request (responses come in order)
             if self.pending_requests:
-                param_id, callback, param_type_cls, pdef, param_name = self.pending_requests.pop(0)
+                param_ids, callback, pdefs, param_names = self.pending_requests.pop(0)
                 if self.debug:
-                    logger.debug(f"Processing response for param_id={param_id} ({param_name}), expected_size={pdef.size}, actual_size={len(param_data)}")
-                self._handle_param_response(param_id, param_data, callback, param_type_cls, pdef, param_name)
+                    logger.debug(f"Processing response for param_ids={param_ids} ({param_names}), actual_size={len(param_data)}")
+                self._handle_param_response(param_ids, param_data, callback, pdefs, param_names)
 
                 # Try to send more requests from queue now that we have capacity
                 self._send_queued_requests()
@@ -193,51 +193,71 @@ class GimbalConnection(QObject):
                 if self.debug:
                     logger.warning(f"CMD_OBGC response received but no pending requests")
 
-    def read_param(self, param_name: str, callback: Callable[[Any], None]):
-        """Read a parameter by name. Callback receives the parsed value."""
+    def read_param(self, param_names, callback: Callable[[Any], None]):
+        """Read one or more parameters by name. Callback receives the parsed values as a list."""
         if not self.is_connected():
             callback(None)
             return
 
+        # Convert single parameter to list
+        if isinstance(param_names, str):
+            param_names = [param_names]
+
+        # Check if the first parameter is already being requested
+        first_param = param_names[0]
+        for queued_req in self.queued_requests:
+            if queued_req[0] == first_param or (isinstance(queued_req[0], list) and queued_req[0][0] == first_param):
+                return
+        for pending_req in self.pending_requests:
+            if pending_req[3] == first_param or (isinstance(pending_req[3], list) and pending_req[3][0] == first_param):
+                return
+
         # Queue the request
-        self.queued_requests.append((param_name, callback))
+        self.queued_requests.append((param_names, callback))
 
         # Try to send requests from queue
         self._send_queued_requests()
 
     def _send_queued_requests(self):
         """Send requests from the queue if we have capacity."""
-        # TODO: pack multiple parameter IDs into a single GET_PARAM request where possible
         while len(self.pending_requests) < self.max_pending_requests and self.queued_requests:
-            param_name, callback = self.queued_requests.pop(0)
-            self._send_single_request(param_name, callback)
+            param_names, callback = self.queued_requests.pop(0)
+            self._send_single_request(param_names, callback)
 
-    def _send_single_request(self, param_name: str, callback: Callable[[Any], None]):
-        """Send a single parameter request."""
+    def _send_single_request(self, param_names, callback: Callable[[Any], None]):
+        """Send a parameter request for one or more parameters."""
         try:
-            # Find parameter definition
-            try:
-                pdef = param_defs.params[int(param_name, 0)]
-            except:
-                by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
-                if param_name not in by_name:
-                    callback(None)
-                    return
-                pdef = by_name[param_name]
+            # Convert single parameter to list
+            if isinstance(param_names, str):
+                param_names = [param_names]
+
+            # Find parameter definitions
+            pdefs = []
+            param_ids = []
+            for param_name in param_names:
+                try:
+                    pdef = param_defs.params[int(param_name, 0)]
+                except:
+                    by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
+                    if param_name not in by_name:
+                        callback(None)
+                        return
+                    pdef = by_name[param_name]
+                pdefs.append(pdef)
+                param_ids.append(pdef.id)
 
             # Build request
-            param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
-            out_payload = cmd_obgc.GetParamRequest.build(dict(param_id=pdef.id))
+            out_payload = cmd_obgc.GetParamRequest.build(dict(param_ids=param_ids))
             out_frame = fr.FrameV1.build(dict(
                 hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC), size=len(out_payload)),
                 pld=out_payload
             ))
 
             if self.debug:
-                logger.debug(f"Request param_id={pdef.id} ({param_name}), expected_size={pdef.size}, request_size={len(out_payload)}, pending_requests={len(self.pending_requests)}, queued_requests={len(self.queued_requests)}")
+                logger.debug(f"Request param_ids={param_ids} ({param_names}), request_size={len(out_payload)}, pending_requests={len(self.pending_requests)}, queued_requests={len(self.queued_requests)}")
 
             # Store callback for this request (queue-based, process in order)
-            self.pending_requests.append((pdef.id, callback, param_type_cls, pdef, param_name))
+            self.pending_requests.append((param_ids, callback, pdefs, param_names))
 
             # Send request
             self.port.write(out_frame)
@@ -248,28 +268,36 @@ class GimbalConnection(QObject):
             self.error_occurred.emit(error_msg)
             callback(None)
 
-    def _handle_param_response(self, param_id: int, data: bytes, callback, param_type_cls, pdef, param_name: str):
-        """Handle a parameter response."""
+    def _handle_param_response(self, param_ids, data: bytes, callback, pdefs, param_names):
+        """Handle a parameter response for one or more parameters."""
         try:
-            # Check size matches
-            if pdef.size != len(data):
-                error_msg = f"Param {param_name} size mismatch: expected {pdef.size}, got {len(data)}"
-                logger.error(error_msg)
-                if self.debug:
-                    logger.debug(f"Param {param_name} (id={param_id}): expected_size={pdef.size}, actual_size={len(data)}, data={data.hex()}")
-                self.error_occurred.emit(error_msg)
-                callback(None)
-                return
+            # Parse the array of parameter values
+            values = []
+            offset = 0
+            for i, pdef in enumerate(pdefs):
+                param_size = pdef.size
+                if offset + param_size > len(data):
+                    error_msg = f"Param {param_names[i]} data truncated: expected {param_size} bytes, got {len(data) - offset}"
+                    logger.error(error_msg)
+                    callback(None)
+                    return
 
-            val = param_type_cls.parse(data)
-            # Convert list to proper format
-            val = list_convert(val)
-            callback(val)
+                param_data = data[offset:offset + param_size]
+                param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+                val = param_type_cls.parse(param_data)
+                val = list_convert(val)
+                values.append(val)
+                offset += param_size
+
+            if len(values) == 1:
+                callback(values[0])
+            else:
+                callback(values)
         except Exception as e:
-            error_msg = f"Parse param {param_name} error: {e}"
+            error_msg = f"Parse param response error: {e}"
             logger.error(error_msg)
             if self.debug:
-                logger.debug(f"Param {param_name} (id={param_id}): parse error, data={data.hex()}")
+                logger.debug(f"Param response parse error, data={data.hex()}")
             self.error_occurred.emit(error_msg)
             callback(None)
 
@@ -956,18 +984,20 @@ class StatusTab(QWidget):
         joints_layout = QGridLayout()
 
         # Column headers
-        #joints_layout.addWidget(QLabel("Joint"), 0, 0)
         joints_layout.addWidget(QLabel("Angle"), 0, 1)
         joints_layout.addWidget(QLabel("Force"), 0, 2)
 
+        self.joint_labels = []
         self.encoder_labels = []
         self.force_bars = []
         self.motors_on = None
-        joint_names = ["Outer (0)", "Middle (1)", "Inner (2)"]
 
+        # Create placeholder widgets that will be updated when axes calibration changes
         for i in range(3):
-            # Joint name label
-            joints_layout.addWidget(QLabel(joint_names[i]), i + 1, 0)
+            # Joint name label (placeholder)
+            joint_label = QLabel("")
+            joints_layout.addWidget(joint_label, i + 1, 0)
+            self.joint_labels.append(joint_label)
 
             # Angle label
             angle_label = QLabel("unknown")
@@ -981,6 +1011,8 @@ class StatusTab(QWidget):
 
         joints_group.setLayout(joints_layout)
         layout.addWidget(joints_group)
+
+        self.update_joint_labels(False)
 
         # Battery voltage display
         vbat_group = QGroupBox("Battery Voltage")
@@ -1017,14 +1049,13 @@ class StatusTab(QWidget):
 
         # Update timer (5 Hz for encoders and forces)
         self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_encoders)
-        self.update_timer.timeout.connect(self.update_forces)
+        self.update_timer.timeout.connect(self.update_encoders_and_forces)
         self.update_timer.setInterval(200)  # 5 Hz
 
         # Update timer (1 Hz for battery voltage and motor status)
         self.vbat_timer = QTimer()
         self.vbat_timer.timeout.connect(self.update_vbat)
-        self.vbat_timer.timeout.connect(self.update_motor_status)
+        self.vbat_timer.timeout.connect(self.update_motors_status)
         self.vbat_timer.setInterval(1000)  # 1 Hz
 
         # Track if we've loaded geometry once
@@ -1050,59 +1081,62 @@ class StatusTab(QWidget):
         self.motor_on_btn.setEnabled(False)
         self.motor_off_btn.setEnabled(False)
 
-    def update_encoders(self):
-        """Update encoder angle displays."""
+    def update_encoders_and_forces(self):
+        """Update encoder angle and motor force displays."""
         if not self.connection.is_connected():
             return
-
-        def update_encoder(i):
-            def callback(value):
-                if value is not None:
-                    angle = float(value)
-                    # Display relative to home angles if available
-                    if self.view_3d.have_home:
-                        relative_angle = angle - math.degrees(self.view_3d.home_angles[i]) # TODO: normalize
-                        self.encoder_labels[i].setText(f"{relative_angle:.2f}°")
-                    else:
-                        self.encoder_labels[i].setText(f"{angle:.2f}°")
-                    self.current_encoder_angles[i] = angle
-
-            self.connection.read_param(f"encoders.{i}.reading", callback)
 
         if not hasattr(self, 'current_encoder_angles'):
             self.current_encoder_angles = [0.0, 0.0, 0.0]
 
-        for i in range(3):
-            update_encoder(i)
+        req_params = []
 
-        # Also update main-ahrs.q
+        # Read encoder angles
+        def callback_encoders(values):
+            for i in range(3):
+                angle = float(values[i])
+                # Map to display position using joint_map
+                display_idx = self.joint_map[i]
+                # Display relative to home angles if available
+                if self.view_3d.have_home:
+                    relative_angle = angle - math.degrees(self.view_3d.home_angles[i]) # TODO: normalize
+                    self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
+                else:
+                    self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
+                self.current_encoder_angles[i] = angle
+
+        req_params += [f"encoders.{i}.reading" for i in range(3)]
+
+        # Read main AHRS orientation
         def callback_q(value):
-            if value is not None:
-                # value is a list of 4 floats (w, x, y, z)
-                self.current_main_ahrs_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-                self.view_3d.update_pose(self.current_encoder_angles, self.current_main_ahrs_q)
+            # value is a list of 4 floats (w, x, y, z)
+            self.current_main_ahrs_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+            self.view_3d.update_pose(self.current_encoder_angles, self.current_main_ahrs_q)
 
-        self.connection.read_param("main-ahrs.q", callback_q)
+        req_params.append("main-ahrs.q")
 
-    def update_forces(self):
-        """Update motor force displays."""
-        if not self.connection.is_connected() or not self.motors_on:
-            # Set all forces to 0 when motors are off
-            for bar in self.force_bars:
-                bar.set_force(0.0)
-            return
+        def callback_forces(values):
+            for i in range(3):
+                force = float(values[i])
+                normalized_force = max(-1.0, min(1.0, force / 500.0))
+                # Map through joint_map to match joint display order
+                display_idx = self.joint_map[i]
+                self.force_bars[display_idx].set_force(normalized_force)
 
-        def update_force(i):
-            def callback(value):
-                if value is not None:
-                    force = float(value)
-                    normalized_force = max(-1.0, min(1.0, force / 500.0))
-                    self.force_bars[i].set_force(normalized_force)
+        if self.motors_on:
+            req_params += [f"motors.{i}.pid-stats.i" for i in range(3)]
 
-            self.connection.read_param(f"motors.{i}.pid-stats.i", callback)
+        def callback(values):
+            if values is None or len(values) != len(req_params):
+                return
 
-        for i in range(3):
-            update_force(i)
+            callback_encoders(values[:3])
+            callback_q(values[3])
+
+            if len(values) > 4:
+                callback_forces(values[4:])
+
+        self.connection.read_param(req_params, callback)
 
     def update_vbat(self):
         """Update battery voltage display."""
@@ -1114,39 +1148,71 @@ class StatusTab(QWidget):
                 # vbat is in millivolts, convert to volts with 1 decimal place
                 voltage = float(value) / 1000.0
                 self.vbat_label.setText(f"{voltage:.1f} V")
+                # TODO: add and read vbat_min occasionally, display this in red if vbat near or below vbat_min
 
         self.connection.read_param("vbat", callback)
 
-    def update_motor_status(self):
-        """Update motor status display."""
+    def new_motors_status(self):
+        status_text = "On" if self.motors_on == True else ("Off" if self.motors_on == False else "...")
+        self.motor_status_label.setText(status_text)
+        # Update button states: On only when motors are off
+        self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
+        self.motor_off_btn.setEnabled(self.connection.is_connected())
+
+        if not self.motors_on:
+            for i in range(3):
+                self.force_bars[i].set_force(0)
+
+    def update_motors_status(self):
+        """Update motors status display."""
         if not self.connection.is_connected():
             return
 
         def callback(value):
             if value is not None:
-                self.motors_on = bool(value)
+                motors_on = bool(value)
             else:
-                self.motors_on = None
-            status_text = "On" if self.motors_on == True else ("Off" if self.motors_on == False else "...")
-            self.motor_status_label.setText(status_text)
-            # Update button states: On only when motors are off
-            self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
-            self.motor_off_btn.setEnabled(self.connection.is_connected())
+                motors_on = None
+
+            if self.motors_on != motors_on:
+                self.motors_on = motors_on
+                self.new_motors_status()
 
         self.connection.read_param("motors-on", callback)
+
+    def update_joint_labels(self, have_axes, axis_to_encoder=None):
+        """Update joint labels and mapping based on axes calibration status."""
+        if have_axes and axis_to_encoder:
+            # With axes calibration: show joint names and create reverse mapping
+            joint_names = ["Inner (2)", "Middle (1)", "Outer (0)"]
+            # Create reverse mapping: encoder index -> axis index
+            # axis_to_encoder tells us which encoder each axis uses
+            # We want encoder_to_axis: which axis each encoder drives
+            encoder_to_axis = [0] * 3
+            for axis_idx, encoder_idx in enumerate(axis_to_encoder):
+                encoder_to_axis[encoder_idx] = axis_idx
+            # Joints are displayed in reverse order (2, 1, 0)
+            self.joint_map = [2 - axis for axis in encoder_to_axis]
+        else:
+            # Without axes calibration: show encoder numbers
+            joint_names = [f"Encoder {i}" for i in range(3)]
+            self.joint_map = [0, 1, 2]  # Direct mapping
+
+        # Update the labels
+        for i in range(3):
+            self.joint_labels[i].setText(joint_names[i])
 
     def on_motor_on(self):
         """Handle motor on button click."""
         self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
         self.motors_on = None
-        self.motor_status_label.setText('...')
-        self.motor_on_btn.setEnabled(False)
+        self.new_motors_status()
 
     def on_motor_off(self):
         """Handle motor off button click."""
         self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
         self.motors_on = None
-        self.motor_status_label.setText('...')
+        self.new_motors_status()
 
     def update_geometry(self):
         """Update geometry parameters (once after connection or after axes calibration)."""
@@ -1203,6 +1269,8 @@ class StatusTab(QWidget):
                 encoder_scale = [encoder_scale_data[i] for i in range(3)]
                 self.view_3d.update_geometry(axes, axis_to_encoder, encoder_scale, mount_q_data, home_q_data, home_angles_data)
                 self.geometry_loaded = True
+                # Update joint labels and mapping
+                self.update_joint_labels(True, axis_to_encoder)
 
         for i in range(3):
             def make_callback_axes(idx):
