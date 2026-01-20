@@ -32,7 +32,7 @@ except ImportError:
     )
     from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
     from PyQt5.QtOpenGL import QOpenGLWidget
-    from PyQt5.QtGui import QColor
+    from PyQt5.QtGui import QColor, QPainter
     PYQT_VERSION = 5
 
 try:
@@ -207,6 +207,7 @@ class GimbalConnection(QObject):
 
     def _send_queued_requests(self):
         """Send requests from the queue if we have capacity."""
+        # TODO: pack multiple parameter IDs into a single GET_PARAM request where possible
         while len(self.pending_requests) < self.max_pending_requests and self.queued_requests:
             param_name, callback = self.queued_requests.pop(0)
             self._send_single_request(param_name, callback)
@@ -892,6 +893,51 @@ class ConnectionTab(QWidget):
         self.status_label.setText(f"Error: {error_msg}")
 
 
+class ForceBarWidget(QWidget):
+    """Custom widget to display motor force as a horizontal bar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(150, 10)
+        self.setMaximumSize(150, 10)
+        self.force_value = 0.0
+
+    def set_force(self, force):
+        """Set the force value (-1.0 to 1.0 range)."""
+        self.force_value = max(-1.0, min(1.0, force))
+        self.update()
+
+    def paintEvent(self, event):
+        """Draw the force bar."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw black frame
+        painter.setPen(QColor(0, 0, 0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, self.width()-1, self.height()-1)
+
+        # Draw center line
+        center_y = self.height() // 2
+        painter.setPen(QColor(128, 128, 128))
+        painter.drawLine(0, center_y, self.width(), center_y)
+
+        # Draw force bar
+        if self.force_value != 0.0:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 0, 0))  # Red
+
+            center_x = self.width() // 2
+            bar_width = int(abs(self.force_value) * (self.width() // 2 - 2))
+
+            if self.force_value > 0:
+                # Positive force - extend right from center
+                painter.drawRect(center_x, 2, bar_width, self.height() - 4)
+            else:
+                # Negative force - extend left from center
+                painter.drawRect(center_x - bar_width, 2, bar_width, self.height() - 4)
+
+
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
 
@@ -905,19 +951,36 @@ class StatusTab(QWidget):
         self.view_3d = Gimbal3DWidget()
         layout.addWidget(self.view_3d)
 
-        # Encoder angles display
-        encoder_group = QGroupBox("Encoder Angles")
-        encoder_layout = QGridLayout()
+        # Joints display
+        joints_group = QGroupBox("Joints")
+        joints_layout = QGridLayout()
+
+        # Column headers
+        #joints_layout.addWidget(QLabel("Joint"), 0, 0)
+        joints_layout.addWidget(QLabel("Angle"), 0, 1)
+        joints_layout.addWidget(QLabel("Force"), 0, 2)
 
         self.encoder_labels = []
-        for i in range(3):
-            label = QLabel(f"unknown")
-            encoder_layout.addWidget(QLabel(f"Encoder {i}:"), i, 0)
-            encoder_layout.addWidget(label, i, 1)
-            self.encoder_labels.append(label)
+        self.force_bars = []
+        self.motors_on = None
+        joint_names = ["Outer (0)", "Middle (1)", "Inner (2)"]
 
-        encoder_group.setLayout(encoder_layout)
-        layout.addWidget(encoder_group)
+        for i in range(3):
+            # Joint name label
+            joints_layout.addWidget(QLabel(joint_names[i]), i + 1, 0)
+
+            # Angle label
+            angle_label = QLabel("unknown")
+            joints_layout.addWidget(angle_label, i + 1, 1)
+            self.encoder_labels.append(angle_label)
+
+            # Force bar widget
+            force_bar = ForceBarWidget()
+            joints_layout.addWidget(force_bar, i + 1, 2)
+            self.force_bars.append(force_bar)
+
+        joints_group.setLayout(joints_layout)
+        layout.addWidget(joints_group)
 
         # Battery voltage display
         vbat_group = QGroupBox("Battery Voltage")
@@ -952,9 +1015,10 @@ class StatusTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # Update timer (5 Hz for encoders)
+        # Update timer (5 Hz for encoders and forces)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_encoders)
+        self.update_timer.timeout.connect(self.update_forces)
         self.update_timer.setInterval(200)  # 5 Hz
 
         # Update timer (1 Hz for battery voltage and motor status)
@@ -1019,6 +1083,26 @@ class StatusTab(QWidget):
                 self.view_3d.update_pose(self.current_encoder_angles, self.current_main_ahrs_q)
 
         self.connection.read_param("main-ahrs.q", callback_q)
+
+    def update_forces(self):
+        """Update motor force displays."""
+        if not self.connection.is_connected() or not self.motors_on:
+            # Set all forces to 0 when motors are off
+            for bar in self.force_bars:
+                bar.set_force(0.0)
+            return
+
+        def update_force(i):
+            def callback(value):
+                if value is not None:
+                    force = float(value)
+                    normalized_force = max(-1.0, min(1.0, force / 500.0))
+                    self.force_bars[i].set_force(normalized_force)
+
+            self.connection.read_param(f"motors.{i}.pid-stats.i", callback)
+
+        for i in range(3):
+            update_force(i)
 
     def update_vbat(self):
         """Update battery voltage display."""
