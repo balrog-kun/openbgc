@@ -87,16 +87,16 @@ class GimbalConnection(QObject):
         self.queued_requests: list = []  # Queue of (param_name, callback) - waiting to be sent
         self.max_pending_requests = 4
         self.in_stream = fr.InStream(
-            line_cb=self._line_cb,
+            text_cb=self._text_cb,
             frame_cb=self._frame_cb,
             debug_cb=self._debug_cb if debug else None
         )
+        self.text_log = ''
         self.serial_notifier: Optional[QSocketNotifier] = None
 
     def _debug_cb(self, info):
         """Debug callback for InStream."""
-        if self.debug:
-            logger.debug(f"InStream: {info}")
+        logger.debug(f"InStream: {info}")
 
     def connect(self, port_path: str) -> bool:
         """Connect to the gimbal at the specified port."""
@@ -150,10 +150,14 @@ class GimbalConnection(QObject):
             self.error_occurred.emit(error_msg)
             self.disconnect()
 
-    def _line_cb(self, line: str):
-        """Handle text lines from serial port."""
-        # Could log or display these
-        pass
+    def _text_cb(self, text: str):
+        """Handle text from serial port -- anything that's not a protocol frame."""
+        cur_len = len(self.text_log)
+        limit = 4000
+        if cur_len + len(text) > limit:
+            drop_cnt = cur_len + len(text) - limit
+            self.text_log = self.text_log[drop_cnt:]
+        self.text_log += text
 
     def _frame_cb(self, frame):
         """Handle parsed frames from serial port."""
