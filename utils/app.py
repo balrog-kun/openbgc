@@ -22,7 +22,7 @@ try:
     )
     from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    from PyQt6.QtGui import QColor
+    from PyQt6.QtGui import QColor, QPainter
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -38,14 +38,18 @@ except ImportError:
 try:
     from OpenGL import GL
     from OpenGL.GL import (
-        glClear, glClearColor, glBegin, glEnd, glVertex3f,
+        glClear, glClearColor, glBegin, glEnd, glVertex3f, glNormal3f,
         glColor3f, glLineWidth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
-        GL_DEPTH_TEST,
+        GL_DEPTH_TEST, GL_LIGHTING, GL_LIGHT0, GL_POSITION, GL_AMBIENT,
+        GL_DIFFUSE, GL_SPECULAR, GL_SHININESS, GL_COLOR_MATERIAL,
         GL_LINE_LOOP, GL_LINES, GL_TRIANGLES, GL_TRIANGLE_STRIP,
-        GL_TRIANGLE_FAN,
+        GL_TRIANGLE_FAN, GL_FRONT, GL_NORMALIZE, GL_FLAT, GL_SMOOTH,
+        GL_LINE_SMOOTH, GL_POLYGON_SMOOTH, GL_BLEND, GL_SRC_ALPHA_SATURATE,
+        GL_ONE, glBlendFunc, glShadeModel,
         glMatrixMode, glLoadIdentity, GL_PROJECTION, GL_MODELVIEW,
         glRotatef, glMultMatrixf, glTranslatef, glPushMatrix, glPopMatrix,
-        glViewport, glEnable, glOrtho
+        glViewport, glEnable, glDisable, glOrtho, glLightfv, glMaterialf,
+        glMaterialfv
     )
     from OpenGL.GLU import gluLookAt
     HAS_OPENGL = True
@@ -284,6 +288,8 @@ class Gimbal3DWidget(QOpenGLWidget):
 
         self.setMinimumSize(400, 300)
 
+        self.shading = True  # Enable/disable simple OpenGL shading
+
         # Calibration state
         self.have_axes = False
         self.have_home = False
@@ -372,6 +378,9 @@ class Gimbal3DWidget(QOpenGLWidget):
 
     def vector_sum(self, v0, v1):
         return (v0[0] + v1[0], v0[1] + v1[1], v0[2] + v1[2])
+
+    def vector_sub(self, v0, v1):
+        return (v0[0] - v1[0], v0[1] - v1[1], v0[2] - v1[2])
 
     def vector_dot(self, v0, v1):
         return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2]
@@ -483,8 +492,23 @@ class Gimbal3DWidget(QOpenGLWidget):
         """Initialize OpenGL."""
         if not HAS_OPENGL:
             return
-        glClearColor(0.2, 0.2, 0.2, 1.0)
+        glClearColor(0.6, 0.6, 0.6, 1.0)
         glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LINE_SMOOTH)
+        glEnable(GL_BLEND)
+
+        if self.shading:
+            glEnable(GL_LIGHTING)
+            glEnable(GL_LIGHT0)
+            # Position light at camera position
+            glLightfv(GL_LIGHT0, GL_POSITION, (0, -1, 0.3, 1))
+            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.3, 0.3, 0.3, 1))
+            glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1))
+            glLightfv(GL_LIGHT0, GL_SPECULAR, (1.0, 1.0, 1.0, 1))
+            glEnable(GL_COLOR_MATERIAL)
+            glEnable(GL_NORMALIZE)
+        else:
+            glDisable(GL_LIGHTING)
 
     def resizeGL(self, w, h):
         """Handle resize."""
@@ -532,6 +556,12 @@ class Gimbal3DWidget(QOpenGLWidget):
         glVertex3f(0, 0, 0.10)
         glEnd()
 
+        if self.shading:
+            # Set material properties for shaded objects
+            glMaterialfv(GL_FRONT, GL_SPECULAR, (0.6, 0.6, 0.6, 1.0))  # White specular for gloss on any color
+            glMaterialf(GL_FRONT, GL_SHININESS, 100.0)  # Higher for sharper highlights
+            glShadeModel(GL_SMOOTH)
+
         glTranslatef(0, 0, 0.30)
 
         if not self.have_axes:
@@ -543,25 +573,14 @@ class Gimbal3DWidget(QOpenGLWidget):
 
             # Draw camera
             # Note: all positions based on the camera centered at 0, 0, 0
-            # If user selects handle centering, use glTranslatef(-motors[0][1])?
+            # If user selects handle centering, use glTranslatef(*-motors[0][1])?
             glPushMatrix()
             self.gl_rotate_q(self.calculate_camera_orientation())
             self._draw_camera()
             glPopMatrix()
 
-            # Draw rotation axes in faint red
-            glLineWidth(1.0)
-            glBegin(GL_LINES)
-            glColor3f(0.5, 0.0, 0.0)
-            for i in range(len(axes)):
-                axis = axes[i]
-                pos = motors[i][1]
-                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, -0.30)))
-                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, 0.10 + self.motor_height)))
-            glEnd()
-
             # Draw motors in black
-            glColor3f(0.0, 0.0, 0.0)
+            glColor3f(0.1, 0.1, 0.1)
             for top, base, orientation in motors:
                 glPushMatrix()
                 glTranslatef(*base)
@@ -570,7 +589,7 @@ class Gimbal3DWidget(QOpenGLWidget):
                 glPopMatrix()
 
             # Draw arm segments in black
-            glColor3f(0.0, 0.0, 0.0)
+            glColor3f(0.1, 0.1, 0.1)
             for end, start, length, orientation in segments:
                 glPushMatrix()
                 center = self.vector_mult_scalar(self.vector_sum(end, start), 0.5)
@@ -578,6 +597,18 @@ class Gimbal3DWidget(QOpenGLWidget):
                 self.gl_rotate_m(orientation)
                 self._draw_trapezoid(self.arm_width, self.arm_width, self.arm_thickness, length)
                 glPopMatrix()
+
+            # Draw rotation axes in faint red
+            glLineWidth(1.0)
+            glBegin(GL_LINES)
+            glNormal3f(0, -1, 0)
+            glColor3f(0.4, 0.1, 0.1)
+            for i in range(len(axes)):
+                axis = axes[i]
+                pos = motors[i][1]
+                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, -0.30)))
+                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, 0.10 + self.motor_height)))
+            glEnd()
 
     def _draw_cylinder(self, radius, height, slices=16):
         """Draw a cylinder along the Z-axis."""
@@ -590,11 +621,13 @@ class Gimbal3DWidget(QOpenGLWidget):
             x2, y2 = radius * math.cos(next_angle), radius * math.sin(next_angle)
 
             # Base
+            glNormal3f(0, 0, -1)
             glVertex3f(0.0, 0.0, 0.0)
             glVertex3f(x1, y1, 0.0)
             glVertex3f(x2, y2, 0.0)
 
             # Top
+            glNormal3f(0, 0, 1)
             glVertex3f(0.0, 0.0, height)
             glVertex3f(x2, y2, height)
             glVertex3f(x1, y1, height)
@@ -605,7 +638,8 @@ class Gimbal3DWidget(QOpenGLWidget):
         for i in range(slices + 1):
             angle = 2 * math.pi * i / slices
             x, y = radius * math.cos(angle), radius * math.sin(angle)
-            glVertex3f(x, y, 0.0)
+            glNormal3f(x, y, 0)
+            glVertex3f(x, y, 0)
             glVertex3f(x, y, height)
         glEnd()
 
@@ -627,33 +661,33 @@ class Gimbal3DWidget(QOpenGLWidget):
         t3 = [half_tw, half_d, height]
         t4 = [-half_tw, half_d, height]
 
-        vertices = [
-            # Bottom face
-            b1, b2, b3, b1, b3, b4,
-            # Top face
-            t1, t3, t2, t1, t4, t3,
-            # Front face
-            b1, t1, t2, b1, t2, b2,
-            # Back face
-            b4, t3, t4, b4, b3, t3,
-            # Left face
-            b1, t4, t1, b1, b4, t4,
-            # Right face
-            b2, t2, t3, b2, t3, b3,
-        ]
+        def quad(a, b, c, d):
+            glNormal3f(*self.vector_cross(self.vector_sub(c, b), self.vector_sub(b, a)))
+            glVertex3f(*a)
+            glVertex3f(*b)
+            glVertex3f(*c)
+            glVertex3f(*a)
+            glVertex3f(*c)
+            glVertex3f(*d)
 
         glBegin(GL_TRIANGLES)
-        for v in vertices:
-            glVertex3f(*v)
+        quad(b1, b2, b3, b4) # Bottom
+        quad(t4, t3, t2, t1) # Top
+        quad(b1, t1, t2, b2) # Front
+        quad(b4, b3, t3, t4) # Back
+        quad(b1, b4, t4, t1) # Left
+        quad(b2, t2, t3, b3) # Right
         glEnd()
 
     def _draw_circle(self, radius, slices=16):
         """Draw a circle in the XY plane."""
         glBegin(GL_TRIANGLE_FAN)
+        glNormal3f(0, 0, -1)
         glVertex3f(0.0, 0.0, 0.0) # Center of the circle
         for i in range(slices + 1):
             angle = 2 * math.pi * i / slices
             x, y = radius * math.cos(angle), radius * math.sin(angle)
+            glNormal3f(-x, -y, 0)
             glVertex3f(x, y, 0.0)
         glEnd()
 
@@ -674,7 +708,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         # Screen on the back
         screen_width = self.camera_width * 0.6
         screen_height = self.camera_height * 0.7
-        screen_depth = 0.004 # 4mm thick
+        screen_depth = 0.001
         screen_center_width = -(self.camera_width - screen_width) * 0.5 + self.camera_width * 0.1;
         screen_center_depth = -(self.camera_depth / 2 + screen_depth / 2)
         screen_bottom_height = (self.camera_height - screen_height) / 2
@@ -693,13 +727,13 @@ class Gimbal3DWidget(QOpenGLWidget):
         glPushMatrix()
         glTranslatef(lens_base_center_width, lens_base_center_depth, lens_base_center_height);
         glRotatef(90.0, -1.0, 0.0, 0.0) # Rotate to align with camera Y-axis (which is depth, here represented by Z of cylinder)
-        glColor3f(0.0, 0.0, 0.0)  # Black lens body
+        glColor3f(0.1, 0.1, 0.1)  # Black lens body
         self._draw_cylinder(lens_radius, lens_length)
 
-        # Lens glass (whitish circle in front of the lens cylinder)
+        # Lens glass
         lens_glass_radius = lens_radius - 0.008 # 8mm less
         glTranslatef(0.0, 0.0, lens_length + 0.001) # Move to the front of the cylinder
-        glColor3f(0.9, 0.9, 1.0) # Whitish
+        glColor3f(0.5, 0.5, 0.6)
         self._draw_circle(lens_glass_radius)
 
         glPopMatrix()
@@ -714,7 +748,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         vf_bottom_height = self.camera_height
         glPushMatrix()
         glTranslatef(vf_center_width, vf_center_depth, vf_bottom_height) # On top of the camera body
-        glColor3f(0.0, 0.0, 0.0)  # Black viewfinder
+        glColor3f(0.1, 0.1, 0.1)  # Black viewfinder
         self._draw_trapezoid(vf_bottom_width, vf_top_width, vf_height, vf_depth)
 
         # Viewfinder screen (tiny rectangle before it)
