@@ -272,6 +272,26 @@ class GimbalConnection(QObject):
             self.error_occurred.emit(error_msg)
             callback(None)
 
+    def send_command(self, cmd_id, payload=None):
+        """Send a command to the gimbal."""
+        if not self.is_connected():
+            return False
+
+        try:
+            if payload is None:
+                payload = b''
+            out_frame = fr.FrameV1.build(dict(
+                hdr=dict(cmd_id=cmd_id, size=len(payload)),
+                pld=payload
+            ))
+            self.port.write(out_frame)
+            return True
+        except Exception as e:
+            error_msg = f"Send command error: {e}"
+            logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+            return False
+
 
 def list_convert(val):
     """Recursively convert construct lists to Python lists."""
@@ -906,6 +926,27 @@ class StatusTab(QWidget):
         vbat_group.setLayout(vbat_layout)
         layout.addWidget(vbat_group)
 
+        # Motor status and controls
+        motor_group = QGroupBox("Motor Control")
+        motor_layout = QHBoxLayout()
+        motor_layout.addWidget(QLabel("Status:"))
+        self.motor_status_label = QLabel("unknown")
+        motor_layout.addWidget(self.motor_status_label)
+        motor_layout.addStretch()
+
+        self.motor_on_btn = QPushButton("On")
+        self.motor_on_btn.clicked.connect(self.on_motor_on)
+        self.motor_on_btn.setEnabled(False)  # Disabled until connected
+        motor_layout.addWidget(self.motor_on_btn)
+
+        self.motor_off_btn = QPushButton("Off")
+        self.motor_off_btn.clicked.connect(self.on_motor_off)
+        self.motor_off_btn.setEnabled(False)  # Disabled until connected
+        motor_layout.addWidget(self.motor_off_btn)
+
+        motor_group.setLayout(motor_layout)
+        layout.addWidget(motor_group)
+
         layout.addStretch()
         self.setLayout(layout)
 
@@ -914,11 +955,11 @@ class StatusTab(QWidget):
         self.update_timer.timeout.connect(self.update_encoders)
         self.update_timer.setInterval(200)  # 5 Hz
 
-        # Update timer (1 Hz for battery voltage)
+        # Update timer (1 Hz for battery voltage and motor status)
         self.vbat_timer = QTimer()
         self.vbat_timer.timeout.connect(self.update_vbat)
+        self.vbat_timer.timeout.connect(self.update_motor_status)
         self.vbat_timer.setInterval(1000)  # 1 Hz
-
 
         # Track if we've loaded geometry once
         self.geometry_loaded = False
@@ -929,11 +970,19 @@ class StatusTab(QWidget):
         if self.connection.is_connected():
             self.update_timer.start()
             self.vbat_timer.start()
+            # Enable motor control buttons
+            self.motor_on_btn.setEnabled(True)
+            self.motor_off_btn.setEnabled(True)
 
     def stop_updates(self):
         """Stop update timers."""
         self.update_timer.stop()
         self.vbat_timer.stop()
+        # Reset displays and disable buttons
+        self.vbat_label.setText("Disconnected")
+        self.motor_status_label.setText("Disconnected")
+        self.motor_on_btn.setEnabled(False)
+        self.motor_off_btn.setEnabled(False)
 
     def update_encoders(self):
         """Update encoder angle displays."""
@@ -976,6 +1025,37 @@ class StatusTab(QWidget):
                 self.vbat_label.setText(f"{voltage:.1f} V")
 
         self.connection.read_param("vbat", callback)
+
+    def update_motor_status(self):
+        """Update motor status display."""
+        if not self.connection.is_connected():
+            return
+
+        def callback(value):
+            if value is not None:
+                self.motors_on = bool(value)
+            else:
+                self.motors_on = None
+            status_text = "On" if self.motors_on == True else ("Off" if self.motors_on == False else "...")
+            self.motor_status_label.setText(status_text)
+            # Update button states: On only when motors are off
+            self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
+            self.motor_off_btn.setEnabled(self.connection.is_connected())
+
+        self.connection.read_param("motors-on", callback)
+
+    def on_motor_on(self):
+        """Handle motor on button click."""
+        self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
+        self.motors_on = None
+        self.motor_status_label.setText('...')
+        self.motor_on_btn.setEnabled(False)
+
+    def on_motor_off(self):
+        """Handle motor off button click."""
+        self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
+        self.motors_on = None
+        self.motor_status_label.setText('...')
 
     def update_geometry(self):
         """Update geometry parameters (once after connection or after axes calibration)."""
