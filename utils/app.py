@@ -12,13 +12,14 @@ import time
 import logging
 import argparse
 import traceback
+import platform
 from typing import Optional, Callable, Dict, Any
 
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
-        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout
+        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox
     )
     from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
@@ -34,6 +35,20 @@ except ImportError:
     from PyQt5.QtOpenGL import QOpenGLWidget
     from PyQt5.QtGui import QColor, QPainter
     PYQT_VERSION = 5
+
+# Platform-specific serial port monitoring
+PORT_MONITORING_AVAILABLE = False
+try:
+    if platform.system() == 'Linux':
+        import pyudev
+        PORT_MONITORING_AVAILABLE = True
+    elif platform.system() == 'Windows':
+        import wmi
+        import pythoncom
+        PORT_MONITORING_AVAILABLE = True
+except ImportError:
+    PORT_MONITORING_AVAILABLE = False
+    print("Port list monitoring not available")
 
 try:
     from OpenGL import GL
@@ -817,6 +832,130 @@ class Gimbal3DWidget(QOpenGLWidget):
         glPopMatrix()
 
 
+class PortMonitor(QObject):
+    """Cross-platform serial port monitoring with fallback to polling."""
+
+    ports_changed = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.monitor_thread = None
+        self.monitoring = False
+
+        if PORT_MONITORING_AVAILABLE:
+            if platform.system() == 'Linux':
+                self.start_linux_monitoring()
+            elif platform.system() == 'Windows':
+                self.start_windows_monitoring()
+            # else: no monitoring on unsupported platforms
+
+    def start_linux_monitoring(self):
+        """Monitor serial ports using udev on Linux."""
+        def monitor_loop():
+            try:
+                context = pyudev.Context()
+                monitor = pyudev.Monitor.from_netlink(context)
+                monitor.filter_by(subsystem='tty')
+                self.monitoring = True
+
+                for device in iter(monitor.poll, None):
+                    if not self.monitoring:
+                        break
+                    if device.action in ('add', 'remove'):
+                        self.update_ports()
+            except Exception as e:
+                logger.warning(f"Linux port monitoring failed: {e}")
+                self.start_polling_monitoring()
+
+        self.monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def start_windows_monitoring(self):
+        """Monitor serial ports using WMI on Windows."""
+        def monitor_loop():
+            try:
+                pythoncom.CoInitialize()
+                c = wmi.WMI()
+
+                # Watch for creation
+                create_watcher = c.watch_for(
+                    notification_type="Creation",
+                    wmi_class="Win32_SerialPort"
+                )
+
+                # Watch for deletion
+                delete_watcher = c.watch_for(
+                    notification_type="Deletion",
+                    wmi_class="Win32_SerialPort"
+                )
+
+                self.monitoring = True
+                while self.monitoring:
+                    try:
+                        # Wait for either creation or deletion
+                        result = create_watcher(timeout_ms=1000)
+                        if result:
+                            self.update_ports()
+                        else:
+                            # Check for deletions
+                            try:
+                                delete_result = delete_watcher(timeout_ms=1)
+                                if delete_result:
+                                    self.update_ports()
+                            except:
+                                pass
+                    except wmi.x_wmi_timed_out:
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Windows port monitoring error: {e}")
+                        break
+
+            except Exception as e:
+                logger.warning(f"Windows port monitoring failed: {e}")
+                self.start_polling_monitoring()
+
+        self.monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def start_polling_monitoring(self):
+        """Fallback polling-based monitoring."""
+        def poll_loop():
+            import time
+            last_ports = set()
+
+            while self.monitoring:
+                try:
+                    ports = serial.tools.list_ports.comports()
+                    current_ports = {f"{p.device} - {p.description}" for p in ports}
+
+                    if current_ports != last_ports:
+                        last_ports = current_ports
+                        self.ports_changed.emit(ports)
+
+                    time.sleep(2.0)  # Poll every 2 seconds
+                except Exception as e:
+                    logger.warning(f"Port polling error: {e}")
+                    time.sleep(5.0)  # Wait longer on error
+
+        self.monitoring = True
+        self.monitor_thread = threading.Thread(target=poll_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def update_ports(self):
+        """Update the current port list."""
+        try:
+            ports = serial.tools.list_ports.comports()
+            self.ports_changed.emit(ports)
+        except Exception as e:
+            logger.warning(f"Port update error: {e}")
+
+    def stop(self):
+        """Stop monitoring."""
+        self.monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=1.0)
+
+
 class ConnectionTab(QWidget):
     """Tab for managing serial connection."""
 
@@ -839,10 +978,20 @@ class ConnectionTab(QWidget):
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.refresh_ports)
         port_input_layout.addWidget(self.refresh_btn)
+
+        self.show_all_cb = QCheckBox("Show all")
+        self.show_all_cb.setChecked(False)
+        self.show_all_cb.stateChanged.connect(self.refresh_ports)
+        port_input_layout.addWidget(self.show_all_cb)
+
         port_layout.addLayout(port_input_layout)
 
         self.port_list = QListWidget()
         self.port_list.itemDoubleClicked.connect(self.on_port_selected)
+        # Set height for approximately 5 lines
+        #font_metrics = self.port_list.fontMetrics()
+        #line_height = font_metrics.lineSpacing()
+        #self.port_list.setFixedHeight(line_height * 5 + 4)  # +4 for borders
         port_layout.addWidget(self.port_list)
 
         port_group.setLayout(port_layout)
@@ -869,6 +1018,10 @@ class ConnectionTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
+        # Start port monitoring
+        self.port_monitor = PortMonitor()
+        self.port_monitor.ports_changed.connect(self.on_ports_changed)
+
         # Refresh ports on init
         self.refresh_ports()
 
@@ -880,8 +1033,25 @@ class ConnectionTab(QWidget):
         """Refresh the list of available serial ports."""
         self.port_list.clear()
         ports = serial.tools.list_ports.comports()
+
+        show_all = self.show_all_cb.isChecked()
+
         for port in ports:
+            # Filter ports if "Show all" is not checked
+            if not show_all:
+                # Only show USB and rfcomm ports
+                if not (port.device.startswith('/dev/ttyUSB') or
+                       port.device.startswith('/dev/ttyACM') or
+                       'rfcomm' in port.device.lower() or
+                       'usb' in port.description.lower() or
+                       'bluetooth' in port.description.lower()):
+                    continue
+
             self.port_list.addItem(f"{port.device} - {port.description}")
+
+    def on_ports_changed(self, ports):
+        """Handle port list changes from monitoring."""
+        self.refresh_ports()
 
     def on_port_selected(self, item):
         """Handle port selection from list."""
@@ -919,6 +1089,12 @@ class ConnectionTab(QWidget):
         """Handle error from connection."""
         logger.error(f"Connection error: {error_msg}")
         self.status_label.setText(f"Error: {error_msg}")
+
+    def closeEvent(self, event):
+        """Clean up resources when widget is closed."""
+        if hasattr(self, 'port_monitor'):
+            self.port_monitor.stop()
+        super().closeEvent(event)
 
 
 class ForceBarWidget(QWidget):
