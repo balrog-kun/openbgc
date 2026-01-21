@@ -19,21 +19,23 @@ try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
-        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox
+        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
+        QSplitter, QPlainTextEdit
     )
     from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    from PyQt6.QtGui import QColor, QPainter
+    from PyQt6.QtGui import QColor, QPainter, QTextOption
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
-        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout
+        QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
+        QSplitter, QPlainTextEdit
     )
-    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
+    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
     from PyQt5.QtOpenGL import QOpenGLWidget
-    from PyQt5.QtGui import QColor, QPainter
+    from PyQt5.QtGui import QColor, QPainter, QTextOption
     PYQT_VERSION = 5
 
 # Platform-specific serial port monitoring
@@ -313,16 +315,17 @@ class GimbalGeometry(QObject):
 class GimbalConnection(QObject):
     """Handles serial communication with the gimbal."""
 
-    param_received = pyqtSignal(str, object)  # param_name, value
-    connection_changed = pyqtSignal(bool)  # connected
-    error_occurred = pyqtSignal(str)  # error message
+    param_received = pyqtSignal(str, object) # param_name, value
+    connection_changed = pyqtSignal(bool)    # connected
+    error_occurred = pyqtSignal(str)         # error message
+    text_logged = pyqtSignal(str)
 
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
         self.port: Optional[serial.Serial] = None
         self.port_path: Optional[str] = None
-        self.pending_requests: list = []  # Queue of (param_id, callback, pdef, param_name) - waiting for response
+        self.pending_requests: list = [] # Queue of (param_id, callback, pdef, param_name) - waiting for response
         self.queued_requests: list = []  # Queue of (param_name, callback) - waiting to be sent
         self.max_pending_requests = 4
         self.in_stream = fr.InStream(
@@ -330,7 +333,6 @@ class GimbalConnection(QObject):
             frame_cb=self._frame_cb,
             debug_cb=self._debug_cb if debug else None
         )
-        self.text_log = ''
         self.serial_notifier: Optional[QSocketNotifier] = None
 
     def _debug_cb(self, info):
@@ -391,12 +393,7 @@ class GimbalConnection(QObject):
 
     def _text_cb(self, text: str):
         """Handle text from serial port -- anything that's not a protocol frame."""
-        cur_len = len(self.text_log)
-        limit = 4000
-        if cur_len + len(text) > limit:
-            drop_cnt = cur_len + len(text) - limit
-            self.text_log = self.text_log[drop_cnt:]
-        self.text_log += text
+        self.text_logged.emit(text)
 
     def _frame_cb(self, frame):
         """Handle parsed frames from serial port."""
@@ -1060,7 +1057,6 @@ class PortMonitor(QObject):
     def start_polling_monitoring(self):
         """Fallback polling-based monitoring."""
         def poll_loop():
-            import time
             last_ports = set()
 
             while self.monitoring:
@@ -1237,6 +1233,188 @@ class ConnectionTab(QWidget):
         super().closeEvent(event)
 
 
+class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights, etc.
+    """Custom console widget for displaying text log with terminal-like behavior."""
+
+    def __init__(self, text_log_ref, parent=None):
+        super().__init__(parent)
+        self.text_log_ref = text_log_ref
+        self.setMinimumHeight(25)
+        self.setReadOnly(True)
+        self.setMaximumBlockCount(1000)
+        self.setUndoRedoEnabled(False)
+        self.setOverwriteMode(True)
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.newline = False
+        #self.setStyleSheet("QPlainTextEdit { background-color: #bbbbbb; color: #eeeeee; }")
+
+        # Use monospace font
+        font = self.font()
+        font.setFamily("Monospace")
+        font.setPointSize(int(font.pointSize() * 0.8))
+        font.setStyleHint(font.StyleHint.TypeWriter)
+        self.setFont(font)
+
+        text_log_ref.text_logged.connect(self.on_text_logged)
+
+    def on_text_logged(self, text):
+        """Update the display with new log content."""
+        cursor = self.textCursor()
+        for char in text:
+            if char == '\n':
+                # Avoid keeping an empty line at the end of the console
+                self.newline = True
+            elif char == '\r':
+                cursor.movePosition(cursor.MoveOperation.StartOfLine)
+            else:
+                if self.newline:
+                    cursor.movePosition(cursor.MoveOperation.End)
+                    cursor.insertText('\n')
+                    self.newline = False
+                cursor.insertText(char)
+        self.ensureCursorVisible()
+        return
+        '''
+        line = self.lines[-1]
+        line_len = len(line)
+        # This could be a lot smarter by procesing chunks until next control
+        # char but we may need some more logic in the future so leave it at
+        # this
+        for char in text:
+            if char == '\n':
+                self.lines[-1] = line
+                line = ''
+                line_len = 0
+                self.lines.append(line) # TODO: This only adds a literal '', not a reference to line, why?
+                self.cursor_position = 0
+            elif char == '\r': # Carriage return
+                self.cursor_position = 0
+            elif self.cursor_position >= line_len:
+                line += char
+                line_len += 1
+                self.cursor_position += 1
+            else:
+                line = line[:self.cursor_position] + char + line[self.cursor_position + 1:]
+                self.cursor_position += 1
+        self.lines[-1] = line
+
+        if len(self.lines) > self.max_lines:
+            self.lines = self.lines[-self.max_lines:]
+
+        self.update()
+
+    def paintEvent(self, event):
+        """Draw the console content."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        font_metrics = painter.fontMetrics()
+        line_height = font_metrics.lineSpacing()
+        char_width = font_metrics.horizontalAdvance('M')  # Monospace width
+
+        # Calculate visible area
+        visible_lines = self.height() // line_height
+        total_lines = len(self.lines)
+
+        # Handle scrolling
+        if total_lines > visible_lines:
+            start_line = max(0, total_lines - visible_lines)
+        else:
+            start_line = 0
+
+        # Draw background
+        painter.fillRect(self.rect(), QColor(0, 0, 0))
+
+        # Draw text
+        painter.setPen(QColor(0, 255, 0))  # Green text on black background
+        y = 0
+        for i in range(start_line, min(start_line + visible_lines, total_lines)):
+            line = self.lines[i]
+            # Simple word wrapping at character level
+            wrapped_lines = self._wrap_text(line, self.width() // char_width)
+            for wrapped_line in wrapped_lines:
+                if y + line_height > self.height():
+                    break
+                painter.drawText(2, y + font_metrics.ascent(), wrapped_line)
+                y += line_height
+
+    def _wrap_text(self, text, max_chars):
+        """Wrap text at character level."""
+        if not text:
+            return [""]
+        return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel for scrolling."""
+        # Basic scrolling support
+        if event.angleDelta().y() > 0:
+            self.scroll_position = max(0, self.scroll_position - 1)
+        else:
+            max_scroll = max(0, len(self.lines) - (self.height() // self.fontMetrics().lineSpacing()))
+            self.scroll_position = min(max_scroll, self.scroll_position + 1)
+        self.update()
+        '''
+
+
+class BusyIndicator(QWidget):
+    """Widget that shows busy state when request queues are not empty."""
+
+    def __init__(self, connection, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.is_busy = False
+        self.visible_timer = QTimer()
+        self.visible_timer.setSingleShot(True)
+        self.visible_timer.timeout.connect(self.show_indicator)
+
+        # Check busy state periodically
+        self.check_timer = QTimer()
+        self.check_timer.timeout.connect(self.check_busy_state)
+        self.check_timer.start(50)  # Check every 50ms
+
+        self.setFixedSize(20, 20)
+
+    def check_busy_state(self):
+        """Check if there are pending requests."""
+        busy = (len(self.connection.pending_requests) > 0)
+
+        if busy and not self.is_busy:
+            # Start showing indicator after 100ms delay
+            self.visible_timer.start(100)
+            self.is_busy = True
+        elif not busy and self.is_busy:
+            # Immediately hide when no longer busy
+            self.visible_timer.stop()
+            self.is_busy = False
+            self.update()
+
+    def show_indicator(self):
+        """Actually show the busy indicator."""
+        self.update()
+
+    def paintEvent(self, event):
+        """Draw the busy indicator."""
+        if not self.is_busy:
+            return  # Invisible when not busy
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw a simple spinning indicator
+        painter.setPen(QColor(255, 255, 0))  # Yellow
+        painter.setBrush(QColor(255, 255, 0, 128))
+
+        center = self.rect().center()
+        radius = 8
+
+        # Draw arcs to create spinning effect
+        angle = int(time.time() * 1000) % 360  # Rotate based on time
+
+        painter.drawPie(center.x() - radius, center.y() - radius,
+                       radius * 2, radius * 2,
+                       angle * 16, 270 * 16)  # 270 degrees arc
+
+
 class ForceBarWidget(QWidget):
     """Custom widget to display motor force as a horizontal bar."""
 
@@ -1259,7 +1437,7 @@ class ForceBarWidget(QWidget):
         # Draw black frame
         painter.setPen(QColor(0, 0, 0))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(0, 0, self.width()-1, self.height()-1)
+        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
 
         # Draw center line
         center_y = self.height() // 2
@@ -1646,16 +1824,41 @@ class MainWindow(QMainWindow):
         self.connection = GimbalConnection(debug)
         self.geometry = GimbalGeometry(self.connection)
 
-        # Central widget with split layout
-        central_widget = QWidget()
+        # Create splitter for main content and bottom strip
+        splitter = self.create_splitter()
+        self.setCentralWidget(splitter)
+
+        # Connect signals
+        self.connection.connection_changed.connect(self.on_connection_changed)
+
+        # Initially disable non-connection tabs
+        self.on_connection_changed(False)
+
+        # Select status tab initially (connection is now at index 2)
+        self.tab_selector.setCurrentRow(2)
+
+    def create_splitter(self):
+        """Create the main splitter with tab content and bottom strip."""
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setStyleSheet("QSplitter::handle { background-color: #bbbbbb; }")
+
+        # Top part: main content
+        main_widget = QWidget()
         main_layout = QHBoxLayout()
 
         # Left sidebar with tab list
-        self.tab_list = QListWidget()
-        self.tab_list.addItems(["Status", "Calibration", "Connection"])
-        self.tab_list.currentRowChanged.connect(self.on_tab_changed)
-        self.tab_list.setMaximumWidth(150)
-        main_layout.addWidget(self.tab_list)
+        self.tab_selector = QListWidget()
+        self.tab_selector.addItems(["Status", "Calibration", "Connection"])
+        self.tab_selector.currentRowChanged.connect(self.on_tab_changed)
+        self.tab_selector.setMaximumWidth(150)
+
+        # Ensure disabled items are visually distinct
+        self.tab_selector.setStyleSheet("""
+            QListWidget::item:disabled { color: #aaaaaa; }
+            QListWidget::item:enabled { color: #000000; }
+        """)
+        # background-color: #f0f0f0; background-color: transparent;
+        main_layout.addWidget(self.tab_selector)
 
         # Right side: stacked widget for tab content
         self.stacked_widget = QStackedWidget()
@@ -1670,17 +1873,37 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.connection_tab)
 
         main_layout.addWidget(self.stacked_widget)
-        central_widget.setLayout(main_layout)
-        self.setCentralWidget(central_widget)
+        main_widget.setLayout(main_layout)
 
-        # Connect signals
-        self.connection.connection_changed.connect(self.on_connection_changed)
+        # Bottom part: status strip
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout()
+        #bottom_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Initially disable non-connection tabs
-        self.on_connection_changed(False)
+        # Port
+        self.port_status = QLabel()
+        bottom_layout.addWidget(self.port_status, 0)  # Fixed size
 
-        # Select status tab initially (connection is now at index 2)
-        self.tab_list.setCurrentRow(2)
+        # Busy indicator
+        self.busy_indicator = BusyIndicator(self.connection)
+        bottom_layout.addWidget(self.busy_indicator, 0)  # Fixed size
+
+        # Console widget
+        self.console = ConsoleWidget(self.connection)
+        bottom_layout.addWidget(self.console, 1)  # Takes remaining space
+
+        bottom_widget.setLayout(bottom_layout)
+
+        # Add to splitter
+        splitter.addWidget(main_widget)
+        splitter.addWidget(bottom_widget)
+
+        # Set initial sizes (main content gets most space)
+        splitter.setSizes([750, 50])
+        splitter.setCollapsible(0, False)  # Main content not collapsible
+        splitter.setCollapsible(1, True)   # Bottom strip collapsible
+
+        return splitter
 
     def on_tab_changed(self, index):
         """Handle tab selection change."""
@@ -1704,18 +1927,20 @@ class MainWindow(QMainWindow):
         # Enable/disable tabs based on connection
         if connected:
             # Enable all tabs
-            for i in range(self.tab_list.count()):
-                item = self.tab_list.item(i)
+            for i in range(self.tab_selector.count()):
+                item = self.tab_selector.item(i)
                 if item:
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
 
             # Switch to status tab
-            self.tab_list.setCurrentRow(0)
+            self.tab_selector.setCurrentRow(0)
             self.status_tab.start_updates()
+
+            self.port_status.setText(self.connection.port_path)
         else:
             # Disable status and calibration tabs (connection tab is at index 2)
             for i in range(2):
-                item = self.tab_list.item(i)
+                item = self.tab_selector.item(i)
                 if item:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
 
@@ -1724,7 +1949,9 @@ class MainWindow(QMainWindow):
             self.calibration_tab.stop_updates()
 
             # Switch to connection tab
-            self.tab_list.setCurrentRow(2)
+            self.tab_selector.setCurrentRow(2)
+
+            self.port_status.setText("Offline")
 
 
 def main():
