@@ -86,6 +86,205 @@ import param_utils
 # Set up logger
 logger = logging.getLogger(__name__)
 
+
+class GimbalGeometry(QObject):
+    """Data class for gimbal geometry information."""
+
+    geometry_changed = pyqtSignal()
+
+    def __init__(self, connection: 'GimbalConnection', parent=None):
+        super().__init__(parent)
+        self.connection = connection
+
+        self._reset_to_defaults()
+
+        # Connect to connection changes
+        self.connection.connection_changed.connect(self.on_connection_changed)
+
+    def on_connection_changed(self, connected: bool):
+        """Handle connection state changes."""
+        if connected:
+            self.request_geometry()
+        else:
+            self.reset_to_defaults()
+
+    def request_geometry(self):
+        """Request all geometry parameters from the gimbal."""
+        # Request flags
+        self.connection.read_param("config.have-axes", self.update_have_axes)
+        self.connection.read_param("config.control.have-home", self.update_have_home)
+        self.connection.read_param("config.control.have-parking", self.update_have_parking)
+        self.connection.read_param("config.control.have-forward", self.update_have_forward)
+
+        # Request axes data
+        axes_params = [f"config.axes.axes.{i}" for i in range(3)]
+        self.connection.read_param(axes_params, self.update_axes)
+
+        axis_to_encoder_params = [f"config.axes.axis-to-encoder.{i}" for i in range(3)]
+        self.connection.read_param(axis_to_encoder_params, self.update_axis_to_encoder)
+
+        encoder_scale_params = [f"config.axes.encoder-scale.{i}" for i in range(3)]
+        self.connection.read_param(encoder_scale_params, self.update_encoder_scale)
+
+        # Request other data
+        self.connection.read_param("config.axes.main-imu-mount-q", self.update_main_imu_mount_q)
+        self.connection.read_param("config.control.home-q", self.update_home_q)
+        self.connection.read_param("config.control.home-angles", self.update_home_angles)
+        self.connection.read_param("config.control.park-angles", self.update_park_angles)
+        self.connection.read_param("config.control.forward-vec", self.update_forward_vec_and_emit)
+
+    def _reset_to_defaults(self):
+        self.have_axes = False
+        self.have_home = False
+        self.have_parking = False
+        self.have_forward = False
+        self.axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        self.axis_to_encoder = [0, 1, 2]
+        self.encoder_scale = [1.0, 1.0, 1.0]
+        self.home_angles = [0.0, 0.0, 0.0]
+        self.home_q = [1.0, 0.0, 0.0, 0.0]
+        self.park_angles = [0.0, 0.0, 0.0]
+        self.forward_vec = [1.0, 0.0]
+        self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]
+
+    def reset_to_defaults(self):
+        """Reset all values to defaults."""
+        self._reset_to_defaults()
+        self.geometry_changed.emit()
+
+    def update(self):
+        """Manual update trigger."""
+        if self.connection.is_connected():
+            self.request_geometry()
+
+    # Update methods for individual parameters
+    def update_have_axes(self, value):
+        if value is not None:
+            self.have_axes = bool(value)
+
+    def update_have_home(self, value):
+        if value is not None:
+            self.have_home = bool(value)
+
+    def update_have_parking(self, value):
+        if value is not None:
+            self.have_parking = bool(value)
+
+    def update_have_forward(self, value):
+        if value is not None:
+            self.have_forward = bool(value)
+
+    def update_axes(self, values):
+        if values and len(values) == 3:
+            self.axes = [list(v) if isinstance(v, list) else [1.0, 0.0, 0.0] for v in values]
+
+    def update_axis_to_encoder(self, values):
+        if values and len(values) == 3:
+            self.axis_to_encoder = [int(v) for v in values]
+
+    def update_encoder_scale(self, values):
+        if values and len(values) == 3:
+            self.encoder_scale = [float(v) for v in values]
+
+    def update_main_imu_mount_q(self, value):
+        if value is not None:
+            self.main_imu_mount_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+
+    def update_home_q(self, value):
+        if value is not None:
+            self.home_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+
+    def update_home_angles(self, value):
+        if value is not None:
+            self.home_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
+
+    def update_park_angles(self, value):
+        if value is not None:
+            self.park_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
+
+    def update_forward_vec_and_emit(self, value):
+        if value is not None:
+            self.forward_vec = list(value) if isinstance(value, list) else [1.0, 0.0]
+            self.geometry_changed.emit()
+
+
+    # TODO: move all the math utils to app_math.py or similar
+    def quaternion_multiply(self, q1, q2):
+        """Multiply two quaternions: q1 * q2."""
+        w1, x1, y1, z1 = q1
+        w2, x2, y2, z2 = q2
+        return (
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        )
+
+    def quaternion_conjugate(self, q):
+        """Return conjugate of quaternion."""
+        return (q[0], -q[1], -q[2], -q[3])
+
+    def quaternion_to_matrix(self, q):
+        """Convert quaternion to rotation matrix."""
+        w, x, y, z = q
+        return (
+            (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)),
+            (2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)),
+            (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
+        )
+
+    def vector_rotate(self, v, q):
+        """Rotate vector v by quaternion q."""
+        # v' = q * v * q*
+        # Simplified: use rotation matrix
+        m = self.quaternion_to_matrix(q)
+        return (self.vector_dot(m[0], v), self.vector_dot(m[1], v), self.vector_dot(m[2], v))
+
+    def vector_sum(self, v0, v1):
+        return (v0[0] + v1[0], v0[1] + v1[1], v0[2] + v1[2])
+
+    def vector_sub(self, v0, v1):
+        return (v0[0] - v1[0], v0[1] - v1[1], v0[2] - v1[2])
+
+    def vector_dot(self, v0, v1):
+        return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2]
+
+    def vector_cross(self, v0, v1):
+        return (v0[1] * v1[2] - v0[2] * v1[1], v0[2] * v1[0] - v0[0] * v1[2], v0[0] * v1[1] - v0[1] * v1[0])
+
+    def vector_mult_scalar(self, v, s):
+        return (*(c * s for c in v),)
+
+    def vector_norm(self, v):
+        return math.hypot(*v)
+
+    def matrix_t(self, m):
+        return [[m[i][j] for i in range(3)] for j in range(3)]
+
+    def angle_normalize_180(self, angle):
+        angle = math.fmod(angle, 360)
+        if angle >= 180:
+            return angle - 360
+        if angle < -180:
+            return angle + 360
+        return angle
+
+    def axis_angle_to_quaternion(self, axis, angle):
+        """Convert axis-angle to quaternion."""
+        half_angle = angle * 0.5
+        s = math.sin(half_angle)
+        c = math.cos(half_angle)
+        return [c, *self.vector_mult_scalar(axis, s)]
+
+    def angle_normalize_pi(self, angle):
+        angle = math.fmod(angle, 2 * math.pi)
+        if angle >= math.pi:
+            return angle - 2 * math.pi
+        if angle < -math.pi:
+            return angle + 2 * math.pi
+        return angle
+
+
 class GimbalConnection(QObject):
     """Handles serial communication with the gimbal."""
 
@@ -347,8 +546,9 @@ def list_convert(val):
 class Gimbal3DWidget(QOpenGLWidget):
     """3D visualization widget for gimbal status."""
 
-    def __init__(self, parent=None):
+    def __init__(self, geometry: GimbalGeometry, parent=None):
         super().__init__(parent)
+        self.geometry = geometry
         if not HAS_OPENGL:
             logger.warning("OpenGL not available, 3D visualization will be limited")
             self.setMinimumSize(400, 300)
@@ -358,18 +558,8 @@ class Gimbal3DWidget(QOpenGLWidget):
 
         self.shading = True  # Enable/disable simple OpenGL shading
 
-        # Calibration state
-        self.have_axes = False
-        self.have_home = False
-        self.have_forward = False
-
-        # Geometry parameters (when have_axes is true)
-        self.axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]  # Default axes
-        self.axis_to_encoder = [0, 1, 2]  # Default mapping
-        self.encoder_scale = [1.0, 1.0, 1.0]  # Default scales
-        self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]  # Identity quaternion
-        self.home_q = [1.0, 0.0, 0.0, 0.0]  # Identity quaternion
-        self.home_angles = [0.0, 0.0, 0.0]  # Home position angles
+        # Connect to geometry changes
+        self.geometry.geometry_changed.connect(self.update)
 
         # Current pose
         self.encoder_angles = [0.0, 0.0, 0.0]  # degrees
@@ -392,22 +582,6 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.motor_height = 0.05
         self.motor_radius = 0.03
 
-    def update_calibration_state(self, have_axes: bool, have_home: bool, have_forward: bool):
-        """Update calibration state flags."""
-        self.have_axes = have_axes
-        self.have_home = have_home
-        self.have_forward = have_forward
-        self.update()
-
-    def update_geometry(self, axes, axis_to_encoder, encoder_scale, main_imu_mount_q, home_q, home_angles):
-        """Update geometry parameters."""
-        self.axes = axes
-        self.axis_to_encoder = axis_to_encoder
-        self.encoder_scale = encoder_scale
-        self.main_imu_mount_q = main_imu_mount_q
-        self.home_q = home_q
-        self.home_angles = home_angles
-        self.update()
 
     def update_pose(self, encoder_angles, main_ahrs_q):
         """Update current pose (encoder angles in degrees, quaternion as list)."""
@@ -415,93 +589,41 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.main_ahrs_q = main_ahrs_q
         self.update()
 
-    def quaternion_multiply(self, q1, q2):
-        """Multiply two quaternions: q1 * q2."""
-        w1, x1, y1, z1 = q1
-        w2, x2, y2, z2 = q2
-        return (
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-        )
-
-    def quaternion_conjugate(self, q):
-        """Return conjugate of quaternion."""
-        return (q[0], -q[1], -q[2], -q[3])
-
-    def quaternion_to_matrix(self, q):
-        """Convert quaternion to rotation matrix."""
-        w, x, y, z = q
-        return (
-            (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)),
-            (2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)),
-            (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
-        )
-
-    def vector_rotate(self, v, q):
-        """Rotate vector v by quaternion q."""
-        # v' = q * v * q*
-        # Simplified: use rotation matrix
-        m = self.quaternion_to_matrix(q)
-        return (self.vector_dot(m[0], v), self.vector_dot(m[1], v), self.vector_dot(m[2], v))
-
-    def vector_sum(self, v0, v1):
-        return (v0[0] + v1[0], v0[1] + v1[1], v0[2] + v1[2])
-
-    def vector_sub(self, v0, v1):
-        return (v0[0] - v1[0], v0[1] - v1[1], v0[2] - v1[2])
-
-    def vector_dot(self, v0, v1):
-        return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2]
-
-    def vector_cross(self, v0, v1):
-        return (v0[1] * v1[2] - v0[2] * v1[1], v0[2] * v1[0] - v0[0] * v1[2], v0[0] * v1[1] - v0[1] * v1[0])
-
-    def vector_mult_scalar(self, v, s):
-        return (*(c * s for c in v),)
-
-    def vector_norm(self, v):
-        return math.hypot(*v)
-
-    def matrix_t(self, m):
-        return [[m[i][j] for i in range(3)] for j in range(3)]
-
     def calculate_camera_orientation(self):
         """Calculate final camera orientation quaternion."""
         q = self.main_ahrs_q
 
-        if self.have_home:
+        if self.geometry.have_home:
             # Multiply by conjugate of home-q
-            home_q_conj = self.quaternion_conjugate(self.home_q)
-            q = self.quaternion_multiply(home_q_conj, q)
+            home_q_conj = self.geometry.quaternion_conjugate(self.geometry.home_q)
+            q = self.geometry.quaternion_multiply(home_q_conj, q)
 
         return q
 
     def calculate_arm_positions(self):
         """Calculate gimbal arm joint positions working backwards from camera."""
-        if not self.have_axes:
+        if not self.geometry.have_axes:
             return []
 
         # Start with IMU orientation
         q = self.main_ahrs_q
 
         # Apply inverse of main-imu-mount-q to get inner arm
-        q_inner = self.quaternion_multiply(q, self.quaternion_conjugate(self.main_imu_mount_q))
+        q_inner = self.geometry.quaternion_multiply(q, self.geometry.quaternion_conjugate(self.geometry.main_imu_mount_q))
 
         # Work backwards through joints
         orientations = [q_inner]
         axes_world = []
 
         for num in [2, 1, 0]:
-            angle_rad = math.radians(self.encoder_angles[self.axis_to_encoder[num]]) * self.encoder_scale[num]
-            axis = self.axes[num]
+            angle_rad = math.radians(self.encoder_angles[self.geometry.axis_to_encoder[num]]) * self.geometry.encoder_scale[num]
+            axis = self.geometry.axes[num]
 
             # Find arm orientation
-            q_joint_inv = self.axis_angle_to_quaternion(axis, angle_rad)
-            q_current = self.quaternion_multiply(orientations[-1], q_joint_inv)
+            q_joint_inv = self.geometry.axis_angle_to_quaternion(axis, angle_rad)
+            q_current = self.geometry.quaternion_multiply(orientations[-1], q_joint_inv)
             orientations.append(q_current)
-            axes_world.append(self.vector_rotate(axis, q_current)) # Nop for the inner joint axis
+            axes_world.append(self.geometry.vector_rotate(axis, q_current)) # Nop for the inner joint axis
 
         orientations = orientations[::-1]
         axes_world = axes_world[::-1]
@@ -511,42 +633,35 @@ class Gimbal3DWidget(QOpenGLWidget):
         segments = []
         camera_pos = (0, 0, 0)
         camera_q = self.calculate_camera_orientation()
-        camera_size = self.vector_rotate((self.camera_width, self.camera_depth, self.camera_height), camera_q)
-        camera_pos_dist = -0.5 * self.vector_dot(camera_size, axes_world[2])
+        camera_size = self.geometry.vector_rotate((self.camera_width, self.camera_depth, self.camera_height), camera_q)
+        camera_pos_dist = -0.5 * self.geometry.vector_dot(camera_size, axes_world[2])
         # Leave a 1cm space between camera box and the top of the inner joint motor
         # maybe should just use self.arm_radius - self.motor_height * 2
-        motor_top = self.vector_sum(camera_pos, self.vector_mult_scalar(axes_world[2], -(camera_pos_dist + 0.01)))
-        motor_base = self.vector_sum(motor_top, self.vector_mult_scalar(axes_world[2], -self.motor_height))
+        motor_top = self.geometry.vector_sum(camera_pos, self.geometry.vector_mult_scalar(axes_world[2], -(camera_pos_dist + 0.01)))
+        motor_base = self.geometry.vector_sum(motor_top, self.geometry.vector_mult_scalar(axes_world[2], -self.motor_height))
 
         for num in [2, 1]:
-            motor_x = self.vector_cross(axes_world[num], axes_world[num - 1]) # Normal to the plane containing the axes
-            motor_y = self.vector_cross(axes_world[num], motor_x)             # Perpendicular to current axis towards previous joint
+            motor_x = self.geometry.vector_cross(axes_world[num], axes_world[num - 1]) # Normal to the plane containing the axes
+            motor_y = self.geometry.vector_cross(axes_world[num], motor_x)             # Perpendicular to current axis towards previous joint
             motor_z = axes_world[num]
-            motors.append((motor_top, motor_base, self.matrix_t((motor_x, motor_y, motor_z))))
+            motors.append((motor_top, motor_base, self.geometry.matrix_t((motor_x, motor_y, motor_z))))
 
-            sin_angle = self.vector_norm(motor_x)
+            sin_angle = self.geometry.vector_norm(motor_x)
             arm_length = (self.arm_radius - self.motor_height * (num - 1)) * sin_angle
-            arm_elbow_pos = self.vector_sum(motor_base, self.vector_mult_scalar(motor_y, arm_length))
-            segments.append((motor_base, arm_elbow_pos, arm_length, self.matrix_t((motor_x, motor_y, motor_z))))
+            arm_elbow_pos = self.geometry.vector_sum(motor_base, self.geometry.vector_mult_scalar(motor_y, arm_length))
+            segments.append((motor_base, arm_elbow_pos, arm_length, self.geometry.matrix_t((motor_x, motor_y, motor_z))))
 
-            seg_x = motor_x                                       # Normal to the plane containing the axes
-            seg_y = self.vector_cross(axes_world[num - 1], seg_x) # Perpendicular to current axis away from next joint
+            seg_x = motor_x                                                # Normal to the plane containing the axes
+            seg_y = self.geometry.vector_cross(axes_world[num - 1], seg_x) # Perpendicular to current axis away from next joint
             seg_z = axes_world[num - 1]
-            seg_start = self.vector_sum(arm_elbow_pos, self.vector_mult_scalar(seg_y, arm_length))
-            segments.append((arm_elbow_pos, seg_start, arm_length, self.matrix_t((seg_x, seg_y, seg_z))))
-            motor_top = self.vector_sum(seg_start, self.vector_mult_scalar(seg_z, self.arm_thickness))
-            motor_base = self.vector_sum(motor_top, self.vector_mult_scalar(seg_z, -self.motor_height))
+            seg_start = self.geometry.vector_sum(arm_elbow_pos, self.geometry.vector_mult_scalar(seg_y, arm_length))
+            segments.append((arm_elbow_pos, seg_start, arm_length, self.geometry.matrix_t((seg_x, seg_y, seg_z))))
+            motor_top = self.geometry.vector_sum(seg_start, self.geometry.vector_mult_scalar(seg_z, self.arm_thickness))
+            motor_base = self.geometry.vector_sum(motor_top, self.geometry.vector_mult_scalar(seg_z, -self.motor_height))
 
         motors.append((motor_top, motor_base, (seg_x, seg_y, seg_z)))
 
         return orientations, axes_world, motors[::-1], segments[::-1]
-
-    def axis_angle_to_quaternion(self, axis, angle):
-        """Convert axis-angle to quaternion."""
-        half_angle = angle * 0.5
-        s = math.sin(half_angle)
-        c = math.cos(half_angle)
-        return [c, *self.vector_mult_scalar(axis, s)]
 
     def gl_rotate_m(self, m):
         # Column-major matrix for OpenGL
@@ -556,7 +671,7 @@ class Gimbal3DWidget(QOpenGLWidget):
                        0, 0, 0, 1])
 
     def gl_rotate_q(self, q):
-        self.gl_rotate_m(self.quaternion_to_matrix(q))
+        self.gl_rotate_m(self.geometry.quaternion_to_matrix(q))
 
     def initializeGL(self):
         """Initialize OpenGL."""
@@ -634,7 +749,7 @@ class Gimbal3DWidget(QOpenGLWidget):
 
         glTranslatef(0, 0, 0.30)
 
-        if not self.have_axes:
+        if not self.geometry.have_axes:
             # Just show camera model
             self.gl_rotate_q(self.calculate_camera_orientation())
             self._draw_camera()
@@ -662,7 +777,7 @@ class Gimbal3DWidget(QOpenGLWidget):
             glColor3f(0.1, 0.1, 0.1)
             for end, start, length, orientation in segments:
                 glPushMatrix()
-                center = self.vector_mult_scalar(self.vector_sum(end, start), 0.5)
+                center = self.geometry.vector_mult_scalar(self.geometry.vector_sum(end, start), 0.5)
                 glTranslatef(*center)
                 self.gl_rotate_m(orientation)
                 self._draw_trapezoid(self.arm_width, self.arm_width, self.arm_thickness, length)
@@ -676,8 +791,8 @@ class Gimbal3DWidget(QOpenGLWidget):
             for i in range(len(axes)):
                 axis = axes[i]
                 pos = motors[i][1]
-                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, -0.30)))
-                glVertex3f(*self.vector_sum(pos, self.vector_mult_scalar(axis, 0.10 + self.motor_height)))
+                glVertex3f(*self.geometry.vector_sum(pos, self.geometry.vector_mult_scalar(axis, -0.30)))
+                glVertex3f(*self.geometry.vector_sum(pos, self.geometry.vector_mult_scalar(axis, 0.10 + self.motor_height)))
             glEnd()
 
     def _draw_cylinder(self, radius, height, slices=16):
@@ -732,7 +847,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         t4 = [-half_tw, half_d, height]
 
         def quad(a, b, c, d):
-            glNormal3f(*self.vector_cross(self.vector_sub(c, b), self.vector_sub(b, a)))
+            glNormal3f(*self.geometry.vector_cross(self.geometry.vector_sub(c, b), self.geometry.vector_sub(b, a)))
             glVertex3f(*a)
             glVertex3f(*b)
             glVertex3f(*c)
@@ -1145,15 +1260,19 @@ class ForceBarWidget(QWidget):
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
 
-    def __init__(self, connection: GimbalConnection, parent=None):
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, parent=None):
         super().__init__(parent)
         self.connection = connection
+        self.geometry = geometry
 
         layout = QVBoxLayout()
 
         # 3D visualization
-        self.view_3d = Gimbal3DWidget()
+        self.view_3d = Gimbal3DWidget(self.geometry)
         layout.addWidget(self.view_3d)
+
+        # Connect to geometry changes
+        self.geometry.geometry_changed.connect(self.on_geometry_changed)
 
         # Joints display
         joints_group = QGroupBox("Joints")
@@ -1188,7 +1307,7 @@ class StatusTab(QWidget):
         joints_group.setLayout(joints_layout)
         layout.addWidget(joints_group)
 
-        self.update_joint_labels(False)
+        self.update_joint_labels()
 
         # Battery voltage display
         vbat_group = QGroupBox("Battery Voltage")
@@ -1271,15 +1390,12 @@ class StatusTab(QWidget):
         def callback_encoders(values):
             for i in range(3):
                 angle = float(values[i])
+                self.current_encoder_angles[i] = angle
                 # Map to display position using joint_map
                 display_idx = self.joint_map[i]
                 # Display relative to home angles if available
-                if self.view_3d.have_home:
-                    relative_angle = angle - math.degrees(self.view_3d.home_angles[i]) # TODO: normalize
-                    self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
-                else:
-                    self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
-                self.current_encoder_angles[i] = angle
+                relative_angle = self.geometry.angle_normalize_180(angle - self.geometry.home_angles[i])
+                self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
 
         req_params += [f"encoders.{i}.reading" for i in range(3)]
 
@@ -1356,16 +1472,20 @@ class StatusTab(QWidget):
 
         self.connection.read_param("motors-on", callback)
 
-    def update_joint_labels(self, have_axes, axis_to_encoder=None):
-        """Update joint labels and mapping based on axes calibration status."""
-        if have_axes and axis_to_encoder:
+    def on_geometry_changed(self):
+        """Handle geometry changes."""
+        self.update_joint_labels()
+
+    def update_joint_labels(self):
+        """Update joint labels and mapping based on current geometry status."""
+        if self.geometry.have_axes:
             # With axes calibration: show joint names and create reverse mapping
             joint_names = ["Inner (2)", "Middle (1)", "Outer (0)"]
             # Create reverse mapping: encoder index -> axis index
             # axis_to_encoder tells us which encoder each axis uses
             # We want encoder_to_axis: which axis each encoder drives
             encoder_to_axis = [0] * 3
-            for axis_idx, encoder_idx in enumerate(axis_to_encoder):
+            for axis_idx, encoder_idx in enumerate(self.geometry.axis_to_encoder):
                 encoder_to_axis[encoder_idx] = axis_idx
             # Joints are displayed in reverse order (2, 1, 0)
             self.joint_map = [2 - axis for axis in encoder_to_axis]
@@ -1390,106 +1510,10 @@ class StatusTab(QWidget):
         self.motors_on = None
         self.new_motors_status()
 
-    def update_geometry(self):
-        """Update geometry parameters (once after connection or after axes calibration)."""
-        if not self.connection.is_connected():
-            return
-
         # Read calibration state
         def callback_have_axes(value):
             if value is None:
                 return
-
-            have_axes = bool(value)
-            self.view_3d.have_axes = have_axes
-            self.view_3d.update_calibration_state(have_axes, self.view_3d.have_home, self.view_3d.have_forward)
-            # Reload geometry if axes calibration state changed or if not loaded yet
-            if have_axes and (not self.geometry_loaded or self.last_have_axes != have_axes):
-                # Load all geometry parameters
-                self.geometry_loaded = False  # Reset to force reload
-                self.load_geometry_params()
-            self.last_have_axes = have_axes
-
-        def callback_have_home(value):
-            if value is None:
-                return
-
-            self.view_3d.have_home = bool(value)
-
-        def callback_have_forward(value):
-            if value is None:
-                return
-
-            self.view_3d.have_forward = bool(value)
-            self.view_3d.update_calibration_state(self.view_3d.have_axes, self.view_3d.have_home, bool(value))
-
-        self.connection.read_param("config.have-axes", callback_have_axes)
-        self.connection.read_param("config.control.have-home", callback_have_home)
-        self.connection.read_param("config.control.have-forward", callback_have_forward)
-
-    def load_geometry_params(self):
-        """Load all geometry parameters."""
-        axes_data = {}
-        axis_to_encoder_data = {}
-        encoder_scale_data = {}
-        mount_q_data = None
-        home_q_data = None
-        home_angles_data = None
-
-        def check_and_update():
-            if len(axes_data) == 3 and len(axis_to_encoder_data) == 3 and \
-               len(encoder_scale_data) == 3 and mount_q_data is not None and home_q_data is not None and home_angles_data is not None:
-                # All data loaded, update view
-                axes = [axes_data[i] for i in range(3)]
-                axis_to_encoder = [axis_to_encoder_data[i] for i in range(3)]
-                encoder_scale = [encoder_scale_data[i] for i in range(3)]
-                self.view_3d.update_geometry(axes, axis_to_encoder, encoder_scale, mount_q_data, home_q_data, home_angles_data)
-                self.geometry_loaded = True
-                # Update joint labels and mapping
-                self.update_joint_labels(True, axis_to_encoder)
-
-        for i in range(3):
-            def make_callback_axes(idx):
-                def callback(value):
-                    if value is not None:
-                        axes_data[idx] = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0]
-                return callback
-
-            def make_callback_axis_to_encoder(idx):
-                def callback(value):
-                    if value is not None:
-                        axis_to_encoder_data[idx] = int(value)
-                return callback
-
-            def make_callback_scale(idx):
-                def callback(value):
-                    if value is not None:
-                        encoder_scale_data[idx] = float(value)
-                return callback
-
-            self.connection.read_param(f"config.axes.axes.{i}", make_callback_axes(i))
-            self.connection.read_param(f"config.axes.axis-to-encoder.{i}", make_callback_axis_to_encoder(i))
-            self.connection.read_param(f"config.axes.encoder-scale.{i}", make_callback_scale(i))
-
-        def callback_mount_q(value):
-            if value is not None:
-                nonlocal mount_q_data
-                mount_q_data = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-
-        def callback_home_q(value):
-            if value is not None:
-                nonlocal home_q_data
-                home_q_data = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-
-        def callback_home_angles(value):
-            if value is not None:
-                nonlocal home_angles_data
-                home_angles_data = list(value) if isinstance(value, list) else [0.0, 0.0, 0.0]
-            check_and_update()
-
-        self.connection.read_param("config.axes.main-imu-mount-q", callback_mount_q)
-        self.connection.read_param("config.control.home-q", callback_home_q)
-        self.connection.read_param("config.control.home-angles", callback_home_angles)
 
 
 class CalibrationTab(QWidget):
@@ -1590,11 +1614,12 @@ class MainWindow(QMainWindow):
 
     def __init__(self, debug=False):
         super().__init__()
-        self.setWindowTitle("OpenBGC Gimbal Control")
+        self.setWindowTitle("OpenBGC Gimbal app")
         self.setGeometry(100, 100, 1200, 800)
 
-        # Create connection
+        # Create connection and geometry
         self.connection = GimbalConnection(debug)
+        self.geometry = GimbalGeometry(self.connection)
 
         # Central widget with split layout
         central_widget = QWidget()
@@ -1611,7 +1636,7 @@ class MainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget()
 
         # Create tabs
-        self.status_tab = StatusTab(self.connection)
+        self.status_tab = StatusTab(self.connection, self.geometry)
         self.calibration_tab = CalibrationTab(self.connection)
         self.connection_tab = ConnectionTab(self.connection)
 
@@ -1658,8 +1683,6 @@ class MainWindow(QMainWindow):
                 item = self.tab_list.item(i)
                 if item:
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
-
-            self.status_tab.update_geometry()
 
             # Switch to status tab
             self.tab_list.setCurrentRow(0)
