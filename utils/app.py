@@ -131,7 +131,17 @@ class GimbalGeometry(QObject):
         self.connection.read_param("config.control.home-q", self.update_home_q)
         self.connection.read_param("config.control.home-angles", self.update_home_angles)
         self.connection.read_param("config.control.park-angles", self.update_park_angles)
-        self.connection.read_param("config.control.forward-vec", self.update_forward_vec_and_emit)
+        self.connection.read_param("config.control.forward-vec", self.update_forward_vec)
+
+        # Request limit information
+        has_limits_params = [f"config.axes.has-limits.{i}" for i in range(3)]
+        self.connection.read_param(has_limits_params, self.update_has_limits)
+
+        limit_min_params = [f"config.axes.limit-min.{i}" for i in range(3)]
+        self.connection.read_param(limit_min_params, self.update_limit_min)
+
+        limit_max_params = [f"config.axes.limit-max.{i}" for i in range(3)]
+        self.connection.read_param(limit_max_params, self.update_limit_max_and_emit)
 
     def _reset_to_defaults(self):
         self.have_axes = False
@@ -141,11 +151,14 @@ class GimbalGeometry(QObject):
         self.axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         self.axis_to_encoder = [0, 1, 2]
         self.encoder_scale = [1.0, 1.0, 1.0]
+        self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]
         self.home_angles = [0.0, 0.0, 0.0]
         self.home_q = [1.0, 0.0, 0.0, 0.0]
         self.park_angles = [0.0, 0.0, 0.0]
         self.forward_vec = [1.0, 0.0]
-        self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]
+        self.has_limits = [False, False, False]
+        self.limit_min = [0.0, 0.0, 0.0]
+        self.limit_max = [0.0, 0.0, 0.0]
 
     def reset_to_defaults(self):
         """Reset all values to defaults."""
@@ -190,21 +203,33 @@ class GimbalGeometry(QObject):
         if value is not None:
             self.main_imu_mount_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
 
-    def update_home_q(self, value):
-        if value is not None:
-            self.home_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
-
     def update_home_angles(self, value):
         if value is not None:
             self.home_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
+
+    def update_home_q(self, value):
+        if value is not None:
+            self.home_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
 
     def update_park_angles(self, value):
         if value is not None:
             self.park_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
 
-    def update_forward_vec_and_emit(self, value):
+    def update_forward_vec(self, value):
         if value is not None:
             self.forward_vec = list(value) if isinstance(value, list) else [1.0, 0.0]
+
+    def update_has_limits(self, values):
+        if values and len(values) == 3:
+            self.has_limits = [bool(v) for v in values]
+
+    def update_limit_min(self, values):
+        if values and len(values) == 3:
+            self.limit_min = [math.degrees(v) for v in values]
+
+    def update_limit_max_and_emit(self, values):
+        if values and len(values) == 3:
+            self.limit_max = [math.degrees(v) for v in values]
             self.geometry_changed.emit()
 
 
