@@ -26,7 +26,7 @@ try:
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
     )
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    from PyQt6.QtGui import QColor, QPainter, QTextOption, QCursor
+    from PyQt6.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -39,7 +39,7 @@ except ImportError:
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
     )
     from PyQt5.QtOpenGL import QOpenGLWidget
-    from PyQt5.QtGui import QColor, QPainter, QTextOption, QCursor
+    from PyQt5.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
     PYQT_VERSION = 5
 
 # Platform-specific serial port monitoring
@@ -330,6 +330,7 @@ class GimbalConnection(QObject):
     connection_changed = pyqtSignal(bool)    # connected
     error_occurred = pyqtSignal(str)         # error message
     text_logged = pyqtSignal(str)
+    busy_state_changed = pyqtSignal(bool)    # busy: True when queues busy for 100ms, False when empty
 
     def __init__(self, debug=False):
         super().__init__()
@@ -339,6 +340,10 @@ class GimbalConnection(QObject):
         self.pending_requests: list = [] # Queue of (param_id, callback, pdef, param_name) - waiting for response
         self.queued_requests: list = []  # Queue of (param_name, callback) - waiting to be sent
         self.max_pending_requests = 4
+        self._busy_timer = QTimer()
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.timeout.connect(self._on_busy_timeout)
+        self._is_busy_signaled = False
         self.in_stream = fr.InStream(
             text_cb=self._text_cb,
             frame_cb=self._frame_cb,
@@ -385,6 +390,7 @@ class GimbalConnection(QObject):
         self.pending_requests.clear()
         self.queued_requests.clear()
         self.connection_changed.emit(False)
+        self._check_busy_state()
 
     def is_connected(self) -> bool:
         """Check if connected."""
@@ -470,6 +476,8 @@ class GimbalConnection(QObject):
         while len(self.pending_requests) < self.max_pending_requests and self.queued_requests:
             param_names, callback = self.queued_requests.pop(0)
             self._send_single_request(param_names, callback)
+
+        self._check_busy_state()
 
     def _send_single_request(self, param_names, callback: Callable[[Any], None]):
         """Send a parameter request for one or more parameters."""
@@ -567,6 +575,26 @@ class GimbalConnection(QObject):
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
             return False
+
+    def _check_busy_state(self):
+        """Check if request queues are busy and manage signaling."""
+        busy = len(self.pending_requests) > 0
+
+        if busy and not self._is_busy_signaled:
+            # Queues became busy, start 100ms timer
+            if not self._busy_timer.isActive():
+                self._busy_timer.start(100)
+        elif not busy:
+            self._busy_timer.stop()
+            # Queues became empty, signal immediately
+            if self._is_busy_signaled:
+                self._is_busy_signaled = False
+                self.busy_state_changed.emit(False)
+
+    def _on_busy_timeout(self):
+        """Called after 100ms of continuous busy state."""
+        self._is_busy_signaled = True
+        self.busy_state_changed.emit(True)
 
 
 def list_convert(val):
@@ -1368,40 +1396,31 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
 
 
 class BusyIndicator(QWidget):
-    """Widget that shows busy state when request queues are not empty."""
+    """Widget that shows busy state based on signals from GimbalConnection."""
 
     def __init__(self, connection, parent=None):
         super().__init__(parent)
         self.connection = connection
         self.is_busy = False
-        self.visible_timer = QTimer()
-        self.visible_timer.setSingleShot(True)
-        self.visible_timer.timeout.connect(self.show_indicator)
 
-        # Check busy state periodically
-        self.check_timer = QTimer()
-        self.check_timer.timeout.connect(self.check_busy_state)
-        self.check_timer.start(50)  # Check every 50ms
+        self.connection.busy_state_changed.connect(self.on_busy_state_changed)
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self.update)  # Trigger repaint
 
         self.setFixedSize(20, 20)
 
-    def check_busy_state(self):
-        """Check if there are pending requests."""
-        busy = (len(self.connection.pending_requests) > 0)
+        self.pen = QPen(QColor(50, 50, 40))
+        self.pen.setWidth(2)
 
-        if busy and not self.is_busy:
-            # Start showing indicator after 100ms delay
-            self.visible_timer.start(100)
-            self.is_busy = True
-        elif not busy and self.is_busy:
-            # Immediately hide when no longer busy
-            self.visible_timer.stop()
-            self.is_busy = False
-            self.update()
-
-    def show_indicator(self):
-        """Actually show the busy indicator."""
+    def on_busy_state_changed(self, busy):
+        """Handle busy state changes from GimbalConnection."""
+        self.is_busy = busy
         self.update()
+
+        if busy:
+             self.animation_timer.start(100)
+        else:
+            self.animation_timer.stop()
 
     def paintEvent(self, event):
         """Draw the busy indicator."""
@@ -1410,20 +1429,17 @@ class BusyIndicator(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Draw a simple spinning indicator
-        painter.setPen(QColor(255, 255, 0))  # Yellow
-        painter.setBrush(QColor(255, 255, 0, 128))
+        painter.setPen(self.pen)
 
         center = self.rect().center()
         radius = 8
 
         # Draw arcs to create spinning effect
-        angle = int(time.time() * 1000) % 360  # Rotate based on time
+        angle = int(time.time() * 400) % 360  # Rotate based on time
 
-        painter.drawPie(center.x() - radius, center.y() - radius,
-                       radius * 2, radius * 2,
-                       angle * 16, 270 * 16)  # 270 degrees arc
+        painter.drawArc(center.x() - radius, center.y() - radius,
+                        radius * 2, radius * 2,
+                        angle * 16, 270 * 16)  # 270 degrees arc
 
 
 class ForceBarWidget(QWidget):
