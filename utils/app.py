@@ -20,22 +20,26 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit
+        QSplitter, QPlainTextEdit, QToolTip
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
+    from PyQt6.QtCore import (
+        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
+    )
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    from PyQt6.QtGui import QColor, QPainter, QTextOption
+    from PyQt6.QtGui import QColor, QPainter, QTextOption, QCursor
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit
+        QSplitter, QPlainTextEdit, QToolTip
     )
-    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier
+    from PyQt5.QtCore import (
+        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
+    )
     from PyQt5.QtOpenGL import QOpenGLWidget
-    from PyQt5.QtGui import QColor, QPainter, QTextOption
+    from PyQt5.QtGui import QColor, QPainter, QTextOption, QCursor
     PYQT_VERSION = 5
 
 # Platform-specific serial port monitoring
@@ -112,6 +116,9 @@ class GimbalGeometry(QObject):
 
     def request_geometry(self):
         """Request all geometry parameters from the gimbal."""
+        # TODO: use one array of (param_id, local attr name, default value), base everything
+        # else on this array
+
         # Request flags
         self.connection.read_param("config.have-axes", self.update_have_axes)
         self.connection.read_param("config.control.have-home", self.update_have_home)
@@ -295,6 +302,10 @@ class GimbalGeometry(QObject):
         if angle < -180:
             return angle + 360
         return angle
+
+    def angle_normalize_360(self, angle):
+        angle = math.fmod(angle, 360)
+        return angle if angle >= 0 else angle + 360
 
     def axis_angle_to_quaternion(self, axis, angle):
         """Convert axis-angle to quaternion."""
@@ -1460,6 +1471,159 @@ class ForceBarWidget(QWidget):
                 painter.drawRect(center_x - bar_width, 2, bar_width, self.height() - 4)
 
 
+class AngleBarWidget(QWidget):
+    """Custom widget to display angle as a bar with notches and zones."""
+
+    def __init__(self, min_angle, max_angle, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(180, 10)
+        self.setMaximumSize(180, 10)
+        self.setMouseTracking(True)  # Enable mouse tracking without button press
+        self.min_angle = min_angle
+        self.max_angle = max_angle
+        self.current_angle = 0.0
+        self.home_angle = None
+        self.target_angle = None
+        self.limit_min = None
+        self.limit_max = None
+        self.has_limits = False
+
+    def set_angle(self, angle):
+        """Set the current angle value."""
+        self.current_angle = angle
+        self.update()
+
+    def set_home_angle(self, home_angle):
+        """Set the home angle position."""
+        self.home_angle = home_angle
+        self.update()
+
+    def set_target_angle(self, target_angle):
+        """Set the target angle position (for future use)."""
+        self.target_angle = target_angle
+        self.update()
+
+    def set_limits(self, has_limits, limit_min, limit_max):
+        """Set limit information."""
+        self.has_limits = has_limits
+        self.limit_min = limit_min
+        self.limit_max = limit_max
+        self.update()
+
+    def angle_to_pixel(self, angle):
+        """Convert angle to pixel position."""
+        range_size = self.max_angle - self.min_angle
+        normalized = (angle - self.min_angle) % range_size / range_size
+        return int(normalized * self.width())
+
+    def pixel_to_angle(self, angle):
+        """Convert pixel position to angle."""
+        range_size = self.max_angle - self.min_angle
+        normalized = angle / self.width()
+        return self.min_angle + normalized * range_size
+
+    def paintEvent(self, event):
+        """Draw the angle bar."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw background
+        painter.fillRect(self.rect(), QColor(240, 240, 240))
+
+        # Draw black frame
+        painter.setPen(QColor(0, 0, 0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+
+        center_y = self.height() // 2
+
+        # Draw limit zones if enabled
+        if self.has_limits and self.limit_min is not None and self.limit_max is not None:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 0, 0, 128))  # Semi-transparent red
+
+            min_pixel = self.angle_to_pixel(self.limit_min)
+            max_pixel = self.angle_to_pixel(self.limit_max) + 1
+
+            if min_pixel <= max_pixel: # Note the rounding can make this check fail in extreme cases
+                # Normal case: single rectangle
+                if max_pixel - min_pixel < 4:
+                    add = (4 - (max_pixel - min_pixel)) // 2
+                    min_pixel -= add
+                    max_pixel += 4 - add
+                painter.drawRect(min_pixel, center_y - 5, max_pixel - min_pixel, 10)
+            else:
+                # Wraparound case: two rectangles
+                if self.width() - min_pixel < 3:
+                    min_pixel = self.width() - 3
+                painter.drawRect(min_pixel, center_y - 5, self.width() - min_pixel, 10)
+                painter.drawRect(0, center_y - 5, min(max_pixel, 3), 10)
+
+        # Draw center line
+        painter.setPen(QColor(128, 128, 128))
+        painter.drawLine(0, center_y, self.width(), center_y)
+
+        # Draw home angle notch
+        if self.home_angle is not None:
+            painter.setPen(QColor(0, 128, 0))  # Green
+            painter.setBrush(QColor(0, 128, 0))
+            home_pixel = self.angle_to_pixel(self.home_angle)
+            painter.drawRect(home_pixel - 1, center_y - 5, 2, 10)
+
+        # Draw target angle notch
+        if self.target_angle is not None:
+            painter.setPen(QColor(0, 0, 255))  # Blue
+            painter.setBrush(QColor(0, 0, 255))
+            target_pixel = self.angle_to_pixel(self.target_angle)
+            painter.drawRect(target_pixel - 1, center_y - 5, 2, 10)
+
+        # Draw current angle notch last to be on top as the most dynamic
+        painter.setPen(QColor(0, 0, 0))  # Red
+        painter.setBrush(QColor(0, 0, 0))
+        current_pixel = self.angle_to_pixel(self.current_angle)
+        painter.drawRect(current_pixel - 1, center_y - 5, 2, 10)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse movement for tooltip."""
+        pixel = event.position().x()
+        angle = self.pixel_to_angle(pixel)
+
+        tooltip = f"{angle:.0f}°"
+
+        # Check if hovering over marks
+        current_pixel = self.angle_to_pixel(self.current_angle)
+        if abs(pixel - current_pixel) < 3:
+            tooltip += "\nCurrent angle"
+
+        if self.home_angle is not None:
+            home_pixel = self.angle_to_pixel(self.home_angle)
+            if abs(pixel - home_pixel) < 3:
+                tooltip += "\nHome angle"
+
+        if self.target_angle is not None:
+            target_pixel = self.angle_to_pixel(self.target_angle)
+            if abs(pixel - target_pixel) < 3:
+                tooltip += "\nTarget angle"
+
+        if self.has_limits:
+            # Check if in limit zones
+            min_pixel = self.angle_to_pixel(self.limit_min)
+            max_pixel = self.angle_to_pixel(self.limit_max)
+
+            in_limit_zone = False
+            if min_pixel < max_pixel:
+                in_limit_zone = min_pixel - 2 <= pixel <= max_pixel + 2
+            else:
+                in_limit_zone = pixel >= min_pixel - 2 or pixel <= max_pixel + 2
+
+            if in_limit_zone:
+                tooltip += "\nLimit zone"
+
+        #self.setToolTip(tooltip)
+        QToolTip.showText(QCursor.pos(), tooltip, self, QRect(), 0)
+        #super().mouseMoveEvent(event)
+
+
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
 
@@ -1482,13 +1646,15 @@ class StatusTab(QWidget):
         joints_layout = QGridLayout()
 
         # Column headers
-        joints_layout.addWidget(QLabel("Angle"), 0, 1)
-        joints_layout.addWidget(QLabel("Force"), 0, 2)
+        joints_layout.addWidget(QLabel("Angle"), 0, 2)
+        joints_layout.addWidget(QLabel("Force"), 0, 3)
 
         self.joint_labels = []
         self.encoder_labels = []
+        self.angle_bars = []
         self.force_bars = []
         self.motors_on = None
+        self.joint_map = [0, 1, 2]  # Default mapping without axes calibration
 
         # Create placeholder widgets that will be updated when axes calibration changes
         for i in range(3):
@@ -1500,13 +1666,22 @@ class StatusTab(QWidget):
             # Angle label
             angle_label = QLabel("unknown")
             joints_layout.addWidget(angle_label, i + 1, 1)
+            joints_layout.setAlignment(angle_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.encoder_labels.append(angle_label)
+
+            # Angle bar widget
+            angle_bar = AngleBarWidget(0, 360)  # Default range
+            joints_layout.addWidget(angle_bar, i + 1, 2)
+            joints_layout.setAlignment(angle_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.angle_bars.append(angle_bar)
 
             # Force bar widget
             force_bar = ForceBarWidget()
-            joints_layout.addWidget(force_bar, i + 1, 2)
+            joints_layout.addWidget(force_bar, i + 1, 3)
             self.force_bars.append(force_bar)
 
+        joints_layout.setColumnStretch(1, 3)
+        joints_layout.setColumnStretch(2, 3)
         joints_group.setLayout(joints_layout)
         layout.addWidget(joints_group)
 
@@ -1592,13 +1767,18 @@ class StatusTab(QWidget):
         # Read encoder angles
         def callback_encoders(values):
             for i in range(3):
-                angle = float(values[i])
+                angle = self.geometry.angle_normalize_360(float(values[i]))
                 self.current_encoder_angles[i] = angle
                 # Map to display position using joint_map
                 display_idx = self.joint_map[i]
                 # Display relative to home angles if available
-                relative_angle = self.geometry.angle_normalize_180(angle - self.geometry.home_angles[i])
-                self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
+                if self.geometry.have_home:
+                    relative_angle = self.geometry.angle_normalize_180(angle - self.geometry.home_angles[i])
+                    self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
+                    self.angle_bars[display_idx].set_angle(relative_angle)
+                else:
+                    self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
+                    self.angle_bars[display_idx].set_angle(angle)
 
         req_params += [f"encoders.{i}.reading" for i in range(3)]
 
@@ -1680,7 +1860,7 @@ class StatusTab(QWidget):
         self.update_joint_labels()
 
     def update_joint_labels(self):
-        """Update joint labels and mapping based on current geometry status."""
+        """Update joint labels, mapping, and angle bar ranges based on current geometry status."""
         if self.geometry.have_axes:
             # With axes calibration: show joint names and create reverse mapping
             joint_names = ["Inner (2)", "Middle (1)", "Outer (0)"]
@@ -1692,14 +1872,40 @@ class StatusTab(QWidget):
                 encoder_to_axis[encoder_idx] = axis_idx
             # Joints are displayed in reverse order (2, 1, 0)
             self.joint_map = [2 - axis for axis in encoder_to_axis]
+
+            # Update angle bar ranges and home positions
+            for i in range(3):
+                axis_idx = 2 - i
+                self.angle_bars[i].min_angle = -180
+                self.angle_bars[i].max_angle = 180
+                self.angle_bars[i].set_home_angle(0 if self.geometry.have_home else None)
+
+                # Set limits
+                if self.geometry.has_limits[axis_idx]:
+                    lmin = self.geometry.limit_min[axis_idx] - self.geometry.home_angles[axis_idx] # 0 if unset
+                    lmax = self.geometry.limit_max[axis_idx] - self.geometry.home_angles[axis_idx]
+                    lmin = self.geometry.angle_normalize_180(lmin)
+                    lmax = self.geometry.angle_normalize_180(lmax)
+                    self.angle_bars[i].set_limits(True, lmin, lmax)
+                else:
+                    self.angle_bars[i].set_limits(False, None, None)
+
+                # TODO: also read 'config.control.limit-margin' and add in degrees to both sides of the limit zone
         else:
             # Without axes calibration: show encoder numbers
             joint_names = [f"Encoder {i}" for i in range(3)]
             self.joint_map = [0, 1, 2]  # Direct mapping
 
+            # Update angle bar ranges (0-360) and clear home positions
+            for i in range(3):
+                self.angle_bars[i].min_angle = 0
+                self.angle_bars[i].max_angle = 360
+                self.angle_bars[i].set_home_angle(None)
+                self.angle_bars[i].set_limits(False, None, None)
+
         # Update the labels
         for i in range(3):
-            self.joint_labels[i].setText(joint_names[i])
+            self.joint_labels[i].setText(joint_names[i] + ':')
 
     def on_motor_on(self):
         """Handle motor on button click."""
