@@ -138,6 +138,7 @@ class GimbalGeometry(QObject):
         # Request other data
         self.connection.read_param("config.axes.main-imu-mount-q", self.update_main_imu_mount_q)
         self.connection.read_param("config.control.home-q", self.update_home_q)
+        self.connection.read_param("config.control.home-frame-q", self.update_home_frame_q)
         self.connection.read_param("config.control.home-angles", self.update_home_angles)
         self.connection.read_param("config.control.park-angles", self.update_park_angles)
         self.connection.read_param("config.control.forward-vec", self.update_forward_vec)
@@ -157,17 +158,20 @@ class GimbalGeometry(QObject):
         self.have_home = False
         self.have_parking = False
         self.have_forward = False
-        self.axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        self.axes = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self.axis_to_encoder = [0, 1, 2]
         self.encoder_scale = [1.0, 1.0, 1.0]
-        self.main_imu_mount_q = [1.0, 0.0, 0.0, 0.0]
+        self.main_imu_mount_q = (1.0, 0.0, 0.0, 0.0)
         self.home_angles = [0.0, 0.0, 0.0]
-        self.home_q = [1.0, 0.0, 0.0, 0.0]
+        self.home_q = (1.0, 0.0, 0.0, 0.0)
+        self.home_frame_q = (1.0, 0.0, 0.0, 0.0)
         self.park_angles = [0.0, 0.0, 0.0]
-        self.forward_vec = [1.0, 0.0]
+        self.forward_vec = (1.0, 0.0)
         self.has_limits = [False, False, False]
         self.limit_min = [0.0, 0.0, 0.0]
         self.limit_max = [0.0, 0.0, 0.0]
+
+        self.update_aligned_home_q()
 
     def reset_to_defaults(self):
         """Reset all values to defaults."""
@@ -187,6 +191,7 @@ class GimbalGeometry(QObject):
     def update_have_home(self, value):
         if value is not None:
             self.have_home = bool(value)
+            self.update_aligned_home_q()
 
     def update_have_parking(self, value):
         if value is not None:
@@ -195,10 +200,11 @@ class GimbalGeometry(QObject):
     def update_have_forward(self, value):
         if value is not None:
             self.have_forward = bool(value)
+            self.update_aligned_home_q()
 
     def update_axes(self, values):
         if values and len(values) == 3:
-            self.axes = [list(v) if isinstance(v, list) else [1.0, 0.0, 0.0] for v in values]
+            self.axes = tuple([tuple(v) for v in values])
 
     def update_axis_to_encoder(self, values):
         if values and len(values) == 3:
@@ -209,27 +215,33 @@ class GimbalGeometry(QObject):
             self.encoder_scale = [float(v) for v in values]
 
     def update_main_imu_mount_q(self, value):
-        if value is not None:
-            self.main_imu_mount_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+        if value:
+            self.main_imu_mount_q = tuple([float(v) for v in value])
 
     def update_home_angles(self, value):
         if value is not None:
-            self.home_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
+            self.home_angles = [math.degrees(value[i]) for i in range(3)]
 
     def update_home_q(self, value):
         if value is not None:
-            self.home_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+            self.home_q = tuple([float(v) for v in value])
+            self.update_aligned_home_q()
+
+    def update_home_frame_q(self, value):
+        if value is not None:
+            self.home_frame_q = tuple([float(v) for v in value])
 
     def update_park_angles(self, value):
         if value is not None:
-            self.park_angles = [math.degrees(a) for a in value] if isinstance(value, list) else [0.0, 0.0, 0.0]
+            self.park_angles = [math.degrees(value[i]) for i in range(3)]
 
     def update_forward_vec(self, value):
         if value is not None:
-            self.forward_vec = list(value) if isinstance(value, list) else [1.0, 0.0]
+            self.forward_vec = tuple([float(v) for v in value])
+            self.update_aligned_home_q()
 
     def update_has_limits(self, values):
-        if values and len(values) == 3:
+        if values is not None:
             self.has_limits = [bool(v) for v in values]
 
     def update_limit_min(self, values):
@@ -241,6 +253,51 @@ class GimbalGeometry(QObject):
             self.limit_max = [math.degrees(v) for v in values]
             self.geometry_changed.emit()
 
+    def update_aligned_home_q(self):
+        if self.have_forward:
+            self.forward_az = math.atan2(self.forward_vec[1], self.forward_vec[0])
+        else:
+            self.forward_az = math.pi / 2
+
+        # Rotate home_q in the negative yaw direction to align "forward" with 0-yaw
+        yaw_rotate = self.quaternion_from_axis_angle((0, 0, 1), -self.forward_az)
+        aligned_home_q = self.quaternion_multiply(yaw_rotate, self.home_q)
+        self.conj_aligned_home_q = self.quaternion_conjugate(aligned_home_q)
+
+    def get_joint_angles(self, encoder_angles):
+        return [ encoder_angles[enc_num] * self.encoder_scale[enc_num] for enc_num in self.axis_to_encoder ]
+
+    def get_home_angles(self):
+        return self.get_joint_angles(self.home_angles)
+
+    def get_park_angles(self):
+        return self.get_joint_angles(self.park_angles)
+
+    def get_rel_q(self, joint_angles):
+        q = [ self.quaternion_from_axis_angle(self.axes[anum], math.radians(joint_angles[anum])) for anum in range(3) ]
+        q01 = self.quaternion_multiply(q[0], q[1])
+        q23 = self.quaternion_multiply(q[2], self.main_imu_mount_q)
+        return self.quaternion_multiply(q01, q23)
+
+    def get_euler(self, joint_angles, main_imu_q):
+        main_pose_q = self.quaternion_multiply(main_imu_q, self.conj_aligned_home_q)
+        yaw, pitch, roll = self.quaternion_to_euler(main_pose_q)
+
+        # frame_pose_q is global and should include both physical rotation of the frame
+        # from the home orientation, and the accumlulated main IMU yaw drift so we need that
+        # to correct main_imu_q
+        #
+        # Note: this assumes yaw-following (which is the default but optional) so the
+        # yaw 0 angle is in reference to frame
+        conj_rel_q = self.quaternion_conjugate(self.get_rel_q(joint_angles))
+        frame_q = self.quaternion_multiply(main_imu_q, conj_rel_q)
+        frame_pose_q = self.quaternion_multiply(frame_q, self.quaternion_conjugate(self.home_frame_q))
+        rel_yaw = self.quaternion_to_euler(frame_pose_q)[0]
+
+        return (
+            self.angle_normalize_180(math.degrees(yaw - rel_yaw - self.forward_az)),
+            math.degrees(pitch), math.degrees(roll)
+        )
 
     # TODO: move all the math utils to app_math.py or similar
     def quaternion_multiply(self, q1, q2):
@@ -266,6 +323,30 @@ class GimbalGeometry(QObject):
             (2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)),
             (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
         )
+
+    def quaternion_to_euler(self, q):
+        # Roll (X-axis rotation)
+        sinr_cosp = 2 * (q[0] * q[1] + q[2] * q[3])
+        cosr_cosp = 1 - 2 * (q[1] * q[1] + q[2] * q[2])
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (Y-axis rotation)
+        sinp = 2 * (q[0] * q[2] - q[3] * q[1])
+        pitch = math.asin(sinp) if abs(sinp) < 1 else (math.pi if sinp >= 0 else -math.pi)
+
+        # Yaw (Z-axis rotation)
+        siny_cosp = 2 * (q[0] * q[3] + q[1] * q[2])
+        cosy_cosp = 1 - 2 * (q[2] * q[2] + q[3] * q[3])
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        return (yaw, pitch, roll)
+
+    def quaternion_from_axis_angle(self, axis, angle):
+        """Convert axis-angle to quaternion."""
+        half_angle = angle * 0.5
+        s = math.sin(half_angle)
+        c = math.cos(half_angle)
+        return tuple([c, *self.vector_mult_scalar(axis, s)])
 
     def vector_rotate(self, v, q):
         """Rotate vector v by quaternion q."""
@@ -306,13 +387,6 @@ class GimbalGeometry(QObject):
     def angle_normalize_360(self, angle):
         angle = math.fmod(angle, 360)
         return angle if angle >= 0 else angle + 360
-
-    def axis_angle_to_quaternion(self, axis, angle):
-        """Convert axis-angle to quaternion."""
-        half_angle = angle * 0.5
-        s = math.sin(half_angle)
-        c = math.cos(half_angle)
-        return [c, *self.vector_mult_scalar(axis, s)]
 
     def angle_normalize_pi(self, angle):
         angle = math.fmod(angle, 2 * math.pi)
@@ -526,23 +600,24 @@ class GimbalConnection(QObject):
     def _handle_param_response(self, param_ids, data: bytes, callback, pdefs, param_names):
         """Handle a parameter response for one or more parameters."""
         try:
+            total_size = sum([pdef.size for pdef in pdefs])
+            if len(data) != total_size:
+                error_msg = f"Reading params {str(param_names)} size mismatch: expected {total_size}, got {len(data)}"
+                logger.error(error_msg)
+                callback(None)
+                # TODO: clear whole queue, ratelimit messages
+                # If this happens, we should recover sync after clearing queue and ignoring a few responses
+                return
+
             # Parse the array of parameter values
             values = []
             offset = 0
             for i, pdef in enumerate(pdefs):
-                param_size = pdef.size
-                if offset + param_size > len(data):
-                    error_msg = f"Param {param_names[i]} data truncated: expected {param_size} bytes, got {len(data) - offset}"
-                    logger.error(error_msg)
-                    callback(None)
-                    return
-
-                param_data = data[offset:offset + param_size]
+                param_data = data[offset:offset + pdef.size]
+                offset += pdef.size
                 param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
-                val = param_type_cls.parse(param_data)
-                val = list_convert(val)
+                val = list_convert(param_type_cls.parse(param_data))
                 values.append(val)
-                offset += param_size
 
             if len(values) == 1:
                 callback(values[0])
@@ -623,8 +698,8 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.geometry.geometry_changed.connect(self.update)
 
         # Current pose
-        self.encoder_angles = [0.0, 0.0, 0.0]  # degrees
-        self.main_ahrs_q = [1.0, 0.0, 0.0, 0.0]  # quaternion (w, x, y, z)
+        self.joint_angles = [0.0, 0.0, 0.0]  # degrees
+        self.main_ahrs_q = (1.0, 0.0, 0.0, 0.0)  # quaternion (w, x, y, z)
 
         # Camera
         self.rotation_x = 0.0
@@ -644,9 +719,9 @@ class Gimbal3DWidget(QOpenGLWidget):
         self.motor_radius = 0.03
 
 
-    def update_pose(self, encoder_angles, main_ahrs_q):
+    def update_pose(self, joint_angles, main_ahrs_q):
         """Update current pose (encoder angles in degrees, quaternion as list)."""
-        self.encoder_angles = encoder_angles
+        self.joint_angles = joint_angles
         self.main_ahrs_q = main_ahrs_q
         self.update()
 
@@ -677,11 +752,11 @@ class Gimbal3DWidget(QOpenGLWidget):
         axes_world = []
 
         for num in [2, 1, 0]:
-            angle_rad = math.radians(self.encoder_angles[self.geometry.axis_to_encoder[num]]) * self.geometry.encoder_scale[num]
+            angle_rad = -math.radians(self.joint_angles[num])
             axis = self.geometry.axes[num]
 
             # Find arm orientation
-            q_joint_inv = self.geometry.axis_angle_to_quaternion(axis, angle_rad)
+            q_joint_inv = self.geometry.quaternion_from_axis_angle(axis, angle_rad)
             q_current = self.geometry.quaternion_multiply(orientations[-1], q_joint_inv)
             orientations.append(q_current)
             axes_world.append(self.geometry.vector_rotate(axis, q_current)) # Nop for the inner joint axis
@@ -955,11 +1030,11 @@ class Gimbal3DWidget(QOpenGLWidget):
         screen_width = self.camera_width * 0.6
         screen_height = self.camera_height * 0.7
         screen_depth = 0.001
-        screen_center_width = -(self.camera_width - screen_width) * 0.5 + self.camera_width * 0.1;
+        screen_center_width = -(self.camera_width - screen_width) * 0.5 + self.camera_width * 0.1
         screen_center_depth = -(self.camera_depth / 2 + screen_depth / 2)
         screen_bottom_height = (self.camera_height - screen_height) / 2
         glPushMatrix()
-        glTranslatef(screen_center_width, screen_center_depth, screen_bottom_height);
+        glTranslatef(screen_center_width, screen_center_depth, screen_bottom_height)
         glColor3f(0.6, 0.6, 0.6)  # Gray screen
         self._draw_trapezoid(screen_width, screen_width, screen_height, screen_depth)
         glPopMatrix()
@@ -971,7 +1046,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         lens_base_center_height = self.camera_height / 2
         lens_base_center_depth = self.camera_depth / 2
         glPushMatrix()
-        glTranslatef(lens_base_center_width, lens_base_center_depth, lens_base_center_height);
+        glTranslatef(lens_base_center_width, lens_base_center_depth, lens_base_center_height)
         glRotatef(90.0, -1.0, 0.0, 0.0) # Rotate to align with camera Y-axis (which is depth, here represented by Z of cylinder)
         glColor3f(0.1, 0.1, 0.1)  # Black lens body
         self._draw_cylinder(lens_radius, lens_length)
@@ -1499,6 +1574,7 @@ class AngleBarWidget(QWidget):
         self.max_angle = max_angle
         self.current_angle = 0.0
         self.home_angle = None
+        self.park_angle = None
         self.target_angle = None
         self.limit_min = None
         self.limit_max = None
@@ -1512,6 +1588,11 @@ class AngleBarWidget(QWidget):
     def set_home_angle(self, home_angle):
         """Set the home angle position."""
         self.home_angle = home_angle
+        self.update()
+
+    def set_park_angle(self, park_angle):
+        """Set the home angle position."""
+        self.park_angle = park_angle
         self.update()
 
     def set_target_angle(self, target_angle):
@@ -1579,6 +1660,13 @@ class AngleBarWidget(QWidget):
         painter.setPen(QColor(128, 128, 128))
         painter.drawLine(0, center_y, self.width(), center_y)
 
+        # Draw park angle notch
+        if self.park_angle is not None:
+            painter.setPen(QColor(128, 0, 128))  # Violet
+            painter.setBrush(QColor(128, 0, 128))
+            park_pixel = self.angle_to_pixel(self.park_angle)
+            painter.drawRect(park_pixel - 1, center_y - 5, 2, 10)
+
         # Draw home angle notch
         if self.home_angle is not None:
             painter.setPen(QColor(0, 128, 0))  # Green
@@ -1611,6 +1699,11 @@ class AngleBarWidget(QWidget):
         if abs(pixel - current_pixel) < 3:
             tooltip += "\nCurrent angle"
 
+        if self.park_angle is not None:
+            park_pixel = self.angle_to_pixel(self.park_angle)
+            if abs(pixel - park_pixel) < 3:
+                tooltip += "\nPark angle"
+
         if self.home_angle is not None:
             home_pixel = self.angle_to_pixel(self.home_angle)
             if abs(pixel - home_pixel) < 3:
@@ -1640,6 +1733,61 @@ class AngleBarWidget(QWidget):
         #super().mouseMoveEvent(event)
 
 
+class SpeedBarWidget(QWidget):
+    """Custom widget to display angular speed as a horizontal bar."""
+
+    def __init__(self, max_speed, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(100, 10)
+        self.setMaximumSize(100, 10)
+        self.max_speed = max_speed
+        self.current_speed = 0.0
+
+    def set_speed(self, speed):
+        """Set the current speed value."""
+        self.current_speed = speed
+        self.update()
+
+    def set_max_speed(self, max_speed):
+        """Set the maximum speed for the bar."""
+        self.max_speed = max_speed
+        self.update()
+
+    def paintEvent(self, event):
+        """Draw the speed bar."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw background
+        painter.fillRect(self.rect(), QColor(240, 240, 240))
+
+        # Draw black frame
+        painter.setPen(QColor(0, 0, 0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, self.width()-1, self.height()-1)
+
+        # Draw center line
+        center_y = self.height() // 2
+        painter.setPen(QColor(128, 128, 128))
+        painter.drawLine(0, center_y, self.width(), center_y)
+
+        # Draw speed bar
+        if abs(self.current_speed) > 0.1:  # Only draw if significant speed
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 128, 255))  # Blue
+
+            center_x = self.width() // 2
+            speed_ratio = min(abs(self.current_speed) / self.max_speed, 1.0)
+            bar_width = int(speed_ratio * (self.width() // 2 - 2))
+
+            if self.current_speed > 0:
+                # Positive speed - extend right from center
+                painter.drawRect(center_x, 2, bar_width, self.height() - 4)
+            else:
+                # Negative speed - extend left from center
+                painter.drawRect(center_x - bar_width, 2, bar_width, self.height() - 4)
+
+
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
 
@@ -1658,6 +1806,7 @@ class StatusTab(QWidget):
         self.geometry.geometry_changed.connect(self.on_geometry_changed)
 
         # Joints display
+        # TODO: try .setFlat(True) on all QGroupBoxes, see if it looks better/saves space
         joints_group = QGroupBox("Joints")
         joints_layout = QGridLayout()
 
@@ -1671,6 +1820,15 @@ class StatusTab(QWidget):
         self.force_bars = []
         self.motors_on = None
         self.joint_map = [0, 1, 2]  # Default mapping without axes calibration
+
+        # Camera angles and speeds
+        self.camera_angle_labels = []
+        self.camera_angle_bars = []
+        self.camera_speed_labels = []
+        self.camera_speed_bars = []
+        self.max_vel = 60.0  # Default max deg/s
+        self.prev_camera_angles = [0.0, 0.0, 0.0]
+        self.prev_camera_time = time.time()
 
         # Create placeholder widgets that will be updated when axes calibration changes
         for i in range(3):
@@ -1701,7 +1859,58 @@ class StatusTab(QWidget):
         joints_group.setLayout(joints_layout)
         layout.addWidget(joints_group)
 
-        self.update_joint_labels()
+        self.update_joint_config()
+
+        # Camera angles display
+        self.camera_group = QGroupBox("Camera angles")
+        camera_layout = QGridLayout()
+
+        # Column headers
+        camera_layout.addWidget(QLabel("Angle"), 0, 2)
+        camera_layout.addWidget(QLabel("Speed"), 0, 4)
+
+        camera_angle_names = ["Roll", "Pitch", "Yaw"]
+
+        for i in range(3):
+            # Angle name label
+            camera_layout.addWidget(QLabel(camera_angle_names[i]), i + 1, 0)
+
+            # Angle label
+            angle_label = QLabel("unknown")
+            camera_layout.addWidget(angle_label, i + 1, 1)
+            camera_layout.setAlignment(angle_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_angle_labels.append(angle_label)
+
+            # Pitch goes from -90 to 90, the other axes -180 to 180.  Set the widget range
+            # accordingly.  The other easy solution would be to set -180 to 180 for all
+            # three bar widgets, to keep the scale consistent, but mark 90-180 (-90--180)
+            # inactive with .set_limits(True, 90, -90)
+            maxangle = 180 if i != 1 else 90
+
+            # Angle bar widget
+            angle_bar = AngleBarWidget(-maxangle, maxangle)
+            angle_bar.set_home_angle(0)
+            camera_layout.addWidget(angle_bar, i + 1, 2)
+            camera_layout.setAlignment(angle_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_angle_bars.append(angle_bar)
+
+            # TODO: mark current movement target from control.target-ypr-offsets
+            # TODO: mark frame relative angles too? especially for non-follow axes
+
+            # Speed label
+            speed_label = QLabel("0.0°/s")
+            camera_layout.addWidget(speed_label, i + 1, 3)
+            camera_layout.setAlignment(speed_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_speed_labels.append(speed_label)
+
+            # Speed bar widget
+            speed_bar = SpeedBarWidget(self.max_vel)
+            camera_layout.addWidget(speed_bar, i + 1, 4)
+            camera_layout.setAlignment(speed_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_speed_bars.append(speed_bar)
+
+        self.camera_group.setLayout(camera_layout)
+        layout.addWidget(self.camera_group)
 
         # Battery voltage display
         vbat_group = QGroupBox("Battery Voltage")
@@ -1756,6 +1965,8 @@ class StatusTab(QWidget):
         if self.connection.is_connected():
             self.update_timer.start()
             self.vbat_timer.start()
+            # Read max velocity parameter
+            self.connection.read_param("config.control.max-vel", self.update_max_vel)
             # Enable motor control buttons
             self.motor_on_btn.setEnabled(True)
             self.motor_off_btn.setEnabled(True)
@@ -1782,27 +1993,52 @@ class StatusTab(QWidget):
 
         # Read encoder angles
         def callback_encoders(values):
-            for i in range(3):
-                angle = self.geometry.angle_normalize_360(float(values[i]))
-                self.current_encoder_angles[i] = angle
-                # Map to display position using joint_map
-                display_idx = self.joint_map[i]
-                # Display relative to home angles if available
-                if self.geometry.have_home:
-                    relative_angle = self.geometry.angle_normalize_180(angle - self.geometry.home_angles[i])
-                    self.encoder_labels[display_idx].setText(f"{relative_angle:.2f}°")
-                    self.angle_bars[display_idx].set_angle(relative_angle)
-                else:
-                    self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
-                    self.angle_bars[display_idx].set_angle(angle)
+            if values is None:
+                return
+
+            home_angles = self.geometry.get_home_angles()
+
+            for axis_idx in range(3):
+                encoder_idx = self.geometry.axis_to_encoder[axis_idx]
+                angle = float(values[encoder_idx]) * self.geometry.encoder_scale[encoder_idx]
+                angle = self.geometry.angle_normalize_360(angle)
+                self.current_encoder_angles[axis_idx] = angle
+
+                if self.geometry.have_axes and self.geometry.have_home:
+                    # Display relative to home angles if available
+                    angle = self.geometry.angle_normalize_180(angle - home_angles[axis_idx])
+
+                display_idx = self.joint_map[encoder_idx]
+                self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
+                self.angle_bars[display_idx].set_angle(angle)
 
         req_params += [f"encoders.{i}.reading" for i in range(3)]
 
         # Read main AHRS orientation
         def callback_q(value):
             # value is a list of 4 floats (w, x, y, z)
-            self.current_main_ahrs_q = list(value) if isinstance(value, list) else [1.0, 0.0, 0.0, 0.0]
+            self.current_main_ahrs_q = tuple(value)
             self.view_3d.update_pose(self.current_encoder_angles, self.current_main_ahrs_q)
+
+            # Calculate camera angles and speeds
+            current_time = time.time()
+            dt = current_time - getattr(self, 'prev_camera_time', current_time)
+            setattr(self, 'prev_camera_time', current_time)
+
+            camera_angles = self.geometry.get_euler(self.current_encoder_angles, self.current_main_ahrs_q)
+            prev_angles = getattr(self, 'prev_camera_angles', camera_angles)
+            camera_speeds = [self.geometry.angle_normalize_180(camera_angles[i] - prev_angles[i]) / dt
+                             if dt > 0.001 else 0.0 for i in range(3)]
+            setattr(self, 'prev_camera_angles', camera_angles)
+
+            # Update camera angles display
+            for i in range(3):
+                axis_num = 2 - i
+                self.camera_angle_labels[i].setText(f"{camera_angles[axis_num]:.1f}°")
+                self.camera_angle_bars[i].set_angle(camera_angles[axis_num])
+                self.camera_speed_labels[i].setText(f"{camera_speeds[axis_num]:.1f}°/s")
+                self.camera_speed_bars[i].set_speed(camera_speeds[axis_num])
+
 
         req_params.append("main-ahrs.q")
 
@@ -1871,53 +2107,85 @@ class StatusTab(QWidget):
 
         self.connection.read_param("motors-on", callback)
 
+    def update_max_vel(self, value):
+        """Update max velocity setting."""
+        if value is not None:
+            # Convert from rad/s to deg/s
+            self.max_vel = math.degrees(value)
+            # Update all speed bars with new max velocity
+            for speed_bar in self.camera_speed_bars:
+                speed_bar.set_max_speed(self.max_vel)
+
     def on_geometry_changed(self):
         """Handle geometry changes."""
-        self.update_joint_labels()
+        self.update_joint_config()
 
-    def update_joint_labels(self):
+        if self.geometry.have_home:
+            self.camera_group.setTitle("Camera angles")
+        else:
+            self.camera_group.setTitle("IMU angles")
+
+    def update_joint_config(self):
         """Update joint labels, mapping, and angle bar ranges based on current geometry status."""
+        if self.geometry.have_home:
+            home_angles = self.geometry.get_home_angles()
+        else:
+            for i in range(3):
+                self.angle_bars[i].set_home_angle(None)
+
+        if self.geometry.have_parking:
+            park_angles = self.geometry.get_park_angles()
+        else:
+            for i in range(3):
+                self.angle_bars[i].set_park_angle(None)
+
         if self.geometry.have_axes:
             # With axes calibration: show joint names and create reverse mapping
             joint_names = ["Inner (2)", "Middle (1)", "Outer (0)"]
-            # Create reverse mapping: encoder index -> axis index
-            # axis_to_encoder tells us which encoder each axis uses
-            # We want encoder_to_axis: which axis each encoder drives
-            encoder_to_axis = [0] * 3
-            for axis_idx, encoder_idx in enumerate(self.geometry.axis_to_encoder):
-                encoder_to_axis[encoder_idx] = axis_idx
-            # Joints are displayed in reverse order (2, 1, 0)
-            self.joint_map = [2 - axis for axis in encoder_to_axis]
 
             # Update angle bar ranges and home positions
             for i in range(3):
                 axis_idx = 2 - i
+                encoder_idx = self.geometry.axis_to_encoder[axis_idx]
+                self.joint_map[encoder_idx] = i
+
                 self.angle_bars[i].min_angle = -180
                 self.angle_bars[i].max_angle = 180
                 self.angle_bars[i].set_home_angle(0 if self.geometry.have_home else None)
 
                 # Set limits
                 if self.geometry.has_limits[axis_idx]:
-                    lmin = self.geometry.limit_min[axis_idx] - self.geometry.home_angles[axis_idx] # 0 if unset
-                    lmax = self.geometry.limit_max[axis_idx] - self.geometry.home_angles[axis_idx]
+                    lmin = self.geometry.limit_min[axis_idx] - home_angles[axis_idx] # 0 if unset
+                    lmax = self.geometry.limit_max[axis_idx] - home_angles[axis_idx]
                     lmin = self.geometry.angle_normalize_180(lmin)
                     lmax = self.geometry.angle_normalize_180(lmax)
                     self.angle_bars[i].set_limits(True, lmin, lmax)
                 else:
                     self.angle_bars[i].set_limits(False, None, None)
 
-                # TODO: also read 'config.control.limit-margin' and add in degrees to both sides of the limit zone
+                if self.geometry.have_parking:
+                    self.angle_bars[i].set_park_angle(self.geometry.angle_normalize_180(
+                        park_angles[axis_idx] - home_angles[axis_idx]))
+
+                # TODO: also read 'config.control.limit-margin' and add in degrees to both sides of the limit zone,
+                # maybe mark in a different colour
         else:
             # Without axes calibration: show encoder numbers
             joint_names = [f"Encoder {i}" for i in range(3)]
             self.joint_map = [0, 1, 2]  # Direct mapping
 
-            # Update angle bar ranges (0-360) and clear home positions
+            # Update angle bar ranges (0-360), set fixed angles
             for i in range(3):
                 self.angle_bars[i].min_angle = 0
                 self.angle_bars[i].max_angle = 360
-                self.angle_bars[i].set_home_angle(None)
                 self.angle_bars[i].set_limits(False, None, None)
+
+            if self.geometry.have_home:
+                self.angle_bars[i].set_home_angle(home_angles[i])
+
+            if self.geometry.have_parking:
+                self.angle_bars[i].set_park_angle(park_angles[i])
+
 
         # Update the labels
         for i in range(3):
