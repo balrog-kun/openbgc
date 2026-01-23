@@ -363,8 +363,16 @@ static void control_calc_path_step_euler(struct control_data_s *control, const f
 
 static void control_calc_path_step_park(struct control_data_s *control,
         const float *angles_current, float *out_joint_deltas) {
-    const float *angles_target = control->settings->have_parking ?
+    const float *angles_target_raw = control->settings->have_parking ?
         control->settings->park_angles : control->settings->home_angles;
+    float angles_target[3];
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        int num = control->axes->axis_to_encoder[i];
+
+        angles_target[i] = angles_target_raw[num] * control->axes->encoder_scale[num];
+    }
 
     control_calc_path_step_joint_target(control, angles_target, angles_current, false,
             out_joint_deltas);
