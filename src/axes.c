@@ -131,6 +131,11 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
         int best = -1;
         bool accepted;
 
+        if (data->cancel()) {
+            data->print("Cancelled\r\n");
+            return -1;
+        }
+
         if (reinit) {
             reinit = false;
             reinit_wait = true;

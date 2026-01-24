@@ -439,6 +439,10 @@ static void calibrate_print(const char *str) {
     serial->print(str);
 }
 
+static bool calibrate_cancel(void) {
+    return serial->available() && serial->read() == 'q';
+}
+
 void main_loop_sleep(void) {
     static uint32_t next_update = 0;
 #ifdef PERF
@@ -1140,6 +1144,7 @@ handle_set_param:
         cs.frame_ahrs = frame_ahrs;
         cs.encoders = encoders;
         cs.print = calibrate_print;
+        cs.cancel = calibrate_cancel;
         cs.out = &config.axes;
 
         /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */

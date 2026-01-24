@@ -34,6 +34,7 @@ struct axes_calibrate_data_s {
     struct obgc_ahrs_s *frame_ahrs;
     struct obgc_encoder_s **encoders;
     void (*print)(const char *msg);
+    bool (*cancel)(void);
 
     struct axes_data_s *out;
 };
