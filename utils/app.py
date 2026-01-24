@@ -151,7 +151,7 @@ class GimbalGeometry(QObject):
         self.connection.read_param(limit_min_params, self.update_limit_min)
 
         limit_max_params = [f"config.axes.limit-max.{i}" for i in range(3)]
-        self.connection.read_param(limit_max_params, self.update_limit_max_and_emit)
+        self.connection.read_param(limit_max_params, self.update_limit_max_and_finish)
 
     def _reset_to_defaults(self):
         self.have_axes = False
@@ -173,6 +173,8 @@ class GimbalGeometry(QObject):
 
         self.update_aligned_home_q()
 
+        self.loaded = False
+
     def reset_to_defaults(self):
         """Reset all values to defaults."""
         self._reset_to_defaults()
@@ -183,75 +185,113 @@ class GimbalGeometry(QObject):
         if self.connection.is_connected():
             self.request_geometry()
 
+    def load_error(self):
+        self._reset_to_defaults()
+        # TODO: retry in a moment
+
     # Update methods for individual parameters
     def update_have_axes(self, value):
         if value is not None:
             self.have_axes = bool(value)
+        else:
+            self.load_error()
 
     def update_have_home(self, value):
         if value is not None:
             self.have_home = bool(value)
             self.update_aligned_home_q()
+        else:
+            self.load_error()
 
     def update_have_parking(self, value):
         if value is not None:
             self.have_parking = bool(value)
+        else:
+            self.load_error()
 
     def update_have_forward(self, value):
         if value is not None:
             self.have_forward = bool(value)
             self.update_aligned_home_q()
+        else:
+            self.load_error()
 
     def update_axes(self, values):
         if values and len(values) == 3:
             self.axes = tuple([tuple(v) for v in values])
+        else:
+            self.load_error()
 
     def update_axis_to_encoder(self, values):
         if values and len(values) == 3:
             self.axis_to_encoder = [int(v) for v in values]
+        else:
+            self.load_error()
 
     def update_encoder_scale(self, values):
         if values and len(values) == 3:
             self.encoder_scale = [float(v) for v in values]
+        else:
+            self.load_error()
 
     def update_main_imu_mount_q(self, value):
         if value:
             self.main_imu_mount_q = tuple([float(v) for v in value])
+        else:
+            self.load_error()
 
     def update_home_angles(self, value):
         if value is not None:
             self.home_angles = [math.degrees(value[i]) for i in range(3)]
+        else:
+            self.load_error()
 
     def update_home_q(self, value):
         if value is not None:
             self.home_q = tuple([float(v) for v in value])
             self.update_aligned_home_q()
+        else:
+            self.load_error()
 
     def update_home_frame_q(self, value):
         if value is not None:
             self.home_frame_q = tuple([float(v) for v in value])
+        else:
+            self.load_error()
 
     def update_park_angles(self, value):
         if value is not None:
             self.park_angles = [math.degrees(value[i]) for i in range(3)]
+        else:
+            self.load_error()
 
     def update_forward_vec(self, value):
         if value is not None:
             self.forward_vec = tuple([float(v) for v in value])
             self.update_aligned_home_q()
+        else:
+            self.load_error()
 
     def update_has_limits(self, values):
         if values is not None:
             self.has_limits = [bool(v) for v in values]
+        else:
+            self.load_error()
 
     def update_limit_min(self, values):
         if values and len(values) == 3:
             self.limit_min = [math.degrees(v) for v in values]
+        else:
+            self.load_error()
 
-    def update_limit_max_and_emit(self, values):
+    def update_limit_max_and_finish(self, values):
         if values and len(values) == 3:
             self.limit_max = [math.degrees(v) for v in values]
+
+            self.loaded = True
             self.geometry_changed.emit()
+        else:
+            self.load_error()
 
     def update_aligned_home_q(self):
         if self.have_forward:
@@ -605,8 +645,14 @@ class GimbalConnection(QObject):
                 error_msg = f"Reading params {str(param_names)} size mismatch: expected {total_size}, got {len(data)}"
                 logger.error(error_msg)
                 callback(None)
-                # TODO: clear whole queue, ratelimit messages
+                # TODO: clear pending_requests but do invoke the callbacks, ratelimit messages
                 # If this happens, we should recover sync after clearing queue and ignoring a few responses
+                # Maybe we should move pending_requests back to queued_requests
+                logger.error("Discarding queues")
+                self.pending_requests.clear()
+                # Also clear queued_requests as a way to ignoring the next few responses, otherwise
+                # we'd immediately send more requests and try to match responses against them
+                self.queued_requests.clear()
                 return
 
             # Parse the array of parameter values
@@ -640,7 +686,7 @@ class GimbalConnection(QObject):
             if payload is None:
                 payload = b''
             out_frame = fr.FrameV1.build(dict(
-                hdr=dict(cmd_id=cmd_id, size=len(payload)),
+                hdr=dict(cmd_id=cmd_id),
                 pld=payload
             ))
             self.port.write(out_frame)
