@@ -1755,7 +1755,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                 case 3: /* MODE_SPEED_ANGLE */
                     control.sbgc_api_override_mode[ypr_num] = control_data_s::SBGC_API_OVERRIDE_ANGLE;
                     control.sbgc_api_override_ts = now;
-                    control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PIf / 32768);
+                    control.sbgc_api_ypr_offsets[ypr_num] = req.value[i].angle * (M_PIf / 8129);
                     control.sbgc_api_ypr_speeds[ypr_num] = req.value[i].speed * (0.1220740379 * D2R);
                     break;
                 case 4: /* MODE_RC */
