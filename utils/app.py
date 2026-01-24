@@ -20,7 +20,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit, QToolTip
+        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox
     )
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
@@ -85,6 +85,7 @@ import serial.tools.list_ports
 import sbgcserialapi.cmd as cmd
 import sbgcserialapi.cmd_obgc as cmd_obgc
 import sbgcserialapi.frame as fr
+import sbgcserialapi.unit as sbgc_unit
 
 import param_defs
 import param_utils
@@ -716,6 +717,19 @@ class GimbalConnection(QObject):
         """Called after 100ms of continuous busy state."""
         self._is_busy_signaled = True
         self.busy_state_changed.emit(True)
+
+    def control(self, angles=None, speeds=None): # degrees and degrees/s respectively
+        modes = [
+            cmd.ControlMode.MODE_ANGLE if angles is not None and angles[i] is not None else
+            cmd.ControlMode.MODE_SPEED if speeds is not None and speeds[i] is not None else
+            cmd.ControlMode.MODE_IGNORE for i in range(3)
+        ]
+        targets = [
+            {'angle': int(angles[i] / sbgc_unit.degree_factor)} if modes[i] == cmd.ControlMode.MODE_ANGLE else
+            {'speed': int(speeds[i] / sbgc_unit.degree_per_sec_factor)} if modes[i] == cmd.ControlMode.MODE_SPEED else
+            None for i in range(3)
+        ]
+        self.send_command(cmd.CmdId.CMD_CONTROL, cmd.ControlRequest.build(dict(control_mode=modes, target=targets)))
 
 
 def list_convert(val):
@@ -1611,13 +1625,16 @@ class ForceBarWidget(QWidget):
 class AngleBarWidget(QWidget):
     """Custom widget to display angle as a bar with notches and zones."""
 
-    def __init__(self, min_angle, max_angle, parent=None):
+    angle_changed = pyqtSignal(float)  # Signal emitted when angle is set via click
+
+    def __init__(self, min_angle=0, max_angle=360, angle_input=None, parent=None):
         super().__init__(parent)
         self.setMinimumSize(180, 10)
         self.setMaximumSize(180, 10)
         self.setMouseTracking(True)  # Enable mouse tracking without button press
         self.min_angle = min_angle
         self.max_angle = max_angle
+        self.angle_input = angle_input
         self.current_angle = 0.0
         self.home_angle = None
         self.park_angle = None
@@ -1734,31 +1751,32 @@ class AngleBarWidget(QWidget):
         painter.drawRect(current_pixel - 1, center_y - 5, 2, 10)
 
     def mouseMoveEvent(self, event):
-        """Handle mouse movement for tooltip."""
+        """Handle mouse movement for tooltip and input field."""
         pixel = event.position().x()
         angle = self.pixel_to_angle(pixel)
 
-        tooltip = f"{angle:.0f}°"
+        # Don't show angle in tooltip if we have an input field
+        tooltip = "" if self.angle_input else f"{angle:.0f}°"
 
         # Check if hovering over marks
         current_pixel = self.angle_to_pixel(self.current_angle)
         if abs(pixel - current_pixel) < 3:
-            tooltip += "\nCurrent angle"
+            tooltip += ("\n" if tooltip else "") + "Current angle"
 
         if self.park_angle is not None:
             park_pixel = self.angle_to_pixel(self.park_angle)
             if abs(pixel - park_pixel) < 3:
-                tooltip += "\nPark angle"
+                tooltip += ("\n" if tooltip else "") + "Park angle"
 
         if self.home_angle is not None:
             home_pixel = self.angle_to_pixel(self.home_angle)
             if abs(pixel - home_pixel) < 3:
-                tooltip += "\nHome angle"
+                tooltip += ("\n" if tooltip else "") + "Home angle"
 
         if self.target_angle is not None:
             target_pixel = self.angle_to_pixel(self.target_angle)
             if abs(pixel - target_pixel) < 3:
-                tooltip += "\nTarget angle"
+                tooltip += ("\n" if tooltip else "") + "Target angle"
 
         if self.has_limits:
             # Check if in limit zones
@@ -1772,22 +1790,40 @@ class AngleBarWidget(QWidget):
                 in_limit_zone = pixel >= min_pixel - 2 or pixel <= max_pixel + 2
 
             if in_limit_zone:
-                tooltip += "\nLimit zone"
+                tooltip += ("\n" if tooltip else "") + "Limit zone"
 
-        #self.setToolTip(tooltip)
-        QToolTip.showText(QCursor.pos(), tooltip, self, QRect(), 0)
-        #super().mouseMoveEvent(event)
+        if tooltip:
+            QToolTip.showText(QCursor.pos(), tooltip, self, QRect(), 0)
+        else:
+            QToolTip.hideText()
+
+        if self.angle_input:
+            self.angle_input.setValue(angle)
+            if not tooltip:
+                self.setToolTip("Click to set target")
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for sending angle commands."""
+        if event.button() == Qt.MouseButton.LeftButton and self.angle_input:
+            pixel = event.position().x()
+            angle = self.pixel_to_angle(pixel)
+            self.angle_changed.emit(angle)
+        super().mousePressEvent(event)
 
 
 class SpeedBarWidget(QWidget):
     """Custom widget to display angular speed as a horizontal bar."""
 
-    def __init__(self, max_speed, parent=None):
+    speed_changed = pyqtSignal(float)  # Signal emitted when speed is set via click
+
+    def __init__(self, max_speed, speed_input=None, parent=None):
         super().__init__(parent)
         self.setMinimumSize(100, 10)
         self.setMaximumSize(100, 10)
         self.max_speed = max_speed
+        self.speed_input = speed_input
         self.current_speed = 0.0
+        self.setMouseTracking(True)
 
     def set_speed(self, speed):
         """Set the current speed value."""
@@ -1833,6 +1869,26 @@ class SpeedBarWidget(QWidget):
                 # Negative speed - extend left from center
                 painter.drawRect(center_x - bar_width, 2, bar_width, self.height() - 4)
 
+    def pixel_to_value(self, pixel):
+        center_x = self.width() / 2
+        return (pixel - center_x) / center_x * self.max_speed
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse movement for speed input field."""
+        if self.speed_input:
+            pixel = event.position().x()
+            speed = self.pixel_to_value(pixel)
+            self.speed_input.setValue(speed)
+            self.setToolTip("Click to set target")
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for sending speed commands."""
+        if event.button() == Qt.MouseButton.LeftButton and self.speed_input:
+            pixel = event.position().x()
+            speed = self.pixel_to_value(pixel)
+            self.speed_changed.emit(speed)
+        super().mousePressEvent(event)
+
 
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
@@ -1870,8 +1926,12 @@ class StatusTab(QWidget):
         # Camera angles and speeds
         self.camera_angle_labels = []
         self.camera_angle_bars = []
+        self.camera_angle_inputs = []
+        self.angle_send_buttons = []
         self.camera_speed_labels = []
+        self.camera_speed_inputs = []
         self.camera_speed_bars = []
+        self.speed_send_buttons = []
         self.max_vel = 60.0  # Default max deg/s
         self.prev_camera_angles = [0.0, 0.0, 0.0]
         self.prev_camera_time = time.time()
@@ -1890,7 +1950,7 @@ class StatusTab(QWidget):
             self.encoder_labels.append(angle_label)
 
             # Angle bar widget
-            angle_bar = AngleBarWidget(0, 360)  # Default range
+            angle_bar = AngleBarWidget()
             joints_layout.addWidget(angle_bar, i + 1, 2)
             joints_layout.setAlignment(angle_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.angle_bars.append(angle_bar)
@@ -1900,8 +1960,10 @@ class StatusTab(QWidget):
             joints_layout.addWidget(force_bar, i + 1, 3)
             self.force_bars.append(force_bar)
 
-        joints_layout.setColumnStretch(1, 3)
+        joints_layout.setColumnStretch(0, 0)
+        joints_layout.setColumnStretch(1, 1)
         joints_layout.setColumnStretch(2, 3)
+        joints_layout.setColumnStretch(3, 3)
         joints_group.setLayout(joints_layout)
         layout.addWidget(joints_group)
 
@@ -1911,9 +1973,16 @@ class StatusTab(QWidget):
         self.camera_group = QGroupBox("Camera angles")
         camera_layout = QGridLayout()
 
-        # Column headers
-        camera_layout.addWidget(QLabel("Angle"), 0, 2)
-        camera_layout.addWidget(QLabel("Speed"), 0, 4)
+        # Column headers:
+        # Euler angle name label
+        # Current angle label
+        camera_layout.addWidget(QLabel("Angle"), 0, 2) # Angle bar
+        # Target angle input
+        # Send button
+        # Current speed label
+        camera_layout.addWidget(QLabel("Speed"), 0, 6) # Speed bar
+        # Target speed input
+        # Send button
 
         camera_angle_names = ["Roll", "Pitch", "Yaw"]
 
@@ -1921,7 +1990,7 @@ class StatusTab(QWidget):
             # Angle name label
             camera_layout.addWidget(QLabel(camera_angle_names[i]), i + 1, 0)
 
-            # Angle label
+            # Angle label (current value)
             angle_label = QLabel("unknown")
             camera_layout.addWidget(angle_label, i + 1, 1)
             camera_layout.setAlignment(angle_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1931,32 +2000,78 @@ class StatusTab(QWidget):
             # accordingly.  The other easy solution would be to set -180 to 180 for all
             # three bar widgets, to keep the scale consistent, but mark 90-180 (-90--180)
             # inactive with .set_limits(True, 90, -90)
-            maxangle = 180 if i != 1 else 90
+            maxangle = 180 if i != 1 else 89
 
             # Angle bar widget
-            angle_bar = AngleBarWidget(-maxangle, maxangle)
+            angle_input = QDoubleSpinBox()
+            angle_bar = AngleBarWidget(-maxangle, maxangle, angle_input)
             angle_bar.set_home_angle(0)
+            angle_bar.angle_changed.connect(lambda angle, axis_idx=i: self.send_control(axis_idx, True, angle))
             camera_layout.addWidget(angle_bar, i + 1, 2)
             camera_layout.setAlignment(angle_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.camera_angle_bars.append(angle_bar)
 
+            # Angle input field
+            angle_input.setMaximumWidth(60)
+            angle_input.setRange(-maxangle, maxangle)
+            angle_input.setSingleStep(0.1)       # Note: QAbstractSpinBox.Adaptive sounds pretty cool too
+            angle_input.setWrapping(i in [0, 2]) # Roll and yaw wrap around, pitch doesn't
+            camera_layout.addWidget(angle_input, i + 1, 3)
+            camera_layout.setAlignment(angle_input, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_angle_inputs.append(angle_input)
+
+            # Send angle button
+            angle_send_btn = QPushButton("Send")
+            angle_send_btn.setMaximumWidth(50)
+            angle_send_btn.clicked.connect(lambda checked, axis_idx=i: self.send_control_from_input(axis_idx, True))
+            camera_layout.addWidget(angle_send_btn, i + 1, 4)
+            camera_layout.setAlignment(angle_send_btn, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.angle_send_buttons.append(angle_send_btn)
+
             # TODO: mark current movement target from control.target-ypr-offsets
             # TODO: mark frame relative angles too? especially for non-follow axes
 
-            # Speed label
+            # Speed label (current value)
             speed_label = QLabel("0.0°/s")
-            camera_layout.addWidget(speed_label, i + 1, 3)
+            camera_layout.addWidget(speed_label, i + 1, 5)
             camera_layout.setAlignment(speed_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.camera_speed_labels.append(speed_label)
 
             # Speed bar widget
-            speed_bar = SpeedBarWidget(self.max_vel)
-            camera_layout.addWidget(speed_bar, i + 1, 4)
+            speed_input = QDoubleSpinBox()
+            speed_bar = SpeedBarWidget(self.max_vel, speed_input)
+            speed_bar.speed_changed.connect(lambda speed, axis_idx=i: self.send_control(axis_idx, False, speed))
+            camera_layout.addWidget(speed_bar, i + 1, 6)
             camera_layout.setAlignment(speed_bar, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.camera_speed_bars.append(speed_bar)
 
+            # Speed input field
+            speed_input.setMaximumWidth(60)
+            speed_input.setRange(-self.max_vel, self.max_vel)
+            speed_input.setSingleStep(0.1)
+            camera_layout.addWidget(speed_input, i + 1, 7)
+            camera_layout.setAlignment(speed_input, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.camera_speed_inputs.append(speed_input)
+
+            # Send speed button
+            speed_send_btn = QPushButton("Send")
+            speed_send_btn.setMaximumWidth(50)
+            speed_send_btn.clicked.connect(lambda checked, axis_idx=i: self.send_control_from_input(axis_idx, False))
+            camera_layout.addWidget(speed_send_btn, i + 1, 8)
+            camera_layout.setAlignment(speed_send_btn, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.speed_send_buttons.append(speed_send_btn)
+
         self.camera_group.setLayout(camera_layout)
         layout.addWidget(self.camera_group)
+
+        camera_layout.setColumnStretch(1, 3)
+        camera_layout.setColumnStretch(2, 0)
+        camera_layout.setColumnStretch(3, 0)
+        camera_layout.setColumnStretch(4, 0)
+        camera_layout.setColumnStretch(5, 3)
+        camera_layout.setColumnStretch(6, 0)
+        camera_layout.setColumnStretch(7, 0)
+        camera_layout.setColumnStretch(8, 0)
 
         # Battery voltage display
         vbat_group = QGroupBox("Battery Voltage")
@@ -2002,20 +2117,13 @@ class StatusTab(QWidget):
         self.vbat_timer.timeout.connect(self.update_motors_status)
         self.vbat_timer.setInterval(1000)  # 1 Hz
 
-        # Track if we've loaded geometry once
-        self.geometry_loaded = False
-        self.last_have_axes = False
-
     def start_updates(self):
         """Start update timers."""
         if self.connection.is_connected():
             self.update_timer.start()
             self.vbat_timer.start()
-            # Read max velocity parameter
             self.connection.read_param("config.control.max-vel", self.update_max_vel)
-            # Enable motor control buttons
-            self.motor_on_btn.setEnabled(True)
-            self.motor_off_btn.setEnabled(True)
+            self.update_button_states()
 
     def stop_updates(self):
         """Stop update timers."""
@@ -2128,9 +2236,7 @@ class StatusTab(QWidget):
     def new_motors_status(self):
         status_text = "On" if self.motors_on == True else ("Off" if self.motors_on == False else "...")
         self.motor_status_label.setText(status_text)
-        # Update button states: On only when motors are off
-        self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
-        self.motor_off_btn.setEnabled(self.connection.is_connected())
+        self.update_button_states()
 
         if not self.motors_on:
             for i in range(3):
@@ -2232,10 +2338,37 @@ class StatusTab(QWidget):
             if self.geometry.have_parking:
                 self.angle_bars[i].set_park_angle(park_angles[i])
 
-
         # Update the labels
         for i in range(3):
             self.joint_labels[i].setText(joint_names[i] + ':')
+
+    def send_control(self, euler_idx, is_angle, value):
+        """Send control command for the specified axis."""
+        if not self.motors_on or not self.connection.is_connected():
+            return
+
+        angles = [None, None, None]
+        speeds = [None, None, None]
+        if is_angle:
+            angles[euler_idx] = value
+            self.camera_angle_bars[euler_idx].set_target_angle(value)
+        else:
+            speeds[euler_idx] = value
+        self.connection.control(angles, speeds)
+
+    def send_control_from_input(self, euler_idx, is_angle):
+        widgets = self.camera_angle_inputs if is_angle else self.camera_speed_inputs
+        self.send_control(euler_idx, is_angle, widgets[euler_idx].value())
+
+    def update_button_states(self):
+        """Update button states based on motor status."""
+        # Update button states: On only when motors are off
+        self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
+        self.motor_off_btn.setEnabled(self.connection.is_connected())
+
+        enabled = bool(self.motors_on) and self.connection.is_connected()
+        for btn in self.angle_send_buttons + self.speed_send_buttons:
+            btn.setEnabled(enabled)
 
     def on_motor_on(self):
         """Handle motor on button click."""
