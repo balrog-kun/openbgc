@@ -1474,7 +1474,6 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
         self.setReadOnly(True)
         self.setMaximumBlockCount(1000)
         self.setUndoRedoEnabled(False)
-        self.setOverwriteMode(True)
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.newline = False
         #self.setStyleSheet("QPlainTextEdit { background-color: #bbbbbb; color: #eeeeee; }")
@@ -1495,6 +1494,7 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
             return
 
         cursor = self.textCursor()
+        after_newline = False
         for char in text:
             if char == '\n':
                 # Avoid keeping an empty line at the end of the console
@@ -1506,7 +1506,12 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
                     cursor.movePosition(cursor.MoveOperation.End)
                     cursor.insertText('\n')
                     self.newline = False
+                    after_newline = True
+                elif not after_newline:
+                    # self.setOverwriteMode(True) doesn't seem to work for QTextCursor-based edits
+                    cursor.deleteChar()
                 cursor.insertText(char)
+        self.setTextCursor(cursor)
         self.ensureCursorVisible()
         return
         '''
