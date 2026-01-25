@@ -2746,7 +2746,16 @@ class AxisCalibrationTab(QWidget):
         self.cancel_button.clicked.connect(self.on_cancel)
         self.flip_buttons = [QPushButton("Flip axis " + str(i)) for i in range(3)]
         for i in range(3):
-            self.flip_buttons[i].clicked.connect(lambda: self.on_flip(i))
+            self.flip_buttons[i].clicked.connect(lambda param, i=i: self.on_flip(i))
+            self.flip_buttons[i].setToolTip(
+                "The calibration sequence cannot detect whether the joint is physically\n" +
+                "on one side of the camera or the other (or both), only where the joint's\n" +
+                "rotation axis is as an infinite straigth line.  And it doesn't matter for\n" +
+                "any of the maths performed internally as long as the encoder scale sign\n" +
+                "matches the axis vector's direction.  But the visualization in the\n" +
+                "Status Tab uses the axis vector direction to show the joint on one side\n" +
+                "or on the other (the vector points from joint towards camera) so invert\n" +
+                "the vector if the joint appearing on the wrong side bothers you.")
 
         # TODO: backup/restore buttons here or in the main calibration tab
         # together with the Write all to NV mem, reread all from NV mem
