@@ -882,7 +882,7 @@ class Gimbal3DWidget(QOpenGLWidget):
         camera_pos = (0, 0, 0)
         camera_q = self.calculate_camera_orientation()
         camera_size = self.geometry.vector_rotate((self.camera_width, self.camera_depth, self.camera_height), camera_q)
-        camera_pos_dist = -0.5 * self.geometry.vector_dot(camera_size, axes_world[2])
+        camera_pos_dist = abs(0.5 * self.geometry.vector_dot(camera_size, axes_world[2]))
         # Leave a 1cm space between camera box and the top of the inner joint motor
         # maybe should just use self.arm_radius - self.motor_height * 2
         motor_top = self.geometry.vector_sum(camera_pos, self.geometry.vector_mult_scalar(axes_world[2], -(camera_pos_dist + 0.01)))
@@ -1126,6 +1126,8 @@ class Gimbal3DWidget(QOpenGLWidget):
 
     def _draw_camera(self):
         """Draw a simple camera model at position with orientation."""
+        glTranslatef(0, 0, -self.camera_height / 2)
+
         # Set camera color to black
         glColor3f(0.1, 0.1, 0.1)  # Dark gray / almost black
 
