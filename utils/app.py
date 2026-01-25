@@ -2203,8 +2203,9 @@ class StatusTab(QWidget):
         self.update_timer.stop()
         self.vbat_timer.stop()
         # Reset displays and disable buttons
-        self.vbat_label.setText("Disconnected")
-        self.motor_status_label.setText("Disconnected")
+        self.vbat_label.setText("unknown")
+        self.motor_status_label.setText("unknown")
+        self.motors_on = None
         self.motor_on_btn.setEnabled(False)
         self.motor_off_btn.setEnabled(False)
 
