@@ -445,7 +445,8 @@ class GimbalConnection(QObject):
     connection_changed = pyqtSignal(bool)    # connected
     error_occurred = pyqtSignal(str)         # error message
     text_logged = pyqtSignal(str)
-    busy_state_changed = pyqtSignal(bool)    # busy: True when queues busy for 100ms, False when empty
+    busy_state_changed = pyqtSignal(bool)    # busy: True when read queues busy or calibrating
+    calibrating_changed = pyqtSignal(bool)
 
     def __init__(self, debug=False):
         super().__init__()
@@ -459,6 +460,7 @@ class GimbalConnection(QObject):
         self._busy_timer.setSingleShot(True)
         self._busy_timer.timeout.connect(self._on_busy_timeout)
         self._is_busy_signaled = False
+        self.calibrating = False  # Flag indicating calibration is in progress
         self.in_stream = fr.InStream(
             text_cb=self._text_cb,
             frame_cb=self._frame_cb,
@@ -700,7 +702,7 @@ class GimbalConnection(QObject):
 
     def _check_busy_state(self):
         """Check if request queues are busy and manage signaling."""
-        busy = len(self.pending_requests) > 0
+        busy = len(self.pending_requests) > 0 or self.calibrating
 
         if busy and not self._is_busy_signaled:
             # Queues became busy, start 100ms timer
@@ -713,10 +715,44 @@ class GimbalConnection(QObject):
                 self._is_busy_signaled = False
                 self.busy_state_changed.emit(False)
 
+            self._check_drain_queues()
+
     def _on_busy_timeout(self):
         """Called after 100ms of continuous busy state."""
         self._is_busy_signaled = True
         self.busy_state_changed.emit(True)
+
+    def set_calibrating(self, val):
+        self.calibrating = val
+        self.calibrating_changed.emit(val)
+
+        if val and not self._is_busy_signaled:
+            self._busy_timer.stop()
+            self._is_busy_signaled = True
+            self.busy_state_changed.emit(True)
+
+        if not val:
+            self._check_busy_state()
+
+    def _check_drain_queues(self):
+        if not hasattr(self, 'drain_cb'):
+            return
+
+        if not self.pending_requests and not self.queued_requests:
+            cb = self.drain_cb
+            del self.drain_cb
+            cb()
+
+    def drain_queues(self, callback):
+        """Wait for request queues to be empty, then call callback."""
+        self.drain_cb = callback
+        self._check_drain_queues()
+
+    def send_raw(self, data: bytes):
+        """Send raw data to the serial port."""
+        if not self.is_connected():
+            raise Exception("Not connected")
+        self.port.write(data)
 
     def control(self, angles=None, speeds=None): # degrees and degrees/s respectively
         modes = [
@@ -730,6 +766,22 @@ class GimbalConnection(QObject):
             None for i in range(3)
         ]
         self.send_command(cmd.CmdId.CMD_CONTROL, cmd.ControlRequest.build(dict(control_mode=modes, target=targets)))
+
+    def write_param(self, param_name, value):
+        by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
+        pdef = by_name[param_name]
+        param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+        value_bytes = param_type_cls.build(value)
+
+        # Build request
+        out_payload = cmd_obgc.SetParamRequest.build(dict(param_id=pdef.id, value=value_bytes))
+        out_frame = fr.FrameV1.build(dict(
+            hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC)),
+            pld=out_payload
+        ))
+
+        # TODO: perhaps drain the read queue before doing this, for now let callers do it if needed
+        self.port.write(out_frame)
 
 
 def list_convert(val):
@@ -1406,6 +1458,11 @@ class ConnectionTab(QWidget):
             self.port_monitor.stop()
         super().closeEvent(event)
 
+    def start_updates(self):
+        pass
+    def stop_updates(self):
+        pass
+
 
 class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights, etc.
     """Custom console widget for displaying text log with terminal-like behavior."""
@@ -1429,10 +1486,14 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
         font.setStyleHint(font.StyleHint.TypeWriter)
         self.setFont(font)
 
+        self._active = True
         text_log_ref.text_logged.connect(self.on_text_logged)
 
     def on_text_logged(self, text):
         """Update the display with new log content."""
+        if not self._active:
+            return
+
         cursor = self.textCursor()
         for char in text:
             if char == '\n':
@@ -1528,6 +1589,10 @@ class ConsoleWidget(QPlainTextEdit): # QTextEdit if we need colours, highlights,
             self.scroll_position = min(max_scroll, self.scroll_position + 1)
         self.update()
         '''
+
+    def set_active(self, active):
+        """Set whether the console should process text."""
+        self._active = active
 
 
 class BusyIndicator(QWidget):
@@ -1914,7 +1979,7 @@ class StatusTab(QWidget):
 
         # Column headers
         joints_layout.addWidget(QLabel("Angle"), 0, 2)
-        joints_layout.addWidget(QLabel("Force"), 0, 3)
+        joints_layout.addWidget(QLabel("Force (torque)"), 0, 3)
 
         self.joint_labels = []
         self.encoder_labels = []
@@ -1980,7 +2045,7 @@ class StatusTab(QWidget):
         # Target angle input
         # Send button
         # Current speed label
-        camera_layout.addWidget(QLabel("Speed"), 0, 6) # Speed bar
+        camera_layout.addWidget(QLabel("Speed (rate)"), 0, 6) # Speed bar
         # Target speed input
         # Send button
 
@@ -2117,13 +2182,16 @@ class StatusTab(QWidget):
         self.vbat_timer.timeout.connect(self.update_motors_status)
         self.vbat_timer.setInterval(1000)  # 1 Hz
 
+        self.connection.calibrating_changed.connect(self.update_button_states)
+
     def start_updates(self):
         """Start update timers."""
         if self.connection.is_connected():
             self.update_timer.start()
             self.vbat_timer.start()
-            self.connection.read_param("config.control.max-vel", self.update_max_vel)
             self.update_button_states()
+            if not self.connection.calibrating:
+                self.connection.read_param("config.control.max-vel", self.update_max_vel)
 
     def stop_updates(self):
         """Stop update timers."""
@@ -2137,7 +2205,7 @@ class StatusTab(QWidget):
 
     def update_encoders_and_forces(self):
         """Update encoder angle and motor force displays."""
-        if not self.connection.is_connected():
+        if not self.connection.is_connected() or self.connection.calibrating:
             return
 
         if not hasattr(self, 'current_encoder_angles'):
@@ -2221,7 +2289,7 @@ class StatusTab(QWidget):
 
     def update_vbat(self):
         """Update battery voltage display."""
-        if not self.connection.is_connected():
+        if not self.connection.is_connected() or self.connection.calibrating:
             return
 
         def callback(value):
@@ -2244,7 +2312,7 @@ class StatusTab(QWidget):
 
     def update_motors_status(self):
         """Update motors status display."""
-        if not self.connection.is_connected():
+        if not self.connection.is_connected() or self.connection.calibrating:
             return
 
         def callback(value):
@@ -2362,11 +2430,12 @@ class StatusTab(QWidget):
 
     def update_button_states(self):
         """Update button states based on motor status."""
+        connection_ok = self.connection.is_connected() and not self.connection.calibrating
         # Update button states: On only when motors are off
-        self.motor_on_btn.setEnabled(not self.motors_on and self.connection.is_connected())
-        self.motor_off_btn.setEnabled(self.connection.is_connected())
+        self.motor_on_btn.setEnabled(not self.motors_on and connection_ok)
+        self.motor_off_btn.setEnabled(connection_ok)
 
-        enabled = bool(self.motors_on) and self.connection.is_connected()
+        enabled = bool(self.motors_on) and connection_ok
         for btn in self.angle_send_buttons + self.speed_send_buttons:
             btn.setEnabled(enabled)
 
@@ -2391,49 +2460,159 @@ class StatusTab(QWidget):
 class CalibrationTab(QWidget):
     """Tab for calibration status and controls."""
 
-    def __init__(self, connection: GimbalConnection, parent=None):
-        super().__init__(parent)
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, main_window=None):
+        super().__init__(None)
         self.connection = connection
+        self.geometry = geometry
+        self.main_window = main_window
 
         layout = QVBoxLayout()
 
-        # Calibration status
-        status_group = QGroupBox("Calibration Status")
-        status_layout = QVBoxLayout()
-
-        self.status_labels = {}
-        for name in ["Axes & Encoders", "Home Position", "Forward Direction"]:
-            label = QLabel(f"{name}: Not calibrated")
-            status_layout.addWidget(label)
-            self.status_labels[name] = label
-
-        status_group.setLayout(status_layout)
-        layout.addWidget(status_group)
+        # Calibration status label
+        self.status_label = QLabel("There are 4 calibration steps to be completed before " +
+            "the gimbal can correctly interpret the joint and camera orientations from " +
+            "the available sensors.  There are 2 more steps after that to enable the " +
+            "motors to be driven and stabilize the camera head.\n\n" +
+            "The list below shows the recommended sequence of calibration steps.  Some " +
+            "steps can only be done in a specific order, some may need to be redone if " +
+            "an earlier step is re-done.\n\n" +
+            "Hover over buttons to see specific info on each step.\n\n" +
+            "Each procedure saves the output data to the gimbal's RAM only.  Remember to " +
+            "test and save the new config to preserve changes after power off.")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
 
         # Calibration controls
         controls_group = QGroupBox("Calibration Steps")
-        controls_layout = QVBoxLayout()
+        controls_layout = QGridLayout()
 
-        calibration_steps = [
-            "Gyro calibration",
-            "Axes&encoders geometry",
-            "Home position",
-            "Forward direction",
-            "Motor geometry",
-            "Motor PID config"
+        # TODO: keep as one line, let the toolkit do the line wrapping
+        descriptions = {
+            "balance": ("Manually balance the camera/load on the camera head so that it\n" +
+                "stays static in any orientation without holding.  Recommended first step."),
+            "gyro": ("Takes 5-10 seconds, can be re-done at any time.  Keep the gimbal\n" +
+                "absolutely static while it runs.  This saves the reference gyroscope\n" +
+                "readings (bias) which vary from device to device and with time and\n" +
+                "temperature.\n" +
+                "Recommmended before running axis calibration to reduce drift.\n" +
+                "Also done automatically on boot, unless disabled."),
+            "axes": ("Autodetects your gimbal's basic arms geometry, joint order, IMU\n" +
+                "and mounting angles, encoder magnet angle and polarity.\n"
+                "Requires you to move the gimbal in a specific sequence manually,\n" +
+                "See instructions in the tab."),
+            "home": ("Tells the firmware what the reference (level) camera head orientation\n" +
+                "is.  Manually level or orient the camera head, looking in the forward\n" +
+                "direction with regards to the handle/base, then press \"Set\" to remember\n" +
+                "this position as home position."),
+            "forward": ("Do this immediately after setting the home position.  It'll tell the\n" +
+                "firmware where the forward direction is, i.e. where the camera lens is\n" +
+                "pointing.  Even though it already knows the home orientation, without\n" +
+                "this extra step it can't know where the camera's roll and pitch axes\n" +
+                "are.  Note that the camera can be mounted diagonally or at any angle\n" +
+                "relative to the *joint* axes, those are conceptually separate from\n" +
+                "the camera's Euler axes that we define here.\n" +
+                "Rotate the camera head from the home position strictly in the roll\n" +
+                "axis to the right (CW) by around 45 degrees then hit \"Set\".  The\n" +
+                "firmware will remember the axis of rotation between these two\n" +
+                "orientations the forward vector.  Rolling here means that the\n" +
+                "lens keeps pointing at the same point, only the the image in camera\n" +
+                "rotates around its center.  You can have it on and zoomed in to\n" +
+                "make a precise roll rotation."),
+            "motor": ("Detects the number of each motor's rotor poles, their angle with\n" +
+                "relation to the encoder (aka. field offset) and the direction of the\n" +
+                "stator winding sequence wrt. current polarity.  Needed to drive the\n" +
+                "motors."),
+            "pid": ("Configure each motor's driver feedback loop for the load.  This\n" +
+                "will need to be adjusted every time the camera is changed to ensure\n" +
+                "the firmware applies the right amounts of torque for smooth,\n" +
+                "controlled motion.  This is a manual step, see instructions in the\n" +
+                "tab."),
+            "limit": ("Autodetect or manually set the positions of the hard stops on\n" +
+                "the joints, if present, to allow the firmware to avoid hitting them\n" +
+                "and plan motion trajectories that don't cross the limit angles."),
+            "parking": ("Save the current joint angles as the parking position.  Optional."),
+            "voltage": ("TODO: Set the battery/supply voltage sensing scale for correct\n" +
+                "low voltage alarm and motor force compensation.  Optional."),
+        }
+
+        # Define calibration steps with their corresponding geometry flags
+        self.calibration_steps = [
+            ('balance', "Camera balance",
+             [],
+             [],
+             lambda: True),
+            ('gyro', "Gyro calibration",
+             [("Redo", self.on_gyro_redo)],
+             [],
+             lambda: True),
+            ('axes', "Axes & encoders geometry",
+             [("Go to tab", self.on_go_to_axes_tab)],
+             [],
+             lambda: self.geometry.have_axes),
+            ('home', "Home position",
+             [("Set", self.on_set_home)],
+             [],
+             lambda: self.geometry.have_home),
+            ('forward', "Forward direction",
+             [("Set", self.on_set_forward)],
+             [],
+             lambda: self.geometry.have_forward),
+            ('motor', "Motor geometry",
+             [("Go to tab", self.on_go_to_motor_tab)],
+             [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)],
+             lambda: False), # TODO
+            ('pid', "Motor PIDs",
+             [("Go to tab", self.on_go_to_pid_tab)],
+             [f'config.motor-pid.{i}.kp' for i in range(3)],
+             lambda: True), # No way to know whether configured (?)
+            ('limit', "Joint limits",
+             [("Go to tab", self.on_go_to_limit_tab)],
+             [f'config.axes.has-limits.{i}' for i in range(3)],
+             lambda: False), # TODO
+            ('parking', "Parking position",
+             [("Set", self.on_set_parking)],
+             [],
+             lambda: self.geometry.have_parking),
+            ('voltage', "Voltage sense",
+             [],
+             [],
+             lambda: False), # TODO
         ]
 
+        self.calibration_checkboxes = {}
+        self.calibration_labels = {}
         self.calibration_buttons = {}
-        for step in calibration_steps:
-            step_layout = QHBoxLayout()
-            label = QLabel(step)
-            button = QPushButton("Start")
-            button.setEnabled(False)  # Placeholder, non-functional
-            step_layout.addWidget(label)
-            step_layout.addWidget(button)
-            step_layout.addStretch()
-            controls_layout.addLayout(step_layout)
-            self.calibration_buttons[step] = button
+
+        row = 0
+        for step_id, step_name, buttons, params, check in self.calibration_steps:
+            # TODO: read the params
+
+            # Checkbox in first column
+            checkbox = QCheckBox()
+            checkbox.setEnabled(False) # Read-only
+            checkbox.setToolTip(descriptions[step_id])
+            controls_layout.addWidget(checkbox, row, 0)
+            self.calibration_checkboxes[step_id] = checkbox
+
+            # Label in second column
+            label = QLabel(step_name)
+            label.setToolTip(descriptions[step_id])
+            controls_layout.addWidget(label, row, 1)
+            self.calibration_labels[step_id] = label
+
+            # Button in third column
+            column = 2
+            self.calibration_buttons[step_id] = []
+            for button_text, handler in buttons:
+                button = QPushButton(button_text)
+                button.clicked.connect(handler)
+                button.setToolTip(descriptions[step_id])
+                controls_layout.addWidget(button, row, column)
+                column += 1
+                self.calibration_buttons[step_id].append(button)
+                # TODO: disable all while motors on, calibration running, not connected, etc.
+
+            row += 1
 
         controls_group.setLayout(controls_layout)
         layout.addWidget(controls_group)
@@ -2441,44 +2620,231 @@ class CalibrationTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # Update timer for status
-        self.status_timer = QTimer()
-        self.status_timer.timeout.connect(self.update_status)
-        self.status_timer.setInterval(1000)  # 1 Hz
+        # Connect to geometry changes to update checkboxes and buttons
+        self.geometry.geometry_changed.connect(self.update_checkboxes)
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+    def update_buttons(self):
+        """Enable or disable all calibration buttons."""
+        for buttons in self.calibration_buttons.values():
+            for button in buttons:
+                button.setEnabled(not self.connection.calibrating)
+
+    def update_checkboxes(self):
+        for step_id, step_name, buttons, params, check in self.calibration_steps:
+            self.calibration_checkboxes[step_id].setChecked(check())
 
     def start_updates(self):
-        """Start status update timer."""
-        if self.connection.is_connected():
-            self.status_timer.start()
-            self.update_status()
-
-    def stop_updates(self):
-        """Stop status update timer."""
-        self.status_timer.stop()
-
-    def update_status(self):
         """Update calibration status display."""
         if not self.connection.is_connected():
             return
 
-        def callback_have_axes(value):
-            if value is not None:
-                status = "Calibrated" if bool(value) else "Not calibrated"
-                self.status_labels["Axes & Encoders"].setText(f"Axes & Encoders: {status}")
+        # Update checkboxes based on current geometry state
+        self.update_checkboxes()
+        self.update_buttons()
 
-        def callback_have_home(value):
-            if value is not None:
-                status = "Calibrated" if bool(value) else "Not calibrated"
-                self.status_labels["Home Position"].setText(f"Home Position: {status}")
+    def stop_updates(self):
+        pass
 
-        def callback_have_forward(value):
-            if value is not None:
-                status = "Calibrated" if bool(value) else "Not calibrated"
-                self.status_labels["Forward Direction"].setText(f"Forward Direction: {status}")
+    def on_gyro_redo(self):
+        """Handle gyro calibration redo button click."""
+        if not self.connection.is_connected():
+            return
 
-        self.connection.read_param("config.have-axes", callback_have_axes)
-        self.connection.read_param("config.control.have-home", callback_have_home)
-        self.connection.read_param("config.control.have-forward", callback_have_forward)
+        def done(now):
+            self.connection.set_calibrating(False)
+
+        # Drain queues, then send calibration command
+        def after_drain():
+            self.connection.send_raw(b'c')
+            self.connection.read_param("now", done)
+
+        self.connection.set_calibrating(True)
+        self.connection.drain_queues(after_drain)
+
+    def on_go_to_axes_tab(self):
+        """Switch to axis calibration tab."""
+        self.main_window.switch_to_tab('calib_axes')
+
+    def on_set_home(self):
+        self.connection.send_raw(b'k')
+        logger.info(f"New home position set")
+        self.geometry.update()
+
+    def on_set_forward(self):
+        self.connection.send_raw(b'K')
+        logger.info(f"New forward vector set")
+        self.geometry.update()
+
+    def on_go_to_motor_tab(self):
+        self.main_window.switch_to_tab('calib_motor')
+
+    def on_go_to_pid_tab(self):
+        self.main_window.switch_to_tab('calib_pid')
+
+    def on_go_to_limit_tab(self):
+        self.main_window.switch_to_tab('calib_limit')
+
+    def on_set_parking(self):
+        def encoders_read_cb(values):
+            if values is None:
+                logger.error(f"Can't set parking angles, read error")
+                return
+
+            self.connection.write_param('config.control.park-angles',
+                                        [math.radians(values[i]) for i in range(3)])
+            self.connection.write_param('config.control.have-parking', True)
+            self.geometry.update()
+            logger.info(f"New parking angles set")
+
+        self.read_param([f"encoders.{i}.reading" for i in range(3)], encoders_read_cb)
+
+
+class AxisCalibrationTab(QWidget):
+    """Tab for axes and encoders geometry calibration."""
+
+    def __init__(self, connection: GimbalConnection, geometry, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.geometry = geometry
+        self.calibration_active = False
+        self.done_count = 0
+
+        layout = QVBoxLayout()
+
+        # Top HBox with label and buttons
+        top_hbox = QHBoxLayout()
+
+        # Placeholder label on the left
+        info_label = QLabel("This procedure autodetects your gimbal's basic arms geometry, " +
+                "joint order, IMU mounting angles and encoder magnet angle and polarity.  " +
+                "The procedure requires you to move the gimbal arms in a specific sequence " +
+                " manually whie the firmware is going to be matching the IMU readings with the " +
+                " encoder readings and bulding an map of the geometry parameters.  Follow the " +
+                "instructions from the firmware below.\n\n" +
+                "After succesful calibration make sure to write the new configuration to non-" +
+                "volatile storage.  Follow with the home position calibration step.\n\n" +
+                "If you cancel, some parameters may have been overwritten so a re-read of " +
+                "non-volatile storage is recommended (or a reset).")
+        top_hbox.addWidget(info_label)
+        info_label.setWordWrap(True)
+
+        top_hbox.addStretch()
+
+        right_vbox = QVBoxLayout()
+
+        # Start and Cancel buttons on the right
+        self.start_button = QPushButton("Start")
+        self.start_button.clicked.connect(self.on_start)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.on_cancel)
+        self.flip_buttons = [QPushButton("Flip axis " + str(i)) for i in range(3)]
+        for i in range(3):
+            self.flip_buttons[i].clicked.connect(lambda: self.on_flip(i))
+
+        # TODO: backup/restore buttons here or in the main calibration tab
+        # together with the Write all to NV mem, reread all from NV mem
+
+        right_vbox.addWidget(self.start_button)
+        right_vbox.addWidget(self.cancel_button)
+        for button in self.flip_buttons:
+            right_vbox.addWidget(button)
+        top_hbox.addLayout(right_vbox)
+        layout.addLayout(top_hbox)
+
+        # Console widget below
+        self.console = ConsoleWidget(self.connection)
+        self.console.set_active(False)
+        layout.addWidget(self.console)
+
+        self.setLayout(layout)
+
+        # Connect to text_logged signal to watch for calibration completion
+        self.connection.text_logged.connect(self.on_text_logged)
+
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.start_button.setEnabled(self.connection.is_connected() and not self.connection.calibrating)
+        self.cancel_button.setEnabled(self.connection.is_connected() and self.calibration_active)
+        for button in self.flip_buttons:
+            button.setEnabled(self.connection.is_connected() and not self.connection.calibrating and
+                              self.geometry.have_axes)
+
+    def on_start(self):
+        """Handle start button click."""
+        if not self.connection.is_connected():
+            return
+
+        self.calibration_active = True
+        self.connection.set_calibrating(True)
+        self.update_buttons()
+        self.done_count = 0
+
+        def after_drain():
+            self.console.set_active(True)
+            self.connection.send_raw(b'C')
+
+        self.connection.drain_queues(after_drain)
+
+    def done(self):
+        self.calibration_active = False
+        self.connection.set_calibrating(False)
+
+        self.update_buttons()
+        self.geometry.update()
+
+    def on_cancel(self):
+        """Handle cancel button click."""
+        if not self.connection.is_connected() or not self.calibration_active:
+            return
+
+        # Send "q" command to cancel calibration
+        self.connection.send_raw(b'q')
+
+        self.done()
+
+    def on_flip(self, axis_num):
+        enc_num = self.geometry.axis_to_encoder[axis_num]
+
+        logger.info(f'Inverting axis {axis_num} vector and related settings')
+
+        self.connection.write_param(f'config.axes.axes.{axis_num}', [-v for v in self.geometry.axes[axis_num]])
+        self.connection.write_param(f'config.axes.encoder-scale.{enc_num}', -self.geometry.encoder_scale[enc_num])
+        self.connection.write_param(f'config.axes.limit-min.{axis_num}', -self.geometry.limit_max[axis_num])
+        self.connection.write_param(f'config.axes.limit-max.{axis_num}', -self.geometry.limit_min[axis_num])
+        self.geometry.update()
+
+    def on_text_logged(self, text):
+        """Handle text logged signal - watch for calibration completion."""
+        if not self.calibration_active:
+            return
+
+        lines = text.split('\n')
+        for line in lines:
+            # Ignore content in square brackets at the beginning
+            bracket_end = line.find(']')
+            while bracket_end >= 0:
+                line = line[bracket_end + 1:].lstrip()
+                bracket_end = line.find(']')
+
+            # Check for "Cancelled" or "Done."
+            if "Cancelled" in line:
+                self.console.set_active(False)
+                self.on_cancel()
+                return
+            elif line.startswith("Done."):
+                self.done_count += 1
+                if self.done_count >= 3:
+                    self.console.set_active(False)
+                    self.done()
+
+    def start_updates(self):
+        self.update_buttons()
+    def stop_updates(self):
+        pass
 
 
 class MainWindow(QMainWindow):
@@ -2487,7 +2853,7 @@ class MainWindow(QMainWindow):
     def __init__(self, debug=False):
         super().__init__()
         self.setWindowTitle("OpenBGC Gimbal app")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(300, 100, 1000, 800)
 
         # Create connection and geometry
         self.connection = GimbalConnection(debug)
@@ -2503,8 +2869,8 @@ class MainWindow(QMainWindow):
         # Initially disable non-connection tabs
         self.on_connection_changed(False)
 
-        # Select status tab initially (connection is now at index 2)
-        self.tab_selector.setCurrentRow(2)
+        # Select status tab initially
+        self.switch_to_tab('status')
 
     def create_splitter(self):
         """Create the main splitter with tab content and bottom strip."""
@@ -2515,31 +2881,44 @@ class MainWindow(QMainWindow):
         main_widget = QWidget()
         main_layout = QHBoxLayout()
 
-        # Left sidebar with tab list
-        self.tab_selector = QListWidget()
-        self.tab_selector.addItems(["Status", "Calibration", "Connection"])
-        self.tab_selector.currentRowChanged.connect(self.on_tab_changed)
+        # Left sidebar with tab tree
+        self.tab_selector = QTreeWidget()
+        self.tab_selector.setHeaderHidden(True)
         self.tab_selector.setMaximumWidth(150)
+        self.tab_selector.setMinimumWidth(150)
+        self.tab_selector.itemSelectionChanged.connect(self.on_tab_selection_changed)
+
+        # Create top-level items
+        status_item = QTreeWidgetItem(self.tab_selector, ["Status"])
+        calibration_item = QTreeWidgetItem(self.tab_selector, ["Calibration"])
+        connection_item = QTreeWidgetItem(self.tab_selector, ["Connection"])
+
+        # Add sub-item for calibration
+        axis_calibration_item = QTreeWidgetItem(calibration_item, ["Axis calibration"])
+        calibration_item.addChild(axis_calibration_item)
+
+        # Expand calibration by default
+        calibration_item.setExpanded(True)
 
         # Ensure disabled items are visually distinct
         self.tab_selector.setStyleSheet("""
-            QListWidget::item:disabled { color: #aaaaaa; }
-            QListWidget::item:enabled { color: #000000; }
+            QTreeWidget::item:disabled { color: #aaaaaa; }
+            QTreeWidget::item:enabled { color: #000000; }
         """)
-        # background-color: #f0f0f0; background-color: transparent;
         main_layout.addWidget(self.tab_selector)
 
         # Right side: stacked widget for tab content
         self.stacked_widget = QStackedWidget()
 
-        # Create tabs
-        self.status_tab = StatusTab(self.connection, self.geometry)
-        self.calibration_tab = CalibrationTab(self.connection)
-        self.connection_tab = ConnectionTab(self.connection)
+        self.tabs = {
+            'status': (0, status_item, StatusTab(self.connection, self.geometry)),
+            'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self)),
+            'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry)),
+            'connection': (3, connection_item, ConnectionTab(self.connection)),
+        }
 
-        self.stacked_widget.addWidget(self.status_tab)
-        self.stacked_widget.addWidget(self.calibration_tab)
-        self.stacked_widget.addWidget(self.connection_tab)
+        for index, item, tab in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
+            self.stacked_widget.addWidget(tab)
 
         main_layout.addWidget(self.stacked_widget)
         main_widget.setLayout(main_layout)
@@ -2574,51 +2953,49 @@ class MainWindow(QMainWindow):
 
         return splitter
 
-    def on_tab_changed(self, index):
-        """Handle tab selection change."""
-        if index >= 0:
-            self.stacked_widget.setCurrentIndex(index)
-            current_widget = self.stacked_widget.currentWidget()
+    def on_tab_selection_changed(self):
+        """Handle tab selection change from tree widget."""
+        selected_items = self.tab_selector.selectedItems()
+        if not selected_items:
+            return
 
-            # If connecting and switching to a tab, start updates
-            if index == 0 and self.connection.is_connected():
-                self.status_tab.start_updates()
-            else:
-                self.status_tab.stop_updates()
+        selected_item = selected_items[0]
 
-            if index == 1 and self.connection.is_connected():
-                self.calibration_tab.start_updates()
+        for index, item, tab in self.tabs.values():
+            if selected_item == item:
+                self.stacked_widget.setCurrentIndex(index)
+                if self.connection.is_connected():
+                    tab.start_updates()
+                else:
+                    tab.stop_updates()
             else:
-                self.calibration_tab.stop_updates()
+                tab.stop_updates()
+
+    def switch_to_tab(self, tab_id):
+        """Switch to a specific tab by id."""
+        self.tab_selector.setCurrentItem(self.tabs[tab_id][1])
 
     def on_connection_changed(self, connected: bool):
         """Handle connection state change."""
         # Enable/disable tabs based on connection
         if connected:
             # Enable all tabs
-            for i in range(self.tab_selector.count()):
-                item = self.tab_selector.item(i)
-                if item:
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+            for index, item, tab in self.tabs.values():
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
 
             # Switch to status tab
-            self.tab_selector.setCurrentRow(0)
-            self.status_tab.start_updates()
+            self.switch_to_tab('status')
 
             self.port_status.setText(self.connection.port_path)
         else:
-            # Disable status and calibration tabs (connection tab is at index 2)
-            for i in range(2):
-                item = self.tab_selector.item(i)
-                if item:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-
-            # Stop updates
-            self.status_tab.stop_updates()
-            self.calibration_tab.stop_updates()
+            # Disable status and calibration tabs
+            for index, item, tab in [self.tabs['status'], self.tabs['calibration'],
+                        self.tabs['calib_axes']]:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                tab.stop_updates()
 
             # Switch to connection tab
-            self.tab_selector.setCurrentRow(2)
+            self.switch_to_tab('connection')
 
             self.port_status.setText("Offline")
 
