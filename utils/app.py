@@ -907,7 +907,7 @@ class Gimbal3DWidget(QOpenGLWidget):
             motor_top = self.geometry.vector_sum(seg_start, self.geometry.vector_mult_scalar(seg_z, self.arm_thickness))
             motor_base = self.geometry.vector_sum(motor_top, self.geometry.vector_mult_scalar(seg_z, -self.motor_height))
 
-        motors.append((motor_top, motor_base, (seg_x, seg_y, seg_z)))
+        motors.append((motor_top, motor_base, self.geometry.matrix_t((seg_x, seg_y, seg_z))))
 
         return orientations, axes_world, motors[::-1], segments[::-1]
 
