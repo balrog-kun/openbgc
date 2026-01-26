@@ -20,9 +20,10 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox, QComboBox
+        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox,
+        QComboBox
     )
-    from PyQt6.QtGui import QDoubleValidator
+    from PyQt6.QtGui import QIcon
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
     )
@@ -34,8 +35,10 @@ except ImportError:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox, QComboBox
+        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox,
+        QComboBox
     )
+    from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
     )
@@ -2156,7 +2159,7 @@ class StatusTab(QWidget):
         layout.addWidget(vbat_group)
 
         # Motor status and controls
-        motor_group = QGroupBox("Motor Control")
+        motor_group = QGroupBox("Motor Power")
         motor_layout = QHBoxLayout()
         motor_layout.addWidget(QLabel("Status:"))
         self.motor_status_label = QLabel("unknown")
@@ -2190,14 +2193,14 @@ class StatusTab(QWidget):
         self.vbat_timer.timeout.connect(self.update_motors_status)
         self.vbat_timer.setInterval(1000)  # 1 Hz
 
-        self.connection.calibrating_changed.connect(self.update_button_states)
+        self.connection.calibrating_changed.connect(self.update_buttons)
 
     def start_updates(self):
         """Start update timers."""
         if self.connection.is_connected():
             self.update_timer.start()
             self.vbat_timer.start()
-            self.update_button_states()
+            self.update_buttons()
             if not self.connection.calibrating:
                 self.connection.read_param("config.control.max-vel", self.update_max_vel)
 
@@ -2313,7 +2316,7 @@ class StatusTab(QWidget):
     def new_motors_status(self):
         status_text = "On" if self.motors_on == True else ("Off" if self.motors_on == False else "...")
         self.motor_status_label.setText(status_text)
-        self.update_button_states()
+        self.update_buttons()
 
         if not self.motors_on:
             for i in range(3):
@@ -2437,7 +2440,7 @@ class StatusTab(QWidget):
         widgets = self.camera_angle_inputs if is_angle else self.camera_speed_inputs
         self.send_control(euler_idx, is_angle, widgets[euler_idx].value())
 
-    def update_button_states(self):
+    def update_buttons(self):
         """Update button states based on motor status."""
         connection_ok = self.connection.is_connected() and not self.connection.calibrating
         # Update button states: On only when motors are off
@@ -3091,6 +3094,351 @@ class MotorGeometryCalibrationTab(QWidget):
         pass
 
 
+class MotorPidEditorTab(QWidget):
+    """Tab for motor PID parameter editing."""
+
+    def __init__(self, connection: GimbalConnection, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.motors_on = None  # Unknown initially
+
+        layout = QVBoxLayout()
+
+        # Info label with instructions
+        info_label = QLabel(
+            "These parameters control the low-level motor control loop.  The PID loop "
+            "variable is joint velocity or angular rate and the output is the motor "
+            "winding voltage phasor, mapping roughly to the torque.\n\n"
+            "Defaults are unlikely to work well so tuning this is a necessary, manual "
+            "step.  No auto-tuning at this time.  Recommended initial sequence:\n"
+            "• Tune each motor separately, test using the individual constant-velocity\n"
+            "  buttons here before enabling all 3 motors and the higher level control\n"
+            "  loop with the On button.  More tuning may be needed after all motors\n"
+            "  are on and interfere with each other.\n"
+            "• Set P of 0.01, zero I, zero D\n"
+            "• Increase P until oscillation starts, then reduce by 40%.\n"
+            "  The oscillation is likely in the 10-300Hz range so more like buzzing.\n"
+            "  The goal with P is for velocities to reach commanded setpoints quickly\n"
+            "  (tracking) but without overshooting.\n"
+            "• Increase I until oscillation starts, then reduce by 20%, too.\n"
+            "  This will be a slower, visible oscillation.  The goal is for I to correct\n"
+            "  for cogging, frictions, non-ideal camera balance but not for low P.\n"
+            "• D is likely unneeded.  It can help increase I range but reduces P range.\n"
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # Grid layout for PID parameters
+        grid_group = QGroupBox("PID Parameters")
+        grid_layout = QGridLayout()
+
+        # Headers
+        l = [QLabel("Outer (0)"), QLabel("Middle (1)"), QLabel("Inner (2)")]
+        for i in range(3):
+            grid_layout.addWidget(l[i], 0, 1 + i)
+            grid_layout.setAlignment(l[i], Qt.AlignmentFlag.AlignCenter)
+
+        # Parameter rows
+        params = [
+            ("P Gain", "kp", (0.001, 10),
+             "Standard PID Kp"),
+            ("I Gain", "ki", (0, 10),
+             "Standard PID Ki"),
+            ("D Gain", "kd", (0, 10),
+             "PID differential gain expressed in time units"),
+            ("P trust", "kp-trust", (0, 0.99),
+             "Replace this fraction of velocity from feedback sensors with the velocity\n"
+             "requested in previous iteration.  When the Kp value has been tuned and\n"
+             "tested and works well, the loop can rely less on the sensor and assume\n"
+             "that whatever it commanded in the previous iteration has taken effect\n"
+             "perfectly.  The benefit it less sensor noise in the loop input, the\n"
+             "downside is slower reactions to unpredictable external torques, so this\n"
+             "may be mainly useful in tripod mode."),
+            ("I falloff", "ki-falloff", (0, 0.5),
+             "In each iteration drop this fraction of the accumulated error integral,\n"
+             "basically multiply the accumulated I by (1 - this) to limit its buildup."),
+            ("V_max", "v-max", (0.001, 1),
+             "Limit commanded winding voltage (roughly proportional to torque) to this\n"
+             "fraction of the total battery  voltage.  It's unitless, not in volts,\n"
+             "because it's a fraction of Vbat.\n"
+             "Use e.g. for overheat safety and camera stress safety, when you know you\n"
+             "don't need torques larger than some part of the maximum torque the\n"
+             "motor+battery combination can impart."),
+            ("Drag", "kdrag", (0, 1),
+             "Assume and compensate for a drag torque proportional to this fraction of\n"
+             "current velocity.  Units undefined for now."),
+        ]
+        self.suffixes = [p[1] for p in params]
+
+        self.spinboxes = {}
+        self.send_buttons = {}
+        self.test_buttons = []
+
+        row = 1
+        for name, param_suffix, valrange, desc in params:
+            # Parameter label
+            namelabel = QLabel(name)
+            namelabel.setToolTip(desc)
+            grid_layout.addWidget(namelabel, row, 0)
+
+            # Container widget for each motor
+            for motor_num in range(3):
+                # Top row: spinbox + send button
+                param_widget = QWidget()
+                param_layout = QHBoxLayout()
+                param_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                spinbox = QDoubleSpinBox()
+                spinbox.setDecimals(3) # TODO: subclass to drop trailing zeros the increase to 4
+                spinbox.setRange(valrange[0], valrange[1])
+                spinbox.setMaximumWidth(80)
+                spinbox.setToolTip(
+                    f"{name} value for motor {motor_num}\nRange ({valrange[0]}, {valrange[1]})\n{desc}")
+
+                # Set adaptive step for PyQt6
+                if PYQT_VERSION == 6:
+                    from PyQt6.QtWidgets import QAbstractSpinBox
+                    spinbox.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
+                else:
+                    spinbox.setSingleStep(0.01)
+
+                # Connect Enter key to trigger button
+                spinbox.lineEdit().returnPressed.connect(
+                    lambda motor=motor_num, param=param_suffix: self.on_send_value(motor, param)
+                )
+
+                param_layout.addWidget(spinbox)
+
+                # Small send button with icon
+                send_button = QPushButton()
+                send_button.setMaximumWidth(30)
+                send_button.setMaximumHeight(25)
+                send_button.setToolTip(f"Send {name} value for motor {motor_num}")
+                send_button.clicked.connect(
+                    lambda checked, motor=motor_num, param=param_suffix: self.on_send_value(motor, param)
+                )
+
+                # Set send icon
+                try:
+                    send_button.setIcon(QIcon.fromTheme("go-next"))
+                    send_button.setText("")  # Hide text when icon is available
+                except:
+                    send_button.setText("→")  # Fallback to text
+
+                param_layout.addWidget(send_button)
+                param_widget.setLayout(param_layout)
+
+                grid_layout.addWidget(param_widget, row, motor_num + 1)
+
+                # Store references
+                key = f"{param_suffix}_{motor_num}"
+                self.spinboxes[key] = spinbox
+                self.send_buttons[key] = send_button
+
+            row += 1
+
+        # Test setpoint row
+        tooltip = (
+            "Enable only one motor, power it on and set constant velocity setpoint\n"
+            "without the position control loop.  Note that 0 sets a 0 velocity setpoint\n"
+            "but the motor is on and using power, don't forget to press \"Off\" when\n"
+            "done.")
+        test_label = QLabel("Test setpoint (deg/s)")
+        test_label.setToolTip(tooltip)
+        grid_layout.addWidget(test_label, row, 0)
+
+        for motor_num in range(3):
+            # Create container for test buttons
+            test_container = QWidget()
+            test_layout = QHBoxLayout(test_container)
+            test_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            # -5 button
+            neg5_btn = QPushButton("-5")
+            neg5_btn.setMaximumWidth(35)
+            neg5_btn.clicked.connect(lambda checked, n=motor_num: self.on_test_setpoint(n, -5))
+            neg5_btn.setToolTip(tooltip)
+            test_layout.addWidget(neg5_btn)
+
+            # 0 button
+            zero_btn = QPushButton("0")
+            zero_btn.setMaximumWidth(35)
+            zero_btn.clicked.connect(lambda checked, n=motor_num: self.on_test_setpoint(n, 0))
+            zero_btn.setToolTip(tooltip)
+            test_layout.addWidget(zero_btn)
+
+            # 5 button
+            pos5_btn = QPushButton("5")
+            pos5_btn.setMaximumWidth(35)
+            pos5_btn.clicked.connect(lambda checked, n=motor_num: self.on_test_setpoint(n, 5))
+            pos5_btn.setToolTip(tooltip)
+            test_layout.addWidget(pos5_btn)
+
+            grid_layout.addWidget(test_container, row, motor_num + 1)
+            self.test_buttons += [neg5_btn, zero_btn, pos5_btn]
+
+        row += 1
+
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+
+        # Motor status and controls (copied from Status tab)
+        motor_group = QGroupBox("Motor Power")
+        motor_layout = QHBoxLayout()
+        motor_layout.addWidget(QLabel("Status:"))
+        self.motor_status_label = QLabel("unknown")
+        motor_layout.addWidget(self.motor_status_label)
+        motor_layout.addStretch()
+
+        self.motor_on_btn = QPushButton("On")
+        self.motor_on_btn.clicked.connect(self.on_motor_on)
+        self.motor_on_btn.setEnabled(False)  # Disabled until connected
+        motor_layout.addWidget(self.motor_on_btn)
+
+        self.motor_off_btn = QPushButton("Off")
+        self.motor_off_btn.clicked.connect(self.on_motor_off)
+        self.motor_off_btn.setEnabled(False)  # Disabled until connected
+        motor_layout.addWidget(self.motor_off_btn)
+
+        motor_group.setLayout(motor_layout)
+        layout.addWidget(motor_group)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # Motor status update timer (1 Hz)
+        self.motor_status_timer = QTimer()
+        self.motor_status_timer.timeout.connect(self.update_motor_status)
+        self.motor_status_timer.setInterval(1000)  # 1 Hz
+
+        # Connect to connection changes
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+        # Load initial values
+        self.load_values()
+        self.update_buttons()
+
+    def load_values(self):
+        """Load current motor PID parameter values."""
+        if not self.connection.is_connected():
+            return
+
+        def read_cb(values):
+            if values is not None:
+                for i in range(3):  # motors
+                    for j in range(len(self.suffixes)):  # parameters
+                        param_idx = i * len(self.suffixes) + j
+                        if param_idx < len(values):
+                            spinbox_key = f"{self.suffixes[j]}_{i}"
+                            self.spinboxes[spinbox_key].setValue(float(values[param_idx]))
+
+        self.connection.read_param(
+            [f'config.motor-pid.{i}.{p}' for i in range(3) for p in self.suffixes],
+            read_cb)
+
+    def on_send_value(self, motor_num, param_suffix):
+        """Send the current spinbox value to the gimbal."""
+        if not self.connection.is_connected():
+            return
+
+        key = f"{param_suffix}_{motor_num}"
+        value = self.spinboxes[key].value()
+
+        param_name = f'config.motor-pid.{motor_num}.{param_suffix}'
+        self.connection.write_param(param_name, value)
+
+    def on_test_setpoint(self, motor_num, setpoint):
+        """Handle test setpoint button clicks."""
+        if not self.connection.is_connected():
+            return
+
+        motor_ctrl_seq = [(b'[D', b'[C'), (b'[B', b'[A'), (b'[6~', b'[5~')]
+
+        self.connection.send_raw(b's')
+
+        # Enable only the specified motor
+        self.set_single_motor_enabled(motor_num)
+
+        # Send the setpoint command
+        if setpoint == -5:
+            self.connection.send_raw(b'S\x1b' + motor_ctrl_seq[motor_num][0])
+        elif setpoint == 0:
+            self.connection.send_raw(b'S')  # S only
+        elif setpoint == 5:
+            self.connection.send_raw(b'S\x1b' + motor_ctrl_seq[motor_num][1])
+
+    def set_single_motor_enabled(self, motor_num):
+        """Enable only the specified motor, disable others."""
+        for i in range(3):
+            enabled = (i == motor_num)
+            self.connection.write_param(f'use-motor.{i}', enabled)
+
+    def on_motor_on(self):
+        """Handle motor on button click."""
+        self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
+        self.motors_on = None
+        self.new_motors_status()
+
+    def on_motor_off(self):
+        """Handle motor off button click."""
+        self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
+        self.motors_on = None
+        self.new_motors_status()
+        # Reset use-motors to all disabled
+        for i in range(3):
+            self.connection.write_param(f'use-motor.{i}', False)
+
+    def update_motor_status(self):
+        """Update motors status display."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        def callback(value):
+            if value is not None:
+                motors_on = bool(value)
+            else:
+                motors_on = None
+
+            if self.motors_on != motors_on:
+                self.motors_on = motors_on
+                self.new_motors_status()
+
+        self.connection.read_param("motors-on", callback)
+
+    def new_motors_status(self):
+        """Update motor status display."""
+        status_text = "ON" if self.motors_on == True else ("Off" if self.motors_on == False else "unknown")
+        self.motor_status_label.setText(status_text)
+        # Make text red if motors are ON, default color otherwise
+        if status_text == "ON":
+            self.motor_status_label.setStyleSheet("color: red;")
+        else:
+            self.motor_status_label.setStyleSheet("")
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled states."""
+        connection_ok = self.connection.is_connected() and not self.connection.calibrating
+        self.motor_on_btn.setEnabled(not self.motors_on and connection_ok)
+        self.motor_off_btn.setEnabled(connection_ok)
+        # PID parameter buttons
+        for btn in list(self.send_buttons.values()) + self.test_buttons:
+            btn.setEnabled(connection_ok)
+
+    def start_updates(self):
+        """Start updates."""
+        self.load_values()
+        self.motor_status_timer.start()
+
+    def stop_updates(self):
+        """Stop updates."""
+        self.motor_status_timer.stop()
+        self.motor_status_label.setText("unknown")
+        self.motor_status_label.setStyleSheet("")
+        self.motors_on = None
+        self.update_buttons()
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -3142,6 +3490,8 @@ class MainWindow(QMainWindow):
         calibration_item.addChild(axis_calibration_item)
         motor_calibration_item = QTreeWidgetItem(calibration_item, ["Motor geometry calibration"])
         calibration_item.addChild(motor_calibration_item)
+        pid_calibration_item = QTreeWidgetItem(calibration_item, ["Motor PID editor"])
+        calibration_item.addChild(pid_calibration_item)
 
         # Expand calibration by default
         calibration_item.setExpanded(True)
@@ -3161,7 +3511,8 @@ class MainWindow(QMainWindow):
             'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self)),
             'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry)),
             'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection)),
-            'connection': (4, connection_item, ConnectionTab(self.connection)),
+            'calib_pid': (4, pid_calibration_item, MotorPidEditorTab(self.connection)),
+            'connection': (5, connection_item, ConnectionTab(self.connection)),
         }
 
         for index, item, tab in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
