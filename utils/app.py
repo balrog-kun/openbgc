@@ -3447,6 +3447,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OpenBGC Gimbal app")
         self.setGeometry(300, 100, 1000, 800)
 
+        # Set global style sheet for disabled buttons
+        self.setStyleSheet("""
+            QPushButton:disabled {
+                color: #aaaaaa;
+            }
+            QPushButton:disabled:hover {
+            }
+            QPushButton:disabled:pressed {
+            }
+        """)
+
         # Create connection and geometry
         self.connection = GimbalConnection(debug)
         self.geometry = GimbalGeometry(self.connection)
@@ -3478,6 +3489,8 @@ class MainWindow(QMainWindow):
         self.tab_selector.setHeaderHidden(True)
         self.tab_selector.setMaximumWidth(150)
         self.tab_selector.setMinimumWidth(150)
+        self.tab_selector.setWordWrap(True)
+        self.tab_selector.setUniformRowHeights(False)  # Allow variable row heights for word wrapping
         self.tab_selector.itemSelectionChanged.connect(self.on_tab_selection_changed)
 
         # Create top-level items
@@ -3495,6 +3508,11 @@ class MainWindow(QMainWindow):
 
         # Expand calibration by default
         calibration_item.setExpanded(True)
+        #calibration_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator) <-- hides the children, why?
+
+        # Set column width to allow word wrapping
+        self.tab_selector.setColumnWidth(0, 250)
+        self.tab_selector.setTextElideMode(Qt.TextElideMode.ElideNone)
 
         # Ensure disabled items are visually distinct
         self.tab_selector.setStyleSheet("""
