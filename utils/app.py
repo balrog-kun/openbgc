@@ -20,8 +20,9 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox
+        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox, QComboBox
     )
+    from PyQt6.QtGui import QDoubleValidator
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
     )
@@ -33,7 +34,7 @@ except ImportError:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
-        QSplitter, QPlainTextEdit, QToolTip
+        QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox, QComboBox
     )
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
@@ -2748,7 +2749,7 @@ class AxisCalibrationTab(QWidget):
         self.cancel_button.clicked.connect(self.on_cancel)
         self.flip_buttons = [QPushButton("Flip axis " + str(i)) for i in range(3)]
         for i in range(3):
-            self.flip_buttons[i].clicked.connect(lambda param, i=i: self.on_flip(i))
+            self.flip_buttons[i].clicked.connect(lambda checked, i=i: self.on_flip(i))
             self.flip_buttons[i].setToolTip(
                 "The calibration sequence cannot detect whether the joint is physically\n" +
                 "on one side of the camera or the other (or both), only where the joint's\n" +
@@ -2864,6 +2865,232 @@ class AxisCalibrationTab(QWidget):
         pass
 
 
+class MotorGeometryCalibrationTab(QWidget):
+    """Tab for motor geometry calibration."""
+
+    def __init__(self, connection: GimbalConnection, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+
+        layout = QVBoxLayout()
+
+        # Explanation label at the top
+        explanation_label = QLabel(
+            "There are 3 motor geometry parameters per motor and they're needed before "
+            "the firwmare can make any use of the motors.  Luckily the firmware can guess "
+            "their values by commanding specific electrical angles to the motors and "
+            "watching the encoder feedback.\n\n"
+            "The logic is quite strict so it will report "
+            "failure if the feedback is even slightly different from expected.  Retry the "
+            "auto-detection until it succeeds varying the starting angle of the joint by "
+            "moving it manually.\n\n"
+            "Remember to write new configuration to non-volatile storage to preserve "
+            "after power off."
+        )
+        explanation_label.setWordWrap(True)
+        layout.addWidget(explanation_label)
+
+        # Grid layout for motor parameters
+        grid_group = QGroupBox("Parameters")
+        grid_layout = QGridLayout()
+
+        # Headers
+        grid_layout.addWidget(QLabel("Pole Pairs"), 0, 2)
+        grid_layout.addWidget(QLabel("Zero Offset"), 0, 3)
+        grid_layout.addWidget(QLabel("Direction"), 0, 4)
+
+        self.autodetect_buttons = []
+        self.pole_pairs_spinboxes = []
+        self.zero_offset_spinboxes = []
+        self.sensor_direction_combos = []
+        self.override_buttons = []
+
+        # Create rows for each joint
+        joints = ["Outer", "Middle", "Inner"]
+        for joint_num in range(3):
+            row = joint_num + 1
+
+            # Joint label
+            joint_label = QLabel(f"{joints[joint_num]} joint motor ({joint_num})")
+            grid_layout.addWidget(joint_label, row, 0)
+
+            # Autodetect button
+            autodetect_btn = QPushButton("Autodetect")
+            autodetect_btn.clicked.connect(lambda checked, n=joint_num: self.on_autodetect(n))
+            autodetect_btn.setToolTip(
+                f"Automatically detect motor geometry parameters for joint {joint_num}.\n"
+                "This will temporarily disable other motors, run the calibration, and\n"
+                "restore all motor settings.  Takes 5-10 seconds.  Watch the console for\n"
+                "results."
+            )
+            grid_layout.addWidget(autodetect_btn, row, 1)
+            self.autodetect_buttons.append(autodetect_btn)
+
+            # Pole pairs spinbox
+            pole_pairs_sb = QSpinBox()
+            pole_pairs_sb.setMinimum(2)
+            pole_pairs_sb.setMaximum(200)
+            pole_pairs_sb.setMaximumWidth(70)
+            pole_pairs_sb.setToolTip(
+                f"Number of pole pairs for joint {joint_num} motor.\n"
+                "This is half the number of magnets on the rotor."
+            )
+            grid_layout.addWidget(pole_pairs_sb, row, 2)
+            self.pole_pairs_spinboxes.append(pole_pairs_sb)
+
+            # Zero electric offset spinbox (with adaptive step)
+            zero_offset_sb = QDoubleSpinBox()
+            zero_offset_sb.setDecimals(1)
+            zero_offset_sb.setRange(0, 360)
+            zero_offset_sb.setMaximumWidth(80)
+            # Set adaptive step type
+            if PYQT_VERSION == 6:
+                from PyQt6.QtWidgets import QAbstractSpinBox
+                zero_offset_sb.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
+            else:
+                # PyQt5 doesn't have StepType enum, use setSingleStep with a small value
+                zero_offset_sb.setSingleStep(1)
+            zero_offset_sb.setToolTip(
+                f"Zero electric offset for joint {joint_num} motor.\n"
+                "This is the electrical angle offset between the encoder zero position\n"
+                "and the motor's nearest electrical zero position."
+            )
+            grid_layout.addWidget(zero_offset_sb, row, 3)
+            self.zero_offset_spinboxes.append(zero_offset_sb)
+
+            # Sensor direction combo
+            sensor_direction_combo = QComboBox()
+            sensor_direction_combo.addItems(["1", "-1"])
+            sensor_direction_combo.setMaximumWidth(60)
+            sensor_direction_combo.setToolTip(
+                f"Sensor direction for joint {joint_num} motor.\n"
+                "1 for electrical angle directly proportional to encoder angle, -1 for\n"
+                "inversely proportional."
+            )
+            grid_layout.addWidget(sensor_direction_combo, row, 4)
+            self.sensor_direction_combos.append(sensor_direction_combo)
+
+            # Override button
+            override_btn = QPushButton("Override")
+            override_btn.clicked.connect(lambda checked, n=joint_num: self.on_override(n))
+            override_btn.setToolTip(
+                f"Write the manually entered values for joint {joint_num} motor to the gimbal."
+            )
+            grid_layout.addWidget(override_btn, row, 5)
+            self.override_buttons.append(override_btn)
+
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+        self.connection.calibrating_changed.connect(self.update_buttons)
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button states based on connection and calibration status."""
+        enabled = self.connection.is_connected() and not self.connection.calibrating
+        for btn in self.autodetect_buttons + self.override_buttons:
+            btn.setEnabled(enabled)
+
+    def load_values(self, cb=None):
+        """Load current motor calibration parameter values."""
+        if not self.connection.is_connected():
+            return
+
+        def read_cb(values):
+            if values is not None:
+                for joint_num in range(3):
+                    self.pole_pairs_spinboxes[joint_num].setValue(int(values[0 + joint_num]))
+                    self.zero_offset_spinboxes[joint_num].setValue(float(values[3 + joint_num]))
+                    idx = 0 if int(values[6 + joint_num]) == 1 else 1
+                    self.sensor_direction_combos[joint_num].setCurrentIndex(idx)
+
+            if cb is not None:
+                cb()
+
+        self.connection.read_param(
+            [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)] +
+            [f'config.motor-calib.{i}.bldc-with-encoder.zero-electric-offset' for i in range(3)] +
+            [f'config.motor-calib.{i}.bldc-with-encoder.sensor-direction' for i in range(3)],
+            read_cb)
+
+    def on_autodetect(self, joint_num):
+        """Handle autodetect button click for a specific joint."""
+        if not self.connection.is_connected():
+            return
+
+        # Store original use-motor values
+        self.orig_use_motor = [None, None, None]
+
+        self.connection.set_calibrating(True)
+
+        def done_cb():
+            for i in range(3):
+                enabled = (i == joint_num)
+                if enabled != self.orig_use_motor[i]:
+                    self.connection.send_raw(f't{i}'.encode())
+
+            self.connection.set_calibrating(False)
+
+        def read_cb(values):
+            if values is None:
+                self.connection.set_calibrating(False)
+                return
+
+            for i in range(3):
+                self.orig_use_motor[i] = bool(values[i])
+
+                # Toggle use-motor.{i} if needed, could also self.connection.write_param(f'use-motor.{i}', want_enabled)
+                want_enabled = (i == joint_num)
+                if want_enabled != self.orig_use_motor[i]:
+                    self.connection.send_raw(f't{i}'.encode())
+
+            # Start calibration
+            self.connection.send_raw(b'm')
+
+            # Firmware processes no parameter reads until calibration done so queue
+            # the re-read and when that returns we know calibration has finished
+            self.load_values(done_cb)
+
+        def after_drain():
+            # Read all use-motor values
+            self.connection.read_param([f'use-motor.{i}' for i in range(3)], read_cb)
+
+        self.connection.drain_queues(after_drain)
+
+    def on_override(self, joint_num):
+        ### note on commit
+        """Handle override button click for a specific joint."""
+        # Get values from UI
+        pole_pairs = self.pole_pairs_spinboxes[joint_num].value()
+        zero_offset = self.zero_offset_spinboxes[joint_num].value()
+        sensor_direction = 1 if self.sensor_direction_combos[joint_num].currentText() == "1" else -1
+
+        # Write parameters
+        self.connection.write_param(
+            f'config.motor-calib.{joint_num}.bldc-with-encoder.pole-pairs',
+            pole_pairs
+        )
+        self.connection.write_param(
+            f'config.motor-calib.{joint_num}.bldc-with-encoder.zero-electric-offset',
+            zero_offset
+        )
+        self.connection.write_param(
+            f'config.motor-calib.{joint_num}.bldc-with-encoder.sensor-direction',
+            sensor_direction
+        )
+
+    def start_updates(self):
+        self.load_values()
+        self.update_buttons()
+
+    def stop_updates(self):
+        """Stop updates."""
+        pass
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -2910,9 +3137,11 @@ class MainWindow(QMainWindow):
         calibration_item = QTreeWidgetItem(self.tab_selector, ["Calibration"])
         connection_item = QTreeWidgetItem(self.tab_selector, ["Connection"])
 
-        # Add sub-item for calibration
+        # Add sub-items for calibration
         axis_calibration_item = QTreeWidgetItem(calibration_item, ["Axis calibration"])
         calibration_item.addChild(axis_calibration_item)
+        motor_calibration_item = QTreeWidgetItem(calibration_item, ["Motor geometry calibration"])
+        calibration_item.addChild(motor_calibration_item)
 
         # Expand calibration by default
         calibration_item.setExpanded(True)
@@ -2931,7 +3160,8 @@ class MainWindow(QMainWindow):
             'status': (0, status_item, StatusTab(self.connection, self.geometry)),
             'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self)),
             'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry)),
-            'connection': (3, connection_item, ConnectionTab(self.connection)),
+            'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection)),
+            'connection': (4, connection_item, ConnectionTab(self.connection)),
         }
 
         for index, item, tab in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
