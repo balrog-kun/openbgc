@@ -2638,9 +2638,13 @@ class CalibrationTab(QWidget):
 
     def update_buttons(self):
         """Enable or disable all calibration buttons."""
-        for buttons in self.calibration_buttons.values():
-            for button in buttons:
-                button.setEnabled(not self.connection.calibrating)
+        for step_id in self.calibration_buttons:
+            enabled = not self.connection.calibrating
+            if step_id == 'limit':
+                enabled = enabled and self.geometry.have_axes
+
+            for button in self.calibration_buttons[step_id]:
+                button.setEnabled(enabled)
 
     def update_checkboxes(self):
         for step_id, step_name, buttons, params, check in self.calibration_steps:
@@ -3439,6 +3443,325 @@ class MotorPidEditorTab(QWidget):
         self.update_buttons()
 
 
+class JointLimitsTab(QWidget):
+    """Tab for joint limits calibration and configuration."""
+
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.geometry = geometry
+
+        layout = QVBoxLayout()
+
+        # Top row: info label and search button
+        top_layout = QHBoxLayout()
+
+        info_label = QLabel(
+            "One continuous avoid zone can be defined per joint as a from/to range of angles.  "
+            "This can be either a physical limit like a hard stop preventing rotation beyond "
+            "some point or an area to avoid for any other reason, like avoiding cable twist.\n\n"
+            "The automatic search moves each joints in both directions until it notices a "
+            "blockage. It's pretty slow (see 'config.control.limit-search-v' parameter) so "
+            "rotating the joints manually to their limit positions and using the \"Get cur\" "
+            "buttons may be easier.\n\n"
+            "The avoid zone extends from min to max and the assumed safe operating range "
+            "from max to min angles, not the other way.  \"Write\" sends new values to the "
+            "gimbal but doesn't store them to its non-volatile memory."
+        )
+        info_label.setWordWrap(True)
+        top_layout.addWidget(info_label)
+
+        self.search_btn = QPushButton("Search automatically")
+        self.search_btn.setToolTip(
+            "Automatically search for joint limits by moving axes to their hard stops.\n"
+            "May take up to 4 minutes, cannot be stopped, and requires motors to be on."
+        )
+        self.search_btn.clicked.connect(self.on_search_automatically)
+        top_layout.addWidget(self.search_btn)
+
+        layout.addLayout(top_layout)
+
+        grid_group = QGroupBox("Limit zones")
+        grid_layout = QGridLayout()
+
+        self.axis_checkboxes = []
+        self.min_spinboxes = []
+        self.max_spinboxes = []
+        self.get_min_buttons = []
+        self.get_max_buttons = []
+        self.swap_buttons = []
+        self.write_buttons = []
+
+        # Create rows for each axis
+        axis_names = ["Outer", "Middle", "Inner"]
+        for axis_num in range(3):
+            row = axis_num
+
+            # Zone name
+            zone_label = QLabel(f"{axis_names[axis_num]} joint ({axis_num}) avoid zone")
+            grid_layout.addWidget(zone_label, row, 0)
+
+            # Checkbox for has-limits
+            has_limits_cb = QCheckBox()
+            has_limits_cb.setToolTip(f"Enable/disable avoid zone for axis {axis_num}")
+            has_limits_cb.stateChanged.connect(self.update_buttons)
+            grid_layout.addWidget(has_limits_cb, row, 1)
+            self.axis_checkboxes.append(has_limits_cb)
+
+            from_container = QWidget()
+            from_layout = QHBoxLayout(from_container)
+            from_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            from_layout.addWidget(QLabel("From"))
+
+            # Min spinbox
+            min_sb = QDoubleSpinBox()
+            min_sb.setRange(0, 360)
+            min_sb.setDecimals(1)
+            min_sb.setSingleStep(1.0)
+            min_sb.setWrapping(True)
+            min_sb.setSuffix("°")
+            min_sb.setToolTip(f"Start angle of the limit zone for axis {axis_num}")
+            from_layout.addWidget(min_sb)
+            self.min_spinboxes.append(min_sb)
+
+            # Get current min button
+            get_min_btn = QPushButton("Get cur")
+            get_min_btn.setToolTip(f"Load with current joint position.  Not written automatically.")
+            get_min_btn.clicked.connect(lambda checked, n=axis_num: self.on_get_current(n, True))
+            from_layout.addWidget(get_min_btn)
+            self.get_min_buttons.append(get_min_btn)
+
+            grid_layout.addWidget(from_container, row, 2)
+
+            to_container = QWidget()
+            to_layout = QHBoxLayout(to_container)
+            to_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            to_layout.addWidget(QLabel("To"))
+
+            # Max spinbox
+            max_sb = QDoubleSpinBox()
+            max_sb.setRange(0, 360)
+            max_sb.setDecimals(1)
+            max_sb.setSingleStep(1.0)
+            max_sb.setWrapping(True)
+            max_sb.setSuffix("°")
+            max_sb.setToolTip(f"End angle of the limit zone for axis {axis_num}")
+            to_layout.addWidget(max_sb)
+            self.max_spinboxes.append(max_sb)
+
+            # Get current max button
+            get_max_btn = QPushButton("Get cur")
+            get_max_btn.setToolTip(f"Load with current joint position.  Not written automatically.")
+            get_max_btn.clicked.connect(lambda checked, n=axis_num: self.on_get_current(n, False))
+            to_layout.addWidget(get_max_btn)
+            self.get_max_buttons.append(get_max_btn)
+
+            grid_layout.addWidget(to_container, row, 3)
+
+            # Swap button
+            swap_btn = QPushButton()
+            swap_btn.setMaximumWidth(30)
+            swap_btn.setMaximumHeight(25)
+            swap_btn.setToolTip(f"Swap min/max limits for axis {axis_num}.  Not written automatically.")
+            try:
+                swap_btn.setIcon(QIcon.fromTheme("object-flip-horizontal"))
+                swap_btn.setText("")
+            except:
+                swap_btn.setText("↔")
+            swap_btn.clicked.connect(lambda checked, n=axis_num: self.on_swap_limits(n))
+            grid_layout.addWidget(swap_btn, row, 4)
+            self.swap_buttons.append(swap_btn)
+
+            # Write button
+            write_btn = QPushButton("Write")
+            write_btn.setToolTip(f"Actually write the settings for axis {axis_num} to the gimbal")
+            write_btn.clicked.connect(lambda checked, n=axis_num: self.on_write_axis(n))
+            grid_layout.addWidget(write_btn, row, 5)
+            self.write_buttons.append(write_btn)
+
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+
+        # Bottom section: buffer width
+        tooltip = "Start braking at this many degrees from the limit zone in any axis"
+        buffer_layout = QHBoxLayout()
+        label = QLabel("Buffer width around limit angles:")
+        label.setToolTip(tooltip)
+        buffer_layout.addWidget(label)
+
+        self.buffer_spinbox = QDoubleSpinBox()
+        self.buffer_spinbox.setRange(0.0, 45.0)
+        self.buffer_spinbox.setDecimals(1)
+        self.buffer_spinbox.setSingleStep(1.0)
+        self.buffer_spinbox.setSuffix("°")
+        self.buffer_spinbox.setToolTip(tooltip)
+        buffer_layout.addWidget(self.buffer_spinbox)
+
+        buffer_layout.addStretch()
+
+        self.buffer_write_btn = QPushButton("Write")
+        self.buffer_write_btn.setToolTip("Write the 'config.control.limit-margin' parameter")
+        self.buffer_write_btn.clicked.connect(self.on_write_buffer)
+        buffer_layout.addWidget(self.buffer_write_btn)
+
+        layout.addLayout(buffer_layout)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # Auto-search timer
+        self.search_timer = QTimer()
+        self.search_timer.timeout.connect(self.check_search_complete)
+        self.search_timer.setInterval(1000)  # 1 Hz
+
+        # Connect to signals
+        self.geometry.geometry_changed.connect(self.update_values)
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+        # Initial state
+        self.update_values()
+        self.update_buttons()
+
+    def on_search_automatically(self):
+        """Handle automatic limit search."""
+        if not self.connection.is_connected():
+            return
+
+        def after_drain():
+            # Disable all limits first
+            for i in range(3):
+                self.connection.write_param(f'config.axes.has-limits.{i}', False)
+
+            # Set path type to limit search
+            self.connection.write_param('control.path-type', 'control_data_s::CONTROL_PATH_LIMIT_SEARCH')
+
+            # Start monitoring
+            self.search_timer.start()
+
+        logger.info("Resetting has-limits.N and starting the limit search")
+        self.connection.set_calibrating(True)
+        self.connection.drain_queues(after_drain)
+
+    def check_search_complete(self):
+        """Check if automatic limit search is complete."""
+        if not self.connection.is_connected():
+            return
+
+        def callback(value):
+            if value is not None and str(value) != 'control_data_s::CONTROL_PATH_LIMIT_SEARCH': # No longer in LIMIT_SEARCH mode
+                logger.info("Limit search done")
+                self.search_timer.stop()
+                self.connection.set_calibrating(False)
+                self.geometry.update()
+
+        self.connection.read_param('control.path-type', callback)
+
+    def on_get_current(self, axis_num, is_min):
+        """Get current position and set as limit."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        enc_num = self.geometry.axis_to_encoder[axis_num]
+
+        # Read current angle from the encoder
+        def callback(value):
+            if value is not None:
+                joint_angle = self.geometry.angle_normalize_360(float(value) * self.geometry.encoder_scale[enc_num])
+                spinboxes = self.min_spinboxes if is_min else self.max_spinboxes
+                spinboxes[axis_num].setValue(joint_angle)
+
+        self.connection.read_param(f'encoders.{enc_num}.reading', callback)
+
+    def on_swap_limits(self, axis_num):
+        """Swap min and max limit values."""
+        min_val = self.min_spinboxes[axis_num].value()
+        max_val = self.max_spinboxes[axis_num].value()
+
+        self.min_spinboxes[axis_num].setValue(max_val)
+        self.max_spinboxes[axis_num].setValue(min_val)
+
+    def on_write_axis(self, axis_num):
+        """Write limit settings for a specific axis."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        enabled = self.axis_checkboxes[axis_num].isChecked()
+        min_val = self.min_spinboxes[axis_num].value()
+        max_val = self.max_spinboxes[axis_num].value()
+
+        self.connection.write_param(f'config.axes.has-limits.{axis_num}', enabled)
+        self.connection.write_param(f'config.axes.limit-min.{axis_num}', min_val)
+        self.connection.write_param(f'config.axes.limit-max.{axis_num}', max_val)
+
+        self.geometry.update()
+        logger.info("New limit values sent to gimbal for axis " + str(axis_num))
+
+    def on_write_buffer(self):
+        """Write buffer width setting."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        self.connection.write_param('config.control.limit-margin', self.buffer_spinbox.value())
+        logger.info("New 'config.control.limit-margin' sent to gimbal")
+
+    def update_values(self):
+        """Update all displayed values from gimbal."""
+        for i in range(3):
+            self.axis_checkboxes[i].setChecked(self.geometry.has_limits[i])
+            self.min_spinboxes[i].setValue(self.geometry.limit_min[i])
+            self.max_spinboxes[i].setValue(self.geometry.limit_max[i])
+
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled states."""
+        enabled = (self.connection.is_connected() and
+                  not self.connection.calibrating and
+                  self.geometry.have_axes)
+
+        self.search_btn.setEnabled(enabled)
+
+        # Enable/disable axis controls
+        for axis_num in range(3):
+            self.write_buttons[axis_num].setEnabled(enabled)
+            self.axis_checkboxes[axis_num].setEnabled(enabled)
+
+            axis_enabled = enabled and self.axis_checkboxes[axis_num].isChecked()
+            self.min_spinboxes[axis_num].setEnabled(axis_enabled)
+            self.max_spinboxes[axis_num].setEnabled(axis_enabled)
+            self.get_min_buttons[axis_num].setEnabled(axis_enabled)
+            self.get_max_buttons[axis_num].setEnabled(axis_enabled)
+            self.swap_buttons[axis_num].setEnabled(axis_enabled)
+
+        self.buffer_spinbox.setEnabled(enabled)
+        self.buffer_write_btn.setEnabled(enabled)
+
+    def start_updates(self):
+        """Start updates."""
+        self.update_values() # calls update_buttons()
+
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        def buffer_cb(value):
+            if value is not None:
+                self.buffer_spinbox.setValue(float(value))
+
+        self.connection.read_param('config.control.limit-margin', buffer_cb)
+
+        # Check if a limit search is ongoing
+        def path_type_cb(value):
+            if value is not None and str(value) == 'control_data_s::CONTROL_PATH_LIMIT_SEARCH':
+                self.search_timer.start()
+                self.connection.set_calibrating(True)
+
+        self.connection.read_param('control.path-type', path_type_cb)
+
+    def stop_updates(self):
+        """Stop updates."""
+        self.search_timer.stop()
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -3468,6 +3791,8 @@ class MainWindow(QMainWindow):
 
         # Connect signals
         self.connection.connection_changed.connect(self.on_connection_changed)
+        self.connection.calibrating_changed.connect(self.update_tabs)
+        self.geometry.geometry_changed.connect(self.update_tabs)
 
         # Initially disable non-connection tabs
         self.on_connection_changed(False)
@@ -3505,6 +3830,8 @@ class MainWindow(QMainWindow):
         calibration_item.addChild(motor_calibration_item)
         pid_calibration_item = QTreeWidgetItem(calibration_item, ["Motor PID editor"])
         calibration_item.addChild(pid_calibration_item)
+        limits_calibration_item = QTreeWidgetItem(calibration_item, ["Joint limits"])
+        calibration_item.addChild(limits_calibration_item)
 
         # Expand calibration by default
         calibration_item.setExpanded(True)
@@ -3524,16 +3851,21 @@ class MainWindow(QMainWindow):
         # Right side: stacked widget for tab content
         self.stacked_widget = QStackedWidget()
 
+        is_enabled_normal = lambda: self.connection.is_connected() and not self.connection.calibrating
+        is_enabled_calib = lambda: self.connection.is_connected()
+        is_enabled_calib_with_axes = lambda: is_enabled_calib() and self.geometry.have_axes
+
         self.tabs = {
-            'status': (0, status_item, StatusTab(self.connection, self.geometry)),
-            'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self)),
-            'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry)),
-            'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection)),
-            'calib_pid': (4, pid_calibration_item, MotorPidEditorTab(self.connection)),
-            'connection': (5, connection_item, ConnectionTab(self.connection)),
+            'status': (0, status_item, StatusTab(self.connection, self.geometry), is_enabled_normal),
+            'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self), is_enabled_calib),
+            'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib),
+            'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib),
+            'calib_pid': (4, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib),
+            'calib_limit': (5, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes),
+            'connection': (6, connection_item, ConnectionTab(self.connection), lambda: True),
         }
 
-        for index, item, tab in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
+        for index, item, tab, enabled in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
             self.stacked_widget.addWidget(tab)
 
         main_layout.addWidget(self.stacked_widget)
@@ -3577,7 +3909,7 @@ class MainWindow(QMainWindow):
 
         selected_item = selected_items[0]
 
-        for index, item, tab in self.tabs.values():
+        for index, item, tab, enabled in self.tabs.values():
             if selected_item == item:
                 self.stacked_widget.setCurrentIndex(index)
                 if self.connection.is_connected():
@@ -3587,29 +3919,29 @@ class MainWindow(QMainWindow):
             else:
                 tab.stop_updates()
 
+    def update_tabs(self):
+        for index, item, tab, is_enabled in self.tabs.values():
+            if is_enabled():
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                tab.stop_updates()
+
     def switch_to_tab(self, tab_id):
         """Switch to a specific tab by id."""
         self.tab_selector.setCurrentItem(self.tabs[tab_id][1])
 
     def on_connection_changed(self, connected: bool):
         """Handle connection state change."""
+        self.update_tabs()
+
         # Enable/disable tabs based on connection
         if connected:
-            # Enable all tabs
-            for index, item, tab in self.tabs.values():
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
-
             # Switch to status tab
             self.switch_to_tab('status')
 
             self.port_status.setText(self.connection.port_path)
         else:
-            # Disable status and calibration tabs
-            for index, item, tab in [self.tabs['status'], self.tabs['calibration'],
-                        self.tabs['calib_axes']]:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-                tab.stop_updates()
-
             # Switch to connection tab
             self.switch_to_tab('connection')
 
