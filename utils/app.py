@@ -498,7 +498,7 @@ class GimbalConnection(QObject):
             return True
         except Exception as e:
             error_msg = f"Connection error: {e}"
-            logger.error(error_msg)
+            logger.debug(error_msg)
             self.error_occurred.emit(error_msg)
             return False
 
@@ -532,7 +532,7 @@ class GimbalConnection(QObject):
                 self.in_stream.feed(data)
         except Exception as e:
             error_msg = f"Serial read error: {e}:\n{traceback.format_exc()}"
-            logger.error(error_msg)
+            logger.debug(error_msg)
             self.error_occurred.emit(error_msg)
             self.disconnect()
 
@@ -547,11 +547,17 @@ class GimbalConnection(QObject):
 
         if frame.hdr.cmd_id == cmd.CmdId.CMD_ERROR:
             in_payload = cmd.ErrorResponse.parse(frame.pld.data)
-            error_msg = f"Remote error: {in_payload}"
-            logger.error(f"CMD_ERROR received: {in_payload}, payload_size={len(frame.pld.data)}")
-            if self.debug:
-                logger.debug(f"CMD_ERROR details: {in_payload}")
-            self.error_occurred.emit(error_msg)
+            if in_payload.cmd_id == int(cmd_obgc.CmdId.CMD_OBGC) and in_payload.error_data[0] == int(cmd_obgc.SubcmdId.GET_PARAM):
+                if self.pending_requests:
+                    param_ids, callback, pdefs, param_names = self.pending_requests.pop(0)
+                    if self.debug:
+                        logger.debug(f"Processing error for param_ids={param_ids} ({param_names}), actual_size={len(param_data)}")
+                    self._handle_param_response(param_ids, None, callback, pdefs, param_names)
+                    self._send_queued_requests()
+                    return
+
+            logger.debug(f"CMD_ERROR received: {in_payload}, payload_size={len(frame.pld.data)}")
+            self.error_occurred.emit(f"Remote error: {in_payload}")
             return
 
         if frame.hdr.cmd_id == int(cmd_obgc.CmdId.CMD_OBGC):
@@ -651,26 +657,30 @@ class GimbalConnection(QObject):
             self.error_occurred.emit(error_msg)
             callback(None)
 
-    def _handle_param_response(self, param_ids, data: bytes, callback, pdefs, param_names):
+    def _handle_param_response(self, param_ids, data, callback, pdefs, param_names):
         """Handle a parameter response for one or more parameters."""
-        try:
-            total_size = sum([pdef.size for pdef in pdefs])
-            if len(data) != total_size:
-                error_msg = f"Reading params {str(param_names)} size mismatch: expected {total_size}, got {len(data)}"
-                logger.error(error_msg)
-                callback(None)
-                # TODO: clear pending_requests but do invoke the callbacks, ratelimit messages
-                # If this happens, we should recover sync after clearing queue and ignoring a few responses
-                # Maybe we should move pending_requests back to queued_requests
-                logger.error("Discarding queues")
-                self.pending_requests.clear()
-                # Also clear queued_requests as a way to ignoring the next few responses, otherwise
-                # we'd immediately send more requests and try to match responses against them
-                self.queued_requests.clear()
-                return
+        if data is None:
+            callback(None)
+            return
 
+        total_size = sum([pdef.size for pdef in pdefs])
+        if len(data) != total_size:
+            error_msg = f"Reading params {str(param_names)} size mismatch: expected {total_size}, got {len(data)}"
+            logger.error(error_msg)
+            callback(None)
+            # TODO: clear pending_requests but do invoke the callbacks, ratelimit messages
+            # If this happens, we should recover sync after clearing queue and ignoring a few responses
+            # Maybe we should move pending_requests back to queued_requests
+            logger.error("Discarding queues")
+            self.pending_requests.clear()
+            # Also clear queued_requests as a way to ignoring the next few responses, otherwise
+            # we'd immediately send more requests and try to match responses against them
+            self.queued_requests.clear()
+            return
+
+        values = []
+        try:
             # Parse the array of parameter values
-            values = []
             offset = 0
             for i, pdef in enumerate(pdefs):
                 param_data = data[offset:offset + pdef.size]
@@ -678,11 +688,6 @@ class GimbalConnection(QObject):
                 param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
                 val = list_convert(param_type_cls.parse(param_data))
                 values.append(val)
-
-            if len(values) == 1:
-                callback(values[0])
-            else:
-                callback(values)
         except Exception as e:
             error_msg = f"Parse param response error: {e}"
             logger.error(error_msg)
@@ -690,6 +695,12 @@ class GimbalConnection(QObject):
                 logger.debug(f"Param response parse error, data={data.hex()}")
             self.error_occurred.emit(error_msg)
             callback(None)
+            return
+
+        if len(values) == 1:
+            callback(values[0])
+        else:
+            callback(values)
 
     def send_command(self, cmd_id, payload=None):
         """Send a command to the gimbal."""
