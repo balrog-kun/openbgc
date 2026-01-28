@@ -2931,7 +2931,9 @@ class MotorGeometryCalibrationTab(QWidget):
         self.override_buttons = []
 
         # Create rows for each joint
-        joints = ["Outer", "Middle", "Inner"]
+        # TODO: remap if have_axes?
+        #joints = ["Outer", "Middle", "Inner"]
+        joints = ["First", "Second", "Third"]
         for joint_num in range(3):
             row = joint_num + 1
 
@@ -3154,7 +3156,9 @@ class MotorPidEditorTab(QWidget):
         grid_layout = QGridLayout()
 
         # Headers
-        l = [QLabel("Outer (0)"), QLabel("Middle (1)"), QLabel("Inner (2)")]
+        # TODO: remap if have_axes?
+        #l = [QLabel("Outer (0)"), QLabel("Middle (1)"), QLabel("Inner (2)")]
+        l = [QLabel("Motor 0"), QLabel("Motor 1"), QLabel("Motor 2")]
         for i in range(3):
             grid_layout.addWidget(l[i], 0, 1 + i)
             grid_layout.setAlignment(l[i], Qt.AlignmentFlag.AlignCenter)
