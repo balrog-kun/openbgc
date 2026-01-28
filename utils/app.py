@@ -13,7 +13,9 @@ import logging
 import argparse
 import traceback
 import platform
+import json
 from typing import Optional, Callable, Dict, Any
+import construct
 
 try:
     from PyQt6.QtWidgets import (
@@ -21,11 +23,14 @@ try:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox,
-        QComboBox
+        QComboBox, QFileDialog, QScrollArea, QSizePolicy, QSpacerItem,
+        # Qt 6 only
+        QAbstractSpinBox
     )
     from PyQt6.QtGui import QIcon
     from PyQt6.QtCore import (
-        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
+        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect,
+        QSize
     )
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
     from PyQt6.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
@@ -36,11 +41,12 @@ except ImportError:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QPlainTextEdit, QToolTip, QDoubleSpinBox, QSpinBox,
-        QComboBox
+        QComboBox, QFileDialog, QScrollArea, QSizePolicy, QSpacerItem,
     )
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import (
-        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect
+        Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect,
+        QSize
     )
     from PyQt5.QtOpenGL import QOpenGLWidget
     from PyQt5.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
@@ -82,7 +88,6 @@ except ImportError:
     HAS_OPENGL = False
     print("Warning: PyOpenGL not available, 3D visualization will be limited")
 
-
 import serial
 import serial.tools.list_ports
 
@@ -93,6 +98,8 @@ import sbgcserialapi.unit as sbgc_unit
 
 import param_defs
 import param_utils
+
+import app_widgets
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -2952,7 +2959,6 @@ class MotorGeometryCalibrationTab(QWidget):
             zero_offset_sb.setMaximumWidth(80)
             # Set adaptive step type
             if PYQT_VERSION == 6:
-                from PyQt6.QtWidgets import QAbstractSpinBox
                 zero_offset_sb.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
             else:
                 # PyQt5 doesn't have StepType enum, use setSingleStep with a small value
@@ -3201,7 +3207,6 @@ class MotorPidEditorTab(QWidget):
 
                 # Set adaptive step for PyQt6
                 if PYQT_VERSION == 6:
-                    from PyQt6.QtWidgets import QAbstractSpinBox
                     spinbox.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
                 else:
                     spinbox.setSingleStep(0.01)
@@ -3762,6 +3767,514 @@ class JointLimitsTab(QWidget):
         self.search_timer.stop()
 
 
+class ParameterEditorTab(QWidget):
+    """Tab for generic parameter editing."""
+
+    def __init__(self, connection: GimbalConnection, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.param_values = {}  # Cache of parameter values
+        self.param_widgets = {}  # Cache of parameter widgets
+
+        layout = QVBoxLayout()
+
+        # Top row: info label and buttons
+        top_layout = QHBoxLayout()
+
+        info_label = QLabel(
+            "Generic parameter editor. Allows viewing and modifying all gimbal parameters. "
+            "Use 'Read all' to load current values from the gimbal, then modify individual "
+            "parameters and use the Read/Write buttons or 'Save JSON' to export current values."
+        )
+        info_label.setWordWrap(True)
+        top_layout.addWidget(info_label)
+
+        right_container = QWidget()
+        right_layout = QVBoxLayout()
+
+        self.read_all_btn = QPushButton("Read all")
+        self.read_all_btn.clicked.connect(self.on_read_all)
+        self.read_all_btn.setToolTip("Read all parameters from the gimbal")
+        right_layout.addWidget(self.read_all_btn)
+
+        self.save_json_btn = QPushButton("Save JSON")
+        self.save_json_btn.clicked.connect(self.on_save_json)
+        self.save_json_btn.setToolTip("Save currently loaded parameter values to JSON file")
+        right_layout.addWidget(self.save_json_btn)
+
+        right_container.setLayout(right_layout)
+        top_layout.addWidget(right_container)
+        layout.addLayout(top_layout)
+
+        # Filter field
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter:"))
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Type to filter parameter names...")
+        self.filter_edit.textChanged.connect(self.on_filter_changed)
+        filter_layout.addWidget(self.filter_edit)
+        layout.addLayout(filter_layout)
+
+        # Scrollable parameter grid
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        self.param_container = QWidget()
+        self.param_layout = QGridLayout(self.param_container)
+        self.param_layout.setColumnStretch(1, 3)  # Value column expands more
+        self.param_layout.setColumnStretch(5, 1)  # Type column expands less
+
+        # Headers
+        headers = ["Parameter", "Value", "", "", "Size", "Type"]
+        for col, header in enumerate(headers):
+            label = QLabel(header)
+            label.setStyleSheet("font-weight: bold;")
+            self.param_layout.addWidget(label, 0, col)
+
+        self.scroll_area.setWidget(self.param_container)
+        layout.addWidget(self.scroll_area)
+
+        self.setLayout(layout)
+
+        # Create parameter widgets
+        self.create_parameter_widgets()
+
+        # Empty space after all the parameters if param_layout needs to stretch
+        self.param_layout.addItem(
+            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
+            self.param_layout.rowCount(), 0, 1, self.param_layout.columnCount())
+
+        # Connect signals
+        self.connection.connection_changed.connect(self.on_connection_changed)
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+        self.update_buttons()
+
+    def create_parameter_widgets(self):
+        """Create widgets for all parameters."""
+        # TODO: possibly use a tree display for the names, group parameters by path prefixes
+        # TODO: a tree of dicts would also work in the saved JSON file
+        # TODO: until then perhaps just sort by name or add sorting controls in the UI
+
+        row = 1
+        for param_id, pdef in param_defs.params.items():
+            # Parameter name
+            name_label = QLabel(pdef.name)
+            name_label.setToolTip(f"Parameter ID: {param_id}")
+            self.param_layout.addWidget(name_label, row, 0)
+
+            # Value widget (determined by type)
+            value_widget = self.create_toplevel_value_widget(pdef)
+            value_scroll_area = app_widgets.AutoScrollArea(QSize(80, 0), QSize(300, 100))
+            value_scroll_area.setWidget(value_widget)
+            value_scroll_area.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            value_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            value_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.param_layout.addWidget(value_scroll_area, row, 1)
+
+            # Read button
+            read_btn = QPushButton()
+            read_btn.setToolTip(f"Read {pdef.name} from gimbal")
+            read_btn.clicked.connect(lambda checked, pid=param_id: self.on_read_param(pid))
+            try:
+                read_btn.setIcon(QIcon.fromTheme("view-refresh"))
+                read_btn.setText("")
+            except:
+                read_btn.setText("R")
+            self.param_layout.addWidget(read_btn, row, 2)
+
+            # Write button
+            write_btn = QPushButton()
+            write_btn.setToolTip(f"Write {pdef.name} to gimbal")
+            write_btn.clicked.connect(lambda checked, pid=param_id: self.on_write_param(pid))
+            try:
+                write_btn.setIcon(QIcon.fromTheme("go-next"))
+                write_btn.setText("")
+            except:
+                write_btn.setText("W")
+            # Disable write button if parameter is read-only
+            if pdef.flags & param_defs.ParamFlag.ro:
+                write_btn.setEnabled(False)
+                write_btn.setToolTip(f"{pdef.name} is read-only")
+            self.param_layout.addWidget(write_btn, row, 3)
+
+            # Size
+            size_label = QLabel(str(pdef.size))
+            self.param_layout.addWidget(size_label, row, 4)
+
+            # Type
+            type_label = QLabel(pdef.typ)
+            type_label.setWordWrap(False)
+            type_scroll_area = app_widgets.AutoScrollArea(QSize(80, 0), QSize(200, 100))
+            type_scroll_area.setWidget(type_label)
+            type_scroll_area.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            type_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            type_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.param_layout.addWidget(type_scroll_area, row, 5)
+
+            # Store widget references
+            self.param_widgets[param_id] = {
+                'name': name_label,
+                'value': value_widget,
+                'value_area': value_scroll_area,
+                'read': read_btn,
+                'write': write_btn,
+                'size': size_label,
+                'type': type_scroll_area,
+                'row': row
+            }
+
+            row += 1
+
+    def create_toplevel_value_widget(self, pdef):
+        """Create appropriate widget based on parameter type."""
+        ro = pdef.flags & param_defs.ParamFlag.ro
+
+        try:
+            construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+            return self.create_value_widget(construct_type, ro)
+        except Exception as e:
+            # Fallback to QLabel for unknown types
+            label = QLabel("Unknown type")
+            label.setStyleSheet("color: red;")
+            return label
+
+    def create_value_widget(self, construct_type, ro):
+        # Handle arrays
+        if hasattr(construct_type, 'subcon') and hasattr(construct_type, 'count'):
+            # Array type - create QHBoxLayout with individual widgets
+            container = QWidget()
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(1)
+            layout.addWidget(QLabel('('))
+
+            for i in range(construct_type.count):
+                element_widget = self.create_value_widget(construct_type.subcon, ro)
+                layout.addWidget(element_widget)
+
+            layout.addWidget(QLabel(')'))
+            return container
+
+        # Single value
+        return self.create_single_value_widget(construct_type, ro)
+
+    def create_single_value_widget(self, construct_type, ro):
+        """Create widget for a single construct type."""
+        if isinstance(construct_type, construct.Enum):
+            # Enum - use QComboBox
+            combo = QComboBox()
+            for name in construct_type.encmapping:
+                combo.addItem(str(name))
+            combo.setEnabled(not ro)
+            return combo
+
+        elif construct_type == construct.Flag:
+            # Boolean - use QCheckBox
+            checkbox = QCheckBox()
+            checkbox.setEnabled(not ro)
+            return checkbox
+
+        elif hasattr(construct_type, 'fmtstr') and construct_type.fmtstr[-1] in "def":
+            # Float - use QDoubleSpinBox, QLabel if read-only (TODO: should be something select/copy'able)
+            if ro:
+                label = QLabel()
+                label.setStyleSheet("border: 1px solid #cccccc; padding: 2px;")
+                return label
+            spinbox = QDoubleSpinBox()
+            spinbox.setRange(-1e5, 1e5)
+            spinbox.setDecimals(4)
+            spinbox.setEnabled(not ro)
+            spinbox.setMaximumWidth(80)
+            if PYQT_VERSION == 6:
+                spinbox.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
+            else:
+                # PyQt5 doesn't have StepType enum, use setSingleStep with a small value
+                spinbox.setSingleStep(0.1)
+            return spinbox
+
+        elif isinstance(construct_type, construct.BytesInteger):
+            # Integer - use QSpinBox or QDoubleSpinBox based on signedness, QLabel if read-only (TODO: should be something select/copy'able)
+            if ro:
+                label = QLabel()
+                label.setStyleSheet("border: 1px solid #cccccc; padding: 2px;")
+                return label
+            if construct_type.signed:
+                spinbox = QSpinBox()
+                min_val = -(2 ** (construct_type.length * 8 - 1))
+                max_val = 2 ** (construct_type.length * 8 - 1) - 1
+            else:
+                spinbox = QSpinBox()
+                min_val = 0
+                max_val = 2 ** (construct_type.length * 8) - 1
+            spinbox.setRange(min_val, max_val)
+            spinbox.setMaximumWidth(70)
+            return spinbox
+
+        elif isinstance(construct_type, construct.StringEncoded): # TODO: avoid internal types
+            # String - use QLabel (read-only) (TODO: should be something select/copy'able)
+            if not ro:
+                info.error('Read-write string parameter')
+            label = QLabel()
+            label.setStyleSheet("border: 1px solid #cccccc; padding: 2px;")
+            label.setWordWrap(False)
+            return label
+
+        else:
+            # Unknown - use QLabel
+            label = QLabel("Unsupported")
+            label.setStyleSheet("color: orange;")
+            return label
+
+    def on_read_param(self, param_id):
+        """Read a single parameter."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        pdef = param_defs.params[param_id]
+
+        def callback(value):
+            if value is not None:
+                self.param_values[param_id] = value
+                self.update_value_widget(param_id, value)
+                self.update_buttons()
+
+        self.connection.read_param(pdef.name, callback)
+
+    def on_write_param(self, param_id):
+        """Write a single parameter."""
+        if not self.connection.is_connected() or self.connection.calibrating:# or param_id not in self.param_values:
+            return
+
+        pdef = param_defs.params[param_id]
+        self.param_values[param_id] = self.get_toplevel_widget_value(param_id)
+        value = self.param_values[param_id]
+
+        self.connection.write_param(pdef.name, value)
+        logger.info(f"Parameter {pdef.name} written to gimbal")
+
+        self.update_buttons()
+
+    def on_read_all(self):
+        """Read all parameters from gimbal."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        # Get all parameter names
+        all_params = list(param_defs.params.values())
+
+        # Read in batches of 5
+        batch_size = 5
+        self.num_outstanding = 0
+        for i in range(0, len(all_params), batch_size):
+            batch = all_params[i:i + batch_size]
+            param_names = [p.name for p in batch]
+
+            def batch_callback(values, batch=batch):
+                if values is not None:
+                    if len(batch) == 1:
+                        values = [values]
+                    # Update our cached values and widgets
+                    for j, pdef in enumerate(batch):
+                        if j < len(values):
+                            self.param_values[pdef.id] = values[j]
+                            self.update_value_widget(pdef.id, values[j])
+                else:
+                    # TODO: if the batch read failed, add reads of each
+                    # param in the batch individually to the end of the queue
+                    pass
+
+                self.num_outstanding -= 1
+                if self.num_outstanding == 0:
+                    del self.num_outstanding
+                    self.update_buttons()
+
+            self.connection.read_param(param_names, batch_callback)
+            self.num_outstanding += 1
+            if self.num_outstanding == 1:
+                self.update_buttons()
+
+    def on_save_json(self):
+        """Save currently loaded parameters to JSON file."""
+        if not self.param_values:
+            print("No params loaded")
+            return
+
+        # Prepare data for JSON
+        json_data = {}
+        for param_id, value in self.param_values.items():
+            pdef = param_defs.params[param_id]
+            json_data[pdef.name] = value
+
+        # Get save file path
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Parameters to JSON", "", "JSON files (*.json);;All files (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(json_data, f, indent=2)
+                logger.info(f"Parameters saved to {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save parameters: {e}")
+
+    def on_filter_changed(self, text):
+        """Handle filter text change."""
+        filter_text = text.lower()
+        for param_id, widgets in self.param_widgets.items():
+            pdef = param_defs.params[param_id]
+            visible = filter_text in pdef.name.lower()
+            for widget in widgets.values():
+                if hasattr(widget, 'setVisible'):
+                    widget.setVisible(visible)
+
+    def update_value_widget(self, param_id, value):
+        """Update the value widget with the given value."""
+        if param_id not in self.param_widgets:
+            return
+
+        value_widget = self.param_widgets[param_id]['value']
+        pdef = param_defs.params[param_id]
+
+        try:
+            construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+            self.set_widget_value(value_widget, construct_type, value)
+        except Exception as e:
+            logger.error(f"Failed to update widget for {pdef.name}: {e}")
+
+    def set_widget_value(self, widget, construct_type, value):
+        # Handle arrays
+        if hasattr(construct_type, 'subcon') and hasattr(construct_type, 'count'):
+            # Array - update each element widget
+            layout = widget.layout()
+            for i in range(construct_type.count):
+                element_widget = layout.itemAt(i + 1).widget()
+                if element_widget:
+                    self.set_widget_value(element_widget, construct_type.subcon, value[i])
+            widget.adjustSize()
+        else:
+            # Single value
+            self.set_single_widget_value(widget, construct_type, value)
+
+    def set_single_widget_value(self, widget, construct_type, value):
+        """Set value for a single widget."""
+        if isinstance(construct_type, construct.Enum):
+            # Enum - set combo box
+            widget.setCurrentText(str(value))
+
+        elif construct_type == construct.Flag:
+            # Boolean - set checkbox
+            widget.setChecked(bool(value))
+
+        elif hasattr(construct_type, 'fmtstr') and construct_type.fmtstr[-1] in "def":
+            # Float - set spinbox
+            if isinstance(widget, QDoubleSpinBox):
+                widget.setValue(float(value))
+            elif isinstance(widget, QLabel):
+                widget.setText(f'{float(value):f}')
+                widget.adjustSize()
+
+        elif isinstance(construct_type, construct.BytesInteger):
+            # Integer - set spinbox
+            if isinstance(widget, QSpinBox):
+                widget.setValue(int(value))
+            elif isinstance(widget, QLabel):
+                i = int(value)
+                if i >= 0:
+                    widget.setText(f'{i} - 0x{i:0{construct_type.length * 2}x}')
+                else:
+                    widget.setText(str(i))
+                widget.adjustSize()
+
+        elif isinstance(construct_type, construct.StringEncoded): # TODO: avoid internal types
+            # String - set label
+            # TODO: use some form of escaping similar to b'hello\x00\x00\x00' instead of utf8
+            widget.setText(value)
+            widget.adjustSize()
+
+    def get_toplevel_widget_value(self, param_id):
+        """Get value from the value widget."""
+        if param_id not in self.param_widgets:
+            return None
+
+        value_widget = self.param_widgets[param_id]['value']
+        pdef = param_defs.params[param_id]
+
+        try:
+            construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+            return self.get_widget_value(value_widget, construct_type)
+        except Exception as e:
+            logger.error(f"Failed to get widget value for {pdef.name}: {e}")
+            return None
+
+    def get_widget_value(self, widget, construct_type):
+        # Handle arrays
+        if hasattr(construct_type, 'subcon') and hasattr(construct_type, 'count'):
+            # Array - collect values from each element widget
+            layout = widget.layout()
+            values = []
+            for i in range(construct_type.count):
+                element_widget = layout.itemAt(i + 1).widget()
+                if element_widget:
+                    val = self.get_widget_value(element_widget, construct_type.subcon)
+                    if val is not None:
+                        values.append(val)
+            return values
+        else:
+            # Single value
+            return self.get_single_widget_value(widget, construct_type)
+
+    def get_single_widget_value(self, widget, construct_type):
+        """Get value from a single widget."""
+        if isinstance(construct_type, construct.Enum):
+            # Enum - get from combo box
+            return widget.currentText()
+
+        elif construct_type == construct.Flag:
+            # Boolean - get from checkbox
+            return widget.isChecked()
+
+        elif hasattr(construct_type, 'fmtstr') and construct_type.fmtstr[-1] in "def":
+            # Float - get from spinbox
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                return widget.value()
+
+        elif isinstance(construct_type, construct.BytesInteger):
+            # Integer - get from spinbox
+            if isinstance(widget, QSpinBox):
+                return widget.value()
+
+        return None
+
+    def on_connection_changed(self, connected):
+        """Handle connection state changes."""
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled states."""
+        enabled = self.connection.is_connected() and not self.connection.calibrating \
+            and not hasattr(self, 'num_outstanding')
+        self.read_all_btn.setEnabled(enabled)
+        self.save_json_btn.setEnabled(enabled and len(self.param_values))
+
+        # Update individual parameter buttons
+        for param_id, widgets in self.param_widgets.items():
+            widgets['read'].setEnabled(enabled)
+            pdef = param_defs.params[param_id]
+            widgets['write'].setEnabled(enabled and not (pdef.flags & param_defs.ParamFlag.ro))
+
+    def start_updates(self):
+        """Start updates."""
+        self.update_buttons()
+
+    def stop_updates(self):
+        """Stop updates."""
+        pass
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -3821,6 +4334,7 @@ class MainWindow(QMainWindow):
         # Create top-level items
         status_item = QTreeWidgetItem(self.tab_selector, ["Status"])
         calibration_item = QTreeWidgetItem(self.tab_selector, ["Calibration"])
+        param_editor_item = QTreeWidgetItem(self.tab_selector, ["Parameter Editor"])
         connection_item = QTreeWidgetItem(self.tab_selector, ["Connection"])
 
         # Add sub-items for calibration
@@ -3862,7 +4376,8 @@ class MainWindow(QMainWindow):
             'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib),
             'calib_pid': (4, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib),
             'calib_limit': (5, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes),
-            'connection': (6, connection_item, ConnectionTab(self.connection), lambda: True),
+            'params': (6, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal),
+            'connection': (7, connection_item, ConnectionTab(self.connection), lambda: True),
         }
 
         for index, item, tab, enabled in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
