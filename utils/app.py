@@ -3462,6 +3462,8 @@ class MotorPidEditorTab(QWidget):
 class JointLimitsTab(QWidget):
     """Tab for joint limits calibration and configuration."""
 
+    PATH_LIMIT_SEARCH = 'control_data_s::CONTROL_PATH_LIMIT_SEARCH' # 4 works too
+
     def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, parent=None):
         super().__init__(parent)
         self.connection = connection
@@ -3648,8 +3650,8 @@ class JointLimitsTab(QWidget):
             for i in range(3):
                 self.connection.write_param(f'config.axes.has-limits.{i}', False)
 
-            # Set path type to limit search
-            self.connection.write_param('control.path-type', 'control_data_s::CONTROL_PATH_LIMIT_SEARCH')
+            self.connection.write_param('control.path-type', self.PATH_LIMIT_SEARCH)
+            self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
 
             # Start monitoring
             self.search_timer.start()
@@ -3664,9 +3666,10 @@ class JointLimitsTab(QWidget):
             return
 
         def callback(value):
-            if value is not None and str(value) != 'control_data_s::CONTROL_PATH_LIMIT_SEARCH': # No longer in LIMIT_SEARCH mode
+            if value is not None and str(value) != self.PATH_LIMIT_SEARCH:
                 logger.info("Limit search done")
                 self.search_timer.stop()
+                self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
                 self.connection.set_calibrating(False)
                 self.geometry.update()
 
@@ -3766,12 +3769,14 @@ class JointLimitsTab(QWidget):
         self.connection.read_param('config.control.limit-margin', buffer_cb)
 
         # Check if a limit search is ongoing
-        def path_type_cb(value):
-            if value is not None and str(value) == 'control_data_s::CONTROL_PATH_LIMIT_SEARCH':
-                self.search_timer.start()
-                self.connection.set_calibrating(True)
+        def path_type_cb(values):
+            if values is not None:
+                path_type, motors_on = values
+                if bool(motors_on) and str(path_type) == self.PATH_LIMIT_SEARCH:
+                    self.search_timer.start()
+                    self.connection.set_calibrating(True)
 
-        self.connection.read_param('control.path-type', path_type_cb)
+        self.connection.read_param(['control.path-type', 'motors-on'], path_type_cb)
 
     def stop_updates(self):
         """Stop updates."""
