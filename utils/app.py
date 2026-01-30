@@ -16,6 +16,8 @@ import platform
 import json
 from typing import Optional, Callable, Dict, Any
 import construct
+import random
+import os
 
 try:
     from PyQt6.QtWidgets import (
@@ -30,7 +32,7 @@ try:
     from PyQt6.QtGui import QIcon
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect,
-        QSize
+        QSize, QTime
     )
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
     from PyQt6.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
@@ -46,7 +48,7 @@ except ImportError:
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QObject, QThread, QSocketNotifier, QRect,
-        QSize
+        QSize, QTime
     )
     from PyQt5.QtOpenGL import QOpenGLWidget
     from PyQt5.QtGui import QColor, QPainter, QTextOption, QCursor, QPen
@@ -2487,6 +2489,336 @@ class StatusTab(QWidget):
                 return
 
 
+class PassthroughTab(QWidget):
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+        self.geometry = geometry
+
+        layout = QVBoxLayout()
+
+        # Top row: info label and search button
+        top_layout = QHBoxLayout()
+
+        info_label = QLabel(
+            "\"Link\" camera position to an input device or variable by continuously "
+            "sending updated values to the gimbal.  The movement will still be "
+            "limited by the maximum velocity set in 'config.control.max-vel' and "
+            "maximum acceleration set in 'config.control.max-accel'.\n\n"
+            "Inputs are scaled to roughly [0, 1] range, e.g. pointer position is "
+            "divided by screen width.  Outputs are interpreted as degrees or degrees "
+            "per second."
+        )
+        info_label.setWordWrap(True)
+        top_layout.addWidget(info_label)
+
+        right_layout = QVBoxLayout()
+
+        self.start_btn = QPushButton('Start')
+        self.start_btn.setToolTip('Start sending position updates')
+        self.start_btn.clicked.connect(self.on_start)
+        right_layout.addWidget(self.start_btn)
+
+        self.stop_btn = QPushButton('Stop')
+        self.stop_btn.setToolTip('Start sending position updates')
+        self.stop_btn.clicked.connect(self.stop)
+        right_layout.addWidget(self.stop_btn)
+
+        self.refresh_sources_btn = QPushButton('Refresh Sources')
+        self.refresh_sources_btn.setToolTip('Update the choice of source variables for hotplug input devices')
+        self.refresh_sources_btn.clicked.connect(self.update_sources)
+        right_layout.addWidget(self.refresh_sources_btn)
+
+        top_layout.addLayout(right_layout)
+        layout.addLayout(top_layout)
+
+        grid_group = QGroupBox("Rules")
+        grid_layout = QGridLayout()
+
+        # Headers
+        grid_layout.addWidget(QLabel('Enable'), 0, 1)
+        grid_layout.addWidget(QLabel('Source'), 0, 2)
+        grid_layout.addWidget(QLabel('Offset source'), 0, 3)
+        grid_layout.addWidget(QLabel('Const offset'), 0, 4)
+        grid_layout.addWidget(QLabel('Scale'), 0, 5)
+        grid_layout.addWidget(QLabel('Min'), 0, 6)
+        grid_layout.addWidget(QLabel('Max'), 0, 7)
+        grid_layout.addWidget(QLabel('Control mode'), 0, 8)
+
+        # TODO: do we want to select the output from a combo box for extra flexibility, instead of hardcoding one per axis?
+        # that will allow some outputs to be offset sources for other, in effect combining various inputs for one output
+
+        self.angle_name = ['Roll', 'Pitch', 'Yaw']
+        self.camera_to_euler = [0, 1, 2] # connection.control() uses RPY yoo
+        self.controls = [{}, {}, {}]
+
+        for angle_num in range(3):
+            row = angle_num + 1
+
+            # Angle name
+            angle_label = QLabel(self.angle_name[angle_num])
+            grid_layout.addWidget(angle_label, row, 0)
+
+            # Enable
+            enable_cb = QCheckBox()
+            enable_cb.setToolTip(f'Enable/disable control of this angle')
+            grid_layout.addWidget(enable_cb, row, 1)
+            self.controls[angle_num]['enable'] = enable_cb
+
+            # Source
+            source_combo = QComboBox()
+            source_combo.setToolTip('Source variable')
+            source_combo.setMinimumWidth(150)
+            grid_layout.addWidget(source_combo, row, 2)
+            self.controls[angle_num]['source'] = source_combo
+
+            # Offset source
+            offset_src_combo = QComboBox()
+            offset_src_combo.addItems(['Value at start', 'None']) # TODO: add outputs from other axes
+            offset_src_combo.setToolTip('Offset variable to be subtracted from source variable value')
+            offset_src_combo.setMinimumWidth(80)
+            grid_layout.addWidget(offset_src_combo, row, 3)
+            self.controls[angle_num]['offset-src'] = offset_src_combo
+
+            for column, cid, tooltip, limits, default in (
+                    (4, 'offset', 'Constant offset value to be added to the source variable value', (-5, 5), 0),
+                    (5, 'scale', 'Multiply input after applying offsets by this', (-1000, 1000), 10),
+                    (6, 'min', 'Clamp the input after scaling to this value', (-360, 360), -20),
+                    (7, 'max', 'Clamp the input after scaling to this value', (-360, 360), 20),
+                ):
+                sb = QDoubleSpinBox()
+                sb.setDecimals(1)
+                if PYQT_VERSION == 6:
+                   sb.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
+                else:
+                    # PyQt5 doesn't have StepType enum, use setSingleStep with a small value
+                    sb.setSingleStep(1)
+                sb.setToolTip(tooltip)
+                sb.setMaximumWidth(60)
+                sb.setRange(limits[0], limits[1])
+                sb.setValue(default)
+                grid_layout.addWidget(sb, row, column)
+                self.controls[angle_num][cid] = sb
+
+            # Angle vs. speed control
+            mode_combo = QComboBox()
+            mode_combo.addItems(['Angle', 'Speed'])
+            mode_combo.setToolTip('Offset variable to be subtracted from source variable')
+            grid_layout.addWidget(mode_combo, row, 8)
+            self.controls[angle_num]['mode'] = mode_combo
+
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # TODO: also copy the motors-on controls from other tabs
+
+        # Update timer
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.send_control)
+        self.timer.setInterval(100)  # 10Hz
+
+        # Connect to signals
+        self.connection.calibrating_changed.connect(self.on_calibrating)
+        # Or we could set a flag ourselves to prevent calibration and disable StatusTab controls
+
+        # Initial state
+        self.running = False
+        self.update_sources()
+        self.update_buttons()
+
+    def on_start(self):
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        self.running = True
+        self.init_values = [None, None, None]
+        self.timer.start()
+        self.update_buttons()
+        # TODO: set a property on self.connection to signal that calibration etc. should be blocked
+
+        self.state = [{}, {}, {}]
+        self.params_used = {}
+
+        for i in range(3):
+            enable = self.controls[i]['enable']
+            if not enable.isChecked(): # TODO: skip this if the axis is in use as offset source for another axis (future)
+                continue
+
+            source_num = self.controls[i]['source'].currentIndex()
+            name, params, init, get = self.sources[source_num]
+
+            for param in params:
+                self.params_used[param] = 1
+
+            self.state[i] = init()
+
+    def stop(self):
+        self.timer.stop()
+        self.running = False
+        del self.state
+        del self.params_used
+        self.update_buttons()
+
+    def on_calibrating(self):
+        if self.connection.calibrating and self.running:
+            stop()
+        else:
+            self.update_buttons()
+
+    def send_control(self):
+        if not self.connection.is_connected() or self.connection.calibrating or not self.running:
+            return
+
+        angles = [None, None, None]
+        speeds = [None, None, None]
+
+        def update_axis(angle_num):
+            ctrls = self.controls[angle_num]
+            enable = ctrls['enable']
+            if not enable.isChecked(): # TODO: skip this if the axis is in use as offset source for another axis (future)
+                return
+
+            source_num = ctrls['source'].currentIndex()
+            name, params, init, get = self.sources[source_num]
+            in_value = get(self.state[angle_num])
+
+            if self.init_values[angle_num] is None:
+                self.init_values[angle_num] = in_value
+
+            offset_src_text = ctrls['offset-src'].currentText()
+            if offset_src_text == 'Value at start':
+                in_value -= self.init_values[angle_num]
+
+            in_value += ctrls['offset'].value()
+            in_value *= ctrls['scale'].value()
+            value = min(max(in_value, ctrls['min'].value()), ctrls['max'].value())
+
+            euler_num = self.camera_to_euler[angle_num]
+            if ctrls['mode'].currentText() == 'Speed':
+                speeds[euler_num] = value
+            else:
+                angles[euler_num] = value
+
+        def update_all():
+            for i in range(3):
+                update_axis(i)
+
+            self.connection.control(angles, speeds)
+
+        # TODO: if params, request params, in callback store results and update_all()
+        update_all()
+
+    def read_float_helper(self, path):
+        with open(path, 'r') as f:
+            return float(f.read().strip())
+
+    def update_sources(self):
+        if self.running:
+            return
+
+        self.sources = []
+
+        self.sources.append((
+                'Mouse pointer X', [],
+                lambda: QApplication.primaryScreen().geometry(),
+                lambda state: QCursor.pos().x() / state.width(),
+            ))
+        self.sources.append((
+                'Mouse pointer Y', [],
+                lambda: QApplication.primaryScreen().geometry(),
+                lambda state: QCursor.pos().y() / state.width(), # width, for uniform scaling
+            ))
+        self.sources.append((
+                'Seconds (within minute)', [], lambda: None,
+                lambda state: QTime.currentTime().second() / 60,
+            ))
+        self.sources.append((
+                'Minutes (within hour)', [], lambda: None,
+                lambda state: QTime.currentTime().minute() / 60,
+            ))
+        self.sources.append((
+                'Random', [], lambda: None,
+                lambda state: random.random()
+            ))
+
+        # Add accelerometer sources
+        try:
+            acnt = 0
+            gcnt = 0
+            for device in os.listdir('/sys/bus/iio/devices'):
+                device_path = f'/sys/bus/iio/devices/{device}'
+                name_file = f'{device_path}/name'
+                if os.path.exists(name_file):
+                    with open(name_file, 'r') as f:
+                        device_name = f.read().strip()
+                else:
+                    device_name = 'IIO ' + device
+
+                for axis in ['x', 'y', 'z']:
+                    accel_file = f'{device_path}/in_accel_{axis}_raw'
+                    if os.path.exists(accel_file):
+                        acnt += 1
+                        scale = self.read_float_helper(f'{device_path}/in_accel_scale')
+                        self.sources.append((
+                                'System accelerometer ' + device_name + ' ' + axis.upper(),
+                                [],
+                                lambda: None,
+                                lambda state, path=accel_file, scale=scale: self.read_float_helper(path) * scale,
+                            ))
+                    gyro_file = f'{device_path}/in_anglvel_{axis}_raw'
+                    if os.path.exists(gyro_file):
+                        gcnt += 1
+                        scale = self.read_float_helper(f'{device_path}/in_anglvel_scale')
+                        self.sources.append((
+                                'System gyroscope ' + device_name + ' ' + axis.upper(),
+                                [],
+                                lambda: None,
+                                lambda state, path=gyro_file, scale=scale: self.read_float_helper(path) * scale,
+                            ))
+            logger.info(f'Found {acnt} system IIO accelerometers, {gcnt} gyroscopes')
+        except Exception as e:
+            logger.debug(f'Error adding IIO sources: {e}')
+            raise e
+
+        # TODO: frame IMU rotation speeds using rel_q and main-ahrs.velocity-vec? that won't be very precise
+        # TODO: main IMU accelerations using main-ahrs.acc-reading
+
+        names = [name for name, params, init, get in self.sources]
+
+        for i in range(3):
+            combo = self.controls[i]['source']
+            prev_selection = combo.currentText()
+            combo.clear()
+            combo.addItems(names)
+            try:
+                combo.setCurrentText(prev_selection)
+            except:
+                pass
+
+    def update_buttons(self):
+        """Update button enabled states."""
+        enabled = (self.connection.is_connected() and
+                   not self.connection.calibrating) # TODO: and motors_on
+
+        self.start_btn.setEnabled(enabled and not self.running)
+        self.stop_btn.setEnabled(enabled and self.running)
+        self.refresh_sources_btn.setEnabled(enabled and not self.running)
+
+        for i in range(3):
+            self.controls[i]['enable'].setEnabled(not self.running)
+            self.controls[i]['source'].setEnabled(not self.running)
+
+    def start_updates(self):
+        # TODO: load motors-on
+        self.update_buttons()
+
+    def stop_updates(self):
+        if self.running:
+            self.stop()
+
+
 class CalibrationTab(QWidget):
     """Tab for calibration status and controls."""
 
@@ -3087,7 +3419,6 @@ class MotorGeometryCalibrationTab(QWidget):
         self.connection.drain_queues(after_drain)
 
     def on_override(self, joint_num):
-        ### note on commit
         """Handle override button click for a specific joint."""
         # Get values from UI
         pole_pairs = self.pole_pairs_spinboxes[joint_num].value()
@@ -3884,6 +4215,7 @@ class ParameterEditorTab(QWidget):
             name_label = QLabel(pdef.name)
             name_label.setToolTip(f"Parameter ID: {param_id}")
             self.param_layout.addWidget(name_label, row, 0)
+            # TODO: add read-only icon after name, if read-only
 
             # Value widget (determined by type)
             value_widget = self.create_toplevel_value_widget(pdef)
@@ -4353,6 +4685,7 @@ class MainWindow(QMainWindow):
 
         # Create top-level items
         status_item = QTreeWidgetItem(self.tab_selector, ["Status"])
+        passthrough_item = QTreeWidgetItem(self.tab_selector, ["Control Passthrough"])
         calibration_item = QTreeWidgetItem(self.tab_selector, ["Calibration"])
         param_editor_item = QTreeWidgetItem(self.tab_selector, ["Parameter Editor"])
         connection_item = QTreeWidgetItem(self.tab_selector, ["Connection"])
@@ -4391,13 +4724,14 @@ class MainWindow(QMainWindow):
 
         self.tabs = {
             'status': (0, status_item, StatusTab(self.connection, self.geometry), is_enabled_normal),
-            'calibration': (1, calibration_item, CalibrationTab(self.connection, self.geometry, self), is_enabled_calib),
-            'calib_axes': (2, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib),
-            'calib_motor': (3, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib),
-            'calib_pid': (4, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib),
-            'calib_limit': (5, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes),
-            'params': (6, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal),
-            'connection': (7, connection_item, ConnectionTab(self.connection), lambda: True),
+            'passthrough': (1, passthrough_item, PassthroughTab(self.connection, self.geometry), is_enabled_normal),
+            'calibration': (2, calibration_item, CalibrationTab(self.connection, self.geometry), is_enabled_calib),
+            'calib_axes': (3, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib),
+            'calib_motor': (4, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib),
+            'calib_pid': (5, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib),
+            'calib_limit': (6, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes),
+            'params': (7, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal),
+            'connection': (8, connection_item, ConnectionTab(self.connection), lambda: True),
         }
 
         for index, item, tab, enabled in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
