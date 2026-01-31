@@ -102,6 +102,7 @@ import param_defs
 import param_utils
 
 import app_widgets
+import app_iio
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -2638,8 +2639,9 @@ class PassthroughTab(QWidget):
         self.update_buttons()
         # TODO: set a property on self.connection to signal that calibration etc. should be blocked
 
-        self.state = [{}, {}, {}]
+        self.state = [None, None, None]
         self.params_used = {}
+        self.iio_devs_used = {}
 
         for i in range(3):
             enable = self.controls[i]['enable']
@@ -2647,18 +2649,20 @@ class PassthroughTab(QWidget):
                 continue
 
             source_num = self.controls[i]['source'].currentIndex()
-            name, params, init, get = self.sources[source_num]
-
-            for param in params:
-                self.params_used[param] = 1
-
+            name, init, get = self.sources[source_num]
             self.state[i] = init()
+
+        for n in self.iio_devs_used:
+            self.iio_devs_used[n].start_buffering()
 
     def stop(self):
         self.timer.stop()
         self.running = False
         del self.state
         del self.params_used
+        for n in self.iio_devs_used:
+            self.iio_devs_used[n].stop_buffering()
+        del self.iio_devs_used
         self.update_buttons()
 
     def on_calibrating(self):
@@ -2681,9 +2685,11 @@ class PassthroughTab(QWidget):
                 return
 
             source_num = ctrls['source'].currentIndex()
-            name, params, init, get = self.sources[source_num]
+            name, init, get = self.sources[source_num]
             in_value = get(self.state[angle_num])
 
+            if in_value is None: # Send IGNORE for this axis for now, even let it time out if no values for long enough
+                return
             if self.init_values[angle_num] is None:
                 self.init_values[angle_num] = in_value
 
@@ -2701,13 +2707,16 @@ class PassthroughTab(QWidget):
             else:
                 angles[euler_num] = value
 
+        for n in self.iio_devs_used:
+            self.iio_devs_used[n].get_latest()
+
         def update_all():
             for i in range(3):
                 update_axis(i)
 
             self.connection.control(angles, speeds)
 
-        # TODO: if params, request params, in callback store results and update_all()
+        # TODO: if self.params_used, request params, in callback store results and update_all()
         update_all()
 
     def read_float_helper(self, path):
@@ -2721,29 +2730,95 @@ class PassthroughTab(QWidget):
         self.sources = []
 
         self.sources.append((
-                'Mouse pointer X', [],
+                'Mouse pointer X',
                 lambda: QApplication.primaryScreen().geometry(),
                 lambda state: QCursor.pos().x() / state.width(),
             ))
         self.sources.append((
-                'Mouse pointer Y', [],
+                'Mouse pointer Y',
                 lambda: QApplication.primaryScreen().geometry(),
                 lambda state: QCursor.pos().y() / state.width(), # width, for uniform scaling
             ))
         self.sources.append((
-                'Seconds (within minute)', [], lambda: None,
+                'Seconds (within minute)', lambda: None,
                 lambda state: QTime.currentTime().second() / 60,
             ))
         self.sources.append((
-                'Minutes (within hour)', [], lambda: None,
+                'Minutes (within hour)', lambda: None,
                 lambda state: QTime.currentTime().minute() / 60,
             ))
         self.sources.append((
-                'Random', [], lambda: None,
+                'Random', lambda: None,
                 lambda state: random.random()
             ))
 
-        # Add accelerometer sources
+        # Add system accelerometers/gyroscopes on Linux
+        fallback = False
+        acc = []
+        gyro = []
+        for dev in app_iio.detect_iio_devices():
+            use = False
+            for ch in dev.channels:
+                if ch.startswith('accel_') or ch.startswith('anglvel_'):
+                    if not use:
+                        if not dev.check_access():
+                            fallback = True
+                            break
+                    use = True
+                    if ch.startswith('accel_'):
+                        devtype = 'accelerometer'
+                        axis = ch[6:]
+                        l = acc
+                    else:
+                        devtype = 'gyroscope'
+                        axis = ch[8:]
+                        l = gyro
+
+                    def iio_src_init(dev, ch):
+                        if dev.name in self.iio_devs_used:
+                            dev.selected_channels[ch] = 1
+                        else:
+                            dev.selected_channels = {ch: 1}
+                            self.iio_devs_used[dev.name] = dev
+                            # Could start buffering in a oneshot timer but there could be races
+                        return (dev, ch)
+                    l.append((
+                            f'System {devtype} {dev.name} {axis.upper()}',
+                            lambda dev=dev, ch=ch: iio_src_init(dev, ch),
+                            lambda state: (lambda dev, ch: dev.readings.get(ch))(*state) # Will this optimize well?
+                        ))
+                    # Note: with the IIO buffer usage there will usually be a delay before the values
+                    # start flowing in.
+
+                    # Units are m/s^2 for the accelerometer values, rad/s for the gyro values
+
+        if fallback:
+            logger.info(f'Permissions not set up for IIO buffers, falling back to sysfs which may not work great')
+            self.update_iio_sysfs_only()
+        else:
+            logger.debug(f'Found {len(acc)} system IIO accelerometers, {len(gyro)} gyroscopes')
+            self.sources += acc + gyro
+
+        # TODO: frame IMU rotation speeds using rel_q and main-ahrs.velocity-vec? that won't be very precise
+        # TODO: main IMU accelerations using main-ahrs.acc-reading
+
+        names = [name for name, init, get in self.sources]
+
+        for i in range(3):
+            combo = self.controls[i]['source']
+            prev_selection = combo.currentText()
+            combo.clear()
+            combo.addItems(names)
+            try:
+                combo.setCurrentText(prev_selection)
+            except:
+                pass
+
+    def add_iio_sysfs_only(self):
+        # The less reliable method to access IIO devices using only /sys but without any
+        # write access needed.  It seems that on Intel chips the ICH sensor bridge driver
+        # will stop updating the readings if we read them out at more than 1Hz so we only
+        # ever read a single value for each axis.  But it may work on other hardware.
         try:
             acnt = 0
             gcnt = 0
@@ -2762,9 +2837,7 @@ class PassthroughTab(QWidget):
                         acnt += 1
                         scale = self.read_float_helper(f'{device_path}/in_accel_scale')
                         self.sources.append((
-                                'System accelerometer ' + device_name + ' ' + axis.upper(),
-                                [],
-                                lambda: None,
+                                'System accelerometer ' + device_name + ' ' + axis.upper(), lambda: None,
                                 lambda state, path=accel_file, scale=scale: self.read_float_helper(path) * scale,
                             ))
                     gyro_file = f'{device_path}/in_anglvel_{axis}_raw'
@@ -2772,30 +2845,13 @@ class PassthroughTab(QWidget):
                         gcnt += 1
                         scale = self.read_float_helper(f'{device_path}/in_anglvel_scale')
                         self.sources.append((
-                                'System gyroscope ' + device_name + ' ' + axis.upper(),
-                                [],
-                                lambda: None,
+                                'System gyroscope ' + device_name + ' ' + axis.upper(), lambda: None,
                                 lambda state, path=gyro_file, scale=scale: self.read_float_helper(path) * scale,
                             ))
-            logger.info(f'Found {acnt} system IIO accelerometers, {gcnt} gyroscopes')
+            logger.debug(f'Found {acnt} system IIO accelerometers, {gcnt} gyroscopes')
         except Exception as e:
             logger.debug(f'Error adding IIO sources: {e}')
             raise e
-
-        # TODO: frame IMU rotation speeds using rel_q and main-ahrs.velocity-vec? that won't be very precise
-        # TODO: main IMU accelerations using main-ahrs.acc-reading
-
-        names = [name for name, params, init, get in self.sources]
-
-        for i in range(3):
-            combo = self.controls[i]['source']
-            prev_selection = combo.currentText()
-            combo.clear()
-            combo.addItems(names)
-            try:
-                combo.setCurrentText(prev_selection)
-            except:
-                pass
 
     def update_buttons(self):
         """Update button enabled states."""
