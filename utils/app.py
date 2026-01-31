@@ -4206,12 +4206,12 @@ class ParameterEditorTab(QWidget):
         info_label.setWordWrap(True)
         top_layout.addWidget(info_label)
 
-        right_container = QWidget()
         right_layout = QVBoxLayout()
 
         self.read_all_btn = QPushButton("Read all")
         self.read_all_btn.clicked.connect(self.on_read_all)
         self.read_all_btn.setToolTip("Read all parameters from the gimbal")
+        self.read_all_btn.setMinimumWidth(200)
         right_layout.addWidget(self.read_all_btn)
 
         self.save_json_btn = QPushButton("Save JSON")
@@ -4219,8 +4219,8 @@ class ParameterEditorTab(QWidget):
         self.save_json_btn.setToolTip("Save currently loaded parameter values to JSON file")
         right_layout.addWidget(self.save_json_btn)
 
-        right_container.setLayout(right_layout)
-        top_layout.addWidget(right_container)
+        top_layout.addLayout(right_layout)
+        top_layout.setStretch(0, 1)
         layout.addLayout(top_layout)
 
         # Filter field
@@ -4255,19 +4255,13 @@ class ParameterEditorTab(QWidget):
 
         self.setLayout(layout)
 
-        # Create parameter widgets
-        self.create_parameter_widgets()
-
-        # Empty space after all the parameters if param_layout needs to stretch
-        self.param_layout.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
-            self.param_layout.rowCount(), 0, 1, self.param_layout.columnCount())
-
         # Connect signals
         self.connection.connection_changed.connect(self.on_connection_changed)
         self.connection.calibrating_changed.connect(self.update_buttons)
 
         self.update_buttons()
+
+        self.populated = False
 
     def create_parameter_widgets(self):
         """Create widgets for all parameters."""
@@ -4345,6 +4339,13 @@ class ParameterEditorTab(QWidget):
             }
 
             row += 1
+
+        # Empty space after all the parameters if param_layout needs to stretch
+        self.param_layout.addItem(
+            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
+            row, 0, 1, -1)
+
+        self.populated = True
 
     def create_toplevel_value_widget(self, pdef):
         """Create appropriate widget based on parameter type."""
@@ -4686,6 +4687,8 @@ class ParameterEditorTab(QWidget):
 
     def start_updates(self):
         """Start updates."""
+        if not self.populated:
+            self.create_parameter_widgets()
         self.update_buttons()
 
     def stop_updates(self):
