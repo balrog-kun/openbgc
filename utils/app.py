@@ -3687,6 +3687,12 @@ class MotorPidEditorTab(QWidget):
 
         row += 1
 
+        tip_label = QLabel("Switch away and back to this tab to reload values from gimbal")
+        font = tip_label.font()
+        font.setPointSize(int(font.pointSize() * 0.8))
+        tip_label.setFont(font)
+        grid_layout.addWidget(tip_label, row, 0, row, -1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
         grid_layout.setHorizontalSpacing(40) # grid_layout.setColumnStretch({1,2,3}, 2) doesn't seem to do much
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
@@ -3985,6 +3991,12 @@ class JointLimitsTab(QWidget):
             write_btn.clicked.connect(lambda checked, n=axis_num: self.on_write_axis(n))
             grid_layout.addWidget(write_btn, row, 5)
             self.write_buttons.append(write_btn)
+
+        tip_label = QLabel("Switch away and back to this tab to reload values from gimbal")
+        font = tip_label.font()
+        font.setPointSize(int(font.pointSize() * 0.8))
+        tip_label.setFont(font)
+        grid_layout.addWidget(tip_label, 3, 0, 3, -1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
