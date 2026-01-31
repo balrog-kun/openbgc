@@ -66,3 +66,5 @@ utils/param_defs.py: .pio/build/simplebgc32_regular/firmware.elf utils/param_map
 utils/sbgcserialapi:
 	git clone https://github.com/balrog-kun/sbgcserialapi.git $@
 client: utils/param_defs.py utils/sbgcserialapi utils/param-tool.py
+	@echo Ready.  Copy utils/99-iio.rules to /etc/udev/rules.d/ to use laptop accelerometers/gyros in the GUI app
+	# also needs udevadm control --reload-rules && udevadm trigger -c add

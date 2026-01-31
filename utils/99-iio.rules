@@ -1,0 +1,17 @@
+# Quick and dirty way to allow user access to IIO sensors, where only this
+# rules file needs to be dropped into /etc/udev/rules.d/ which is already going
+# to be a hurdle for users.  Do this on trusted, personal machines only.
+#
+# Allow everyone to control IIO devices and buffer config in /sys
+ACTION=="add", SUBSYSTEM=="iio", KERNEL=="iio:device*", RUN+="/bin/chmod -R a+w /sys%p"
+# Also grant access to the buffer's character device for reading data out
+ACTION=="add", SUBSYSTEM=="iio", KERNEL=="iio:device*", MODE="0644"
+
+# Note this isn't aligned with safety recommendations.  The proper way to do
+# this is to allow group access only, like below, create the iio group and add
+# only the indended users to it.
+#
+# Grant the 'iio' group write access to all IIO device controls and buffers
+#ACTION=="add", SUBSYSTEM=="iio", KERNEL=="iio:device*", RUN+="/bin/chmod -R a+w /sys%p", GROUP="iio"
+# Also grant access to the character device for reading data
+#ACTION=="add", SUBSYSTEM=="iio", KERNEL=="iio:device*", MODE="0644", GROUP="iio"
