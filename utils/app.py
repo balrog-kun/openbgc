@@ -3515,7 +3515,7 @@ class MotorPidEditorTab(QWidget):
         layout = QVBoxLayout()
 
         # Info label with instructions
-        info_label = QLabel(
+        info_label = QLabel( # TODO: proper list formatting
             "These parameters control the low-level motor control loop.  The PID loop "
             "variable is joint velocity or angular rate and the output is the motor "
             "winding voltage phasor, mapping roughly to the torque.\n\n"
@@ -3596,9 +3596,8 @@ class MotorPidEditorTab(QWidget):
             # Container widget for each motor
             for motor_num in range(3):
                 # Top row: spinbox + send button
-                param_widget = QWidget()
                 param_layout = QHBoxLayout()
-                param_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                param_layout.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
 
                 spinbox = QDoubleSpinBox()
                 spinbox.setDecimals(3) # TODO: subclass to drop trailing zeros the increase to 4
@@ -3637,9 +3636,8 @@ class MotorPidEditorTab(QWidget):
                     send_button.setText("→")  # Fallback to text
 
                 param_layout.addWidget(send_button)
-                param_widget.setLayout(param_layout)
 
-                grid_layout.addWidget(param_widget, row, motor_num + 1)
+                grid_layout.addLayout(param_layout, row, motor_num + 1)
 
                 # Store references
                 key = f"{param_suffix}_{motor_num}"
@@ -3660,8 +3658,7 @@ class MotorPidEditorTab(QWidget):
 
         for motor_num in range(3):
             # Create container for test buttons
-            test_container = QWidget()
-            test_layout = QHBoxLayout(test_container)
+            test_layout = QHBoxLayout()
             test_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             # -5 button
@@ -3685,11 +3682,12 @@ class MotorPidEditorTab(QWidget):
             pos5_btn.setToolTip(tooltip)
             test_layout.addWidget(pos5_btn)
 
-            grid_layout.addWidget(test_container, row, motor_num + 1)
+            grid_layout.addLayout(test_layout, row, motor_num + 1)
             self.test_buttons += [neg5_btn, zero_btn, pos5_btn]
 
         row += 1
 
+        grid_layout.setHorizontalSpacing(40) # grid_layout.setColumnStretch({1,2,3}, 2) doesn't seem to do much
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
 
