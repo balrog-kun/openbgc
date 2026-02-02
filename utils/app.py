@@ -927,19 +927,25 @@ class ConnectionTab(QWidget):
         port_layout = QVBoxLayout()
 
         port_input_layout = QHBoxLayout()
-        self.port_edit = QLineEdit("/dev/ttyUSB0")
-        self.port_edit.setPlaceholderText("Enter serial port path")
+        self.port_input = QLineEdit("/dev/ttyUSB0")
+        self.port_input.setPlaceholderText("Enter serial port path")
         port_input_layout.addWidget(QLabel("Port:"))
-        port_input_layout.addWidget(self.port_edit)
+        port_input_layout.addWidget(self.port_input)
 
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip('Update list of known serial ports (normally automatic)')
+        try:
+            self.refresh_btn.setIcon(QIcon.fromTheme('view-refresh'))
+        except:
+            pass
         self.refresh_btn.clicked.connect(self.refresh_ports)
         port_input_layout.addWidget(self.refresh_btn)
 
-        self.show_all_cb = QCheckBox("Show all")
-        self.show_all_cb.setChecked(False)
-        self.show_all_cb.stateChanged.connect(self.refresh_ports)
-        port_input_layout.addWidget(self.show_all_cb)
+        self.show_all_checkbox = QCheckBox("Show all")
+        self.show_all_checkbox.setToolTip('Show system serial ports other than USB or Bluetooth')
+        self.show_all_checkbox.setChecked(False)
+        self.show_all_checkbox.stateChanged.connect(self.refresh_ports)
+        port_input_layout.addWidget(self.show_all_checkbox)
 
         port_layout.addLayout(port_input_layout)
 
@@ -957,6 +963,11 @@ class ConnectionTab(QWidget):
         # Connection controls
         control_layout = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
+        self.connect_btn.setToolTip('Attempt connect to given port, directly loads some data from gimbal')
+        try:
+            self.connect_btn.setIcon(QIcon.fromTheme('go-next'))
+        except:
+            pass
         self.connect_btn.clicked.connect(self.on_connect)
         self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.clicked.connect(self.on_disconnect)
@@ -970,6 +981,7 @@ class ConnectionTab(QWidget):
 
         # Status
         self.status_label = QLabel("Disconnected")
+        self.status_label.setToolTip('Latest connection status')
         layout.addWidget(self.status_label)
 
         layout.addStretch()
@@ -991,7 +1003,7 @@ class ConnectionTab(QWidget):
         self.port_list.clear()
         ports = serial.tools.list_ports.comports()
 
-        show_all = self.show_all_cb.isChecked()
+        show_all = self.show_all_checkbox.isChecked()
 
         for port in ports:
             # Filter ports if "Show all" is not checked
@@ -1014,11 +1026,11 @@ class ConnectionTab(QWidget):
         """Handle port selection from list."""
         port_text = item.text()
         port_path = port_text.split(" - ")[0]
-        self.port_edit.setText(port_path)
+        self.port_input.setText(port_path)
 
     def on_connect(self):
         """Handle connect button click."""
-        port_path = self.port_edit.text().strip()
+        port_path = self.port_input.text().strip()
         if not port_path:
             self.status_label.setText("Error: Please enter a port path")
             return
@@ -1096,11 +1108,11 @@ class StatusTab(QWidget):
         self.camera_angle_labels = []
         self.camera_angle_bars = []
         self.camera_angle_inputs = []
-        self.angle_send_buttons = []
+        self.angle_send_btns = []
         self.camera_speed_labels = []
         self.camera_speed_inputs = []
         self.camera_speed_bars = []
-        self.speed_send_buttons = []
+        self.speed_send_btns = []
         self.max_vel = 60.0  # Default max deg/s
         self.prev_camera_angles = [0.0, 0.0, 0.0]
         self.prev_camera_time = time.time()
@@ -1191,11 +1203,15 @@ class StatusTab(QWidget):
 
             # Send angle button
             angle_send_btn = QPushButton("Send")
-            angle_send_btn.setMaximumWidth(50)
+            angle_send_btn.setMaximumWidth(55)
+            try:
+                angle_send_btn.setIcon(QIcon.fromTheme('go-next'))
+            except:
+                pass
             angle_send_btn.clicked.connect(lambda checked, axis_idx=i: self.send_control_from_input(axis_idx, True))
             camera_layout.addWidget(angle_send_btn, i + 1, 4)
             camera_layout.setAlignment(angle_send_btn, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.angle_send_buttons.append(angle_send_btn)
+            self.angle_send_btns.append(angle_send_btn)
 
             # TODO: mark current movement target from control.target-ypr-offsets
             # TODO: mark frame relative angles too? especially for non-follow axes
@@ -1224,11 +1240,15 @@ class StatusTab(QWidget):
 
             # Send speed button
             speed_send_btn = QPushButton("Send")
-            speed_send_btn.setMaximumWidth(50)
+            speed_send_btn.setMaximumWidth(55)
+            try:
+                speed_send_btn.setIcon(QIcon.fromTheme('go-next'))
+            except:
+                pass
             speed_send_btn.clicked.connect(lambda checked, axis_idx=i: self.send_control_from_input(axis_idx, False))
             camera_layout.addWidget(speed_send_btn, i + 1, 8)
             camera_layout.setAlignment(speed_send_btn, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.speed_send_buttons.append(speed_send_btn)
+            self.speed_send_btns.append(speed_send_btn)
 
         self.camera_group.setLayout(camera_layout)
         layout.addWidget(self.camera_group)
@@ -1541,7 +1561,7 @@ class StatusTab(QWidget):
         self.motor_off_btn.setEnabled(connection_ok)
 
         enabled = bool(self.motors_on) and connection_ok
-        for btn in self.angle_send_buttons + self.speed_send_buttons:
+        for btn in self.angle_send_btns + self.speed_send_btns:
             btn.setEnabled(enabled)
 
     def on_motor_on(self):
@@ -1589,6 +1609,10 @@ class PassthroughTab(QWidget):
 
         self.start_btn = QPushButton('Start')
         self.start_btn.setToolTip('Start sending position updates')
+        try:
+            self.start_btn.setIcon(QIcon.fromTheme("go-next")) # player-start/stop icons probably too colourful
+        except:
+            pass
         self.start_btn.clicked.connect(self.on_start)
         right_layout.addWidget(self.start_btn)
 
@@ -1633,10 +1657,10 @@ class PassthroughTab(QWidget):
             grid_layout.addWidget(angle_label, row, 0)
 
             # Enable
-            enable_cb = QCheckBox()
-            enable_cb.setToolTip(f'Enable/disable control of this angle')
-            grid_layout.addWidget(enable_cb, row, 1)
-            self.controls[angle_num]['enable'] = enable_cb
+            enable_checkbox = QCheckBox()
+            enable_checkbox.setToolTip(f'Enable/disable control of this angle')
+            grid_layout.addWidget(enable_checkbox, row, 1)
+            self.controls[angle_num]['enable'] = enable_checkbox
 
             # Source
             source_combo = QComboBox()
@@ -2032,35 +2056,35 @@ class CalibrationTab(QWidget):
              [],
              lambda: True),
             ('gyro', "Gyro calibration",
-             [("Redo", self.on_gyro_redo)],
+             [("Redo", self.on_gyro_redo, 'view-refresh')],
              [],
              lambda: True),
             ('axes', "Axes & encoders geometry",
-             [("Go to tab", self.on_go_to_axes_tab)],
+             [("Go to tab", self.on_go_to_axes_tab, None)],
              [],
              lambda: self.geometry.have_axes),
             ('home', "Home position",
-             [("Set", self.on_set_home)],
+             [("Set", self.on_set_home, 'go-next')],
              [],
              lambda: self.geometry.have_home),
             ('forward', "Forward direction",
-             [("Set", self.on_set_forward)],
+             [("Set", self.on_set_forward, 'go-next')],
              [],
              lambda: self.geometry.have_forward),
             ('motor', "Motor geometry",
-             [("Go to tab", self.on_go_to_motor_tab)],
+             [("Go to tab", self.on_go_to_motor_tab, None)],
              [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)],
              lambda: False), # TODO
             ('pid', "Motor PIDs",
-             [("Go to tab", self.on_go_to_pid_tab)],
+             [("Go to tab", self.on_go_to_pid_tab, None)],
              [f'config.motor-pid.{i}.kp' for i in range(3)],
              lambda: True), # No way to know whether configured (?)
             ('limit', "Joint limits",
-             [("Go to tab", self.on_go_to_limit_tab)],
+             [("Go to tab", self.on_go_to_limit_tab, None)],
              [f'config.axes.has-limits.{i}' for i in range(3)],
              lambda: False), # TODO
             ('parking', "Parking position",
-             [("Set", self.on_set_parking)],
+             [("Set", self.on_set_parking, 'go-next')],
              [],
              lambda: self.geometry.have_parking),
             ('voltage', "Voltage sense",
@@ -2071,7 +2095,7 @@ class CalibrationTab(QWidget):
 
         self.calibration_checkboxes = {}
         self.calibration_labels = {}
-        self.calibration_buttons = {}
+        self.calibration_btns = {}
 
         row = 0
         for step_id, step_name, buttons, params, check in self.calibration_steps:
@@ -2092,14 +2116,19 @@ class CalibrationTab(QWidget):
 
             # Button in third column
             column = 2
-            self.calibration_buttons[step_id] = []
-            for button_text, handler in buttons:
+            self.calibration_btns[step_id] = []
+            for button_text, handler, icon_name in buttons:
                 button = QPushButton(button_text)
-                button.clicked.connect(handler)
                 button.setToolTip(descriptions[step_id])
+                if icon_name is not None:
+                    try:
+                        button.setIcon(QIcon.fromTheme(icon_name))
+                    except:
+                        pass
+                button.clicked.connect(handler)
                 controls_layout.addWidget(button, row, column)
                 column += 1
-                self.calibration_buttons[step_id].append(button)
+                self.calibration_btns[step_id].append(button)
                 # TODO: disable all while motors on, calibration running, not connected, etc.
 
             row += 1
@@ -2116,12 +2145,12 @@ class CalibrationTab(QWidget):
 
     def update_buttons(self):
         """Enable or disable all calibration buttons."""
-        for step_id in self.calibration_buttons:
+        for step_id in self.calibration_btns:
             enabled = not self.connection.calibrating
             if step_id == 'limit':
                 enabled = enabled and self.geometry.have_axes
 
-            for button in self.calibration_buttons[step_id]:
+            for button in self.calibration_btns[step_id]:
                 button.setEnabled(enabled)
 
     def update_checkboxes(self):
@@ -2228,14 +2257,18 @@ class AxisCalibrationTab(QWidget):
         right_vbox = QVBoxLayout()
 
         # Start and Cancel buttons on the right
-        self.start_button = QPushButton("Start")
-        self.start_button.clicked.connect(self.on_start)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.on_cancel)
-        self.flip_buttons = [QPushButton("Flip axis " + str(i)) for i in range(3)]
+        self.start_btn = QPushButton("Start")
+        try:
+            self.start_btn.setIcon(QIcon.fromTheme("go-next"))
+        except:
+            pass
+        self.start_btn.clicked.connect(self.on_start)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.on_cancel)
+        self.flip_btns = [QPushButton("Flip axis " + str(i)) for i in range(3)]
         for i in range(3):
-            self.flip_buttons[i].clicked.connect(lambda checked, i=i: self.on_flip(i))
-            self.flip_buttons[i].setToolTip(
+            self.flip_btns[i].clicked.connect(lambda checked, i=i: self.on_flip(i))
+            self.flip_btns[i].setToolTip(
                 "The calibration sequence cannot detect whether the joint is physically\n" +
                 "on one side of the camera or the other (or both), only where the joint's\n" +
                 "rotation axis is as an infinite straigth line.  And it doesn't matter for\n" +
@@ -2245,12 +2278,17 @@ class AxisCalibrationTab(QWidget):
                 "or on the other (the vector points from joint towards camera) so invert\n" +
                 "the vector if the joint appearing on the wrong side bothers you.")
 
+            try:
+                self.flip_btns[i].setIcon(QIcon.fromTheme("object-flip-horizontal"))
+            except:
+                pass
+
         # TODO: backup/restore buttons here or in the main calibration tab
         # together with the Write all to NV mem, reread all from NV mem
 
-        right_vbox.addWidget(self.start_button)
-        right_vbox.addWidget(self.cancel_button)
-        for button in self.flip_buttons:
+        right_vbox.addWidget(self.start_btn)
+        right_vbox.addWidget(self.cancel_btn)
+        for button in self.flip_btns:
             right_vbox.addWidget(button)
         top_hbox.addLayout(right_vbox)
         layout.addLayout(top_hbox)
@@ -2258,6 +2296,7 @@ class AxisCalibrationTab(QWidget):
         # Console widget below
         self.console = app_widgets.ConsoleWidget(self.connection)
         self.console.set_active(False)
+        self.console.setToolTip('Calibration status text sent by the firmware')
         layout.addWidget(self.console)
 
         self.setLayout(layout)
@@ -2270,9 +2309,9 @@ class AxisCalibrationTab(QWidget):
         self.update_buttons()
 
     def update_buttons(self):
-        self.start_button.setEnabled(self.connection.is_connected() and not self.connection.calibrating)
-        self.cancel_button.setEnabled(self.connection.is_connected() and self.calibration_active)
-        for button in self.flip_buttons:
+        self.start_btn.setEnabled(self.connection.is_connected() and not self.connection.calibrating)
+        self.cancel_btn.setEnabled(self.connection.is_connected() and self.calibration_active)
+        for button in self.flip_btns:
             button.setEnabled(self.connection.is_connected() and not self.connection.calibrating and
                               self.geometry.have_axes)
 
@@ -2384,11 +2423,11 @@ class MotorGeometryCalibrationTab(QWidget):
         grid_layout.addWidget(QLabel("Zero Offset"), 0, 3)
         grid_layout.addWidget(QLabel("Direction"), 0, 4)
 
-        self.autodetect_buttons = []
-        self.pole_pairs_spinboxes = []
-        self.zero_offset_spinboxes = []
+        self.autodetect_btns = []
+        self.pole_pairs_inputs = []
+        self.zero_offset_inputs = []
         self.sensor_direction_combos = []
-        self.override_buttons = []
+        self.override_btns = []
 
         # Create rows for each joint
         # TODO: remap if have_axes?
@@ -2410,39 +2449,43 @@ class MotorGeometryCalibrationTab(QWidget):
                 "restore all motor settings.  Takes 5-10 seconds.  Watch the console for\n"
                 "results."
             )
+            try:
+                autodetect_btn.setIcon(QIcon.fromTheme('go-next'))
+            except:
+                pass
             grid_layout.addWidget(autodetect_btn, row, 1)
-            self.autodetect_buttons.append(autodetect_btn)
+            self.autodetect_btns.append(autodetect_btn)
 
             # Pole pairs spinbox
-            pole_pairs_sb = QSpinBox()
-            pole_pairs_sb.setMinimum(2)
-            pole_pairs_sb.setMaximum(200)
-            pole_pairs_sb.setMaximumWidth(70)
-            pole_pairs_sb.setToolTip(
+            pole_pairs_input = QSpinBox()
+            pole_pairs_input.setMinimum(2)
+            pole_pairs_input.setMaximum(200)
+            pole_pairs_input.setMaximumWidth(70)
+            pole_pairs_input.setToolTip(
                 f"Number of pole pairs for joint {joint_num} motor.\n"
                 "This is half the number of magnets on the rotor."
             )
-            grid_layout.addWidget(pole_pairs_sb, row, 2)
-            self.pole_pairs_spinboxes.append(pole_pairs_sb)
+            grid_layout.addWidget(pole_pairs_input, row, 2)
+            self.pole_pairs_inputs.append(pole_pairs_input)
 
             # Zero electric offset spinbox (with adaptive step)
-            zero_offset_sb = QDoubleSpinBox()
-            zero_offset_sb.setDecimals(1)
-            zero_offset_sb.setRange(0, 360)
-            zero_offset_sb.setMaximumWidth(80)
+            zero_offset_input = QDoubleSpinBox()
+            zero_offset_input.setDecimals(1)
+            zero_offset_input.setRange(0, 360)
+            zero_offset_input.setMaximumWidth(80)
             # Set adaptive step type
             if PYQT_VERSION == 6:
-                zero_offset_sb.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
+                zero_offset_input.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
             else:
                 # PyQt5 doesn't have StepType enum, use setSingleStep with a small value
-                zero_offset_sb.setSingleStep(1)
-            zero_offset_sb.setToolTip(
+                zero_offset_input.setSingleStep(1)
+            zero_offset_input.setToolTip(
                 f"Zero electric offset for joint {joint_num} motor.\n"
                 "This is the electrical angle offset between the encoder zero position\n"
                 "and the motor's nearest electrical zero position."
             )
-            grid_layout.addWidget(zero_offset_sb, row, 3)
-            self.zero_offset_spinboxes.append(zero_offset_sb)
+            grid_layout.addWidget(zero_offset_input, row, 3)
+            self.zero_offset_inputs.append(zero_offset_input)
 
             # Sensor direction combo
             sensor_direction_combo = QComboBox()
@@ -2463,7 +2506,7 @@ class MotorGeometryCalibrationTab(QWidget):
                 f"Write the manually entered values for joint {joint_num} motor to the gimbal."
             )
             grid_layout.addWidget(override_btn, row, 5)
-            self.override_buttons.append(override_btn)
+            self.override_btns.append(override_btn)
 
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
@@ -2477,7 +2520,7 @@ class MotorGeometryCalibrationTab(QWidget):
     def update_buttons(self):
         """Update button states based on connection and calibration status."""
         enabled = self.connection.is_connected() and not self.connection.calibrating
-        for btn in self.autodetect_buttons + self.override_buttons:
+        for btn in self.autodetect_btns + self.override_btns:
             btn.setEnabled(enabled)
 
     def load_values(self, cb=None):
@@ -2488,8 +2531,8 @@ class MotorGeometryCalibrationTab(QWidget):
         def read_cb(values):
             if values is not None:
                 for joint_num in range(3):
-                    self.pole_pairs_spinboxes[joint_num].setValue(int(values[0 + joint_num]))
-                    self.zero_offset_spinboxes[joint_num].setValue(float(values[3 + joint_num]))
+                    self.pole_pairs_inputs[joint_num].setValue(int(values[0 + joint_num]))
+                    self.zero_offset_inputs[joint_num].setValue(float(values[3 + joint_num]))
                     idx = 0 if int(values[6 + joint_num]) == 1 else 1
                     self.sensor_direction_combos[joint_num].setCurrentIndex(idx)
 
@@ -2549,8 +2592,8 @@ class MotorGeometryCalibrationTab(QWidget):
     def on_override(self, joint_num):
         """Handle override button click for a specific joint."""
         # Get values from UI
-        pole_pairs = self.pole_pairs_spinboxes[joint_num].value()
-        zero_offset = self.zero_offset_spinboxes[joint_num].value()
+        pole_pairs = self.pole_pairs_inputs[joint_num].value()
+        zero_offset = self.zero_offset_inputs[joint_num].value()
         sensor_direction = 1 if self.sensor_direction_combos[joint_num].currentText() == "1" else -1
 
         # Write parameters
@@ -2655,8 +2698,8 @@ class MotorPidEditorTab(QWidget):
         self.suffixes = [p[1] for p in params]
 
         self.spinboxes = {}
-        self.send_buttons = {}
-        self.test_buttons = []
+        self.send_btns = {}
+        self.test_btns = []
 
         row = 1
         for name, param_suffix, valrange, desc in params:
@@ -2692,29 +2735,29 @@ class MotorPidEditorTab(QWidget):
                 param_layout.addWidget(spinbox)
 
                 # Small send button with icon
-                send_button = QPushButton()
-                send_button.setMaximumWidth(30)
-                send_button.setMaximumHeight(25)
-                send_button.setToolTip(f"Send {name} value for motor {motor_num}")
-                send_button.clicked.connect(
+                send_btn = QPushButton()
+                send_btn.setMaximumWidth(30)
+                send_btn.setMaximumHeight(25)
+                send_btn.setToolTip(f"Send {name} value for motor {motor_num}")
+                send_btn.clicked.connect(
                     lambda checked, motor=motor_num, param=param_suffix: self.on_send_value(motor, param)
                 )
 
                 # Set send icon
                 try:
-                    send_button.setIcon(QIcon.fromTheme("go-next"))
-                    send_button.setText("")  # Hide text when icon is available
+                    send_btn.setIcon(QIcon.fromTheme('go-next'))
+                    send_btn.setText("")  # Hide text when icon is available
                 except:
-                    send_button.setText("→")  # Fallback to text
+                    send_btn.setText("→")  # Fallback to text
 
-                param_layout.addWidget(send_button)
+                param_layout.addWidget(send_btn)
 
                 grid_layout.addLayout(param_layout, row, motor_num + 1)
 
                 # Store references
                 key = f"{param_suffix}_{motor_num}"
                 self.spinboxes[key] = spinbox
-                self.send_buttons[key] = send_button
+                self.send_btns[key] = send_btn
 
             row += 1
 
@@ -2755,7 +2798,7 @@ class MotorPidEditorTab(QWidget):
             test_layout.addWidget(pos5_btn)
 
             grid_layout.addLayout(test_layout, row, motor_num + 1)
-            self.test_buttons += [neg5_btn, zero_btn, pos5_btn]
+            self.test_btns += [neg5_btn, zero_btn, pos5_btn]
 
         row += 1
 
@@ -2909,7 +2952,7 @@ class MotorPidEditorTab(QWidget):
         self.motor_on_btn.setEnabled(not self.motors_on and connection_ok)
         self.motor_off_btn.setEnabled(connection_ok)
         # PID parameter buttons
-        for btn in list(self.send_buttons.values()) + self.test_buttons:
+        for btn in list(self.send_btns.values()) + self.test_btns:
             btn.setEnabled(connection_ok)
 
     def start_updates(self):
@@ -2970,12 +3013,12 @@ class JointLimitsTab(QWidget):
         grid_layout = QGridLayout()
 
         self.axis_checkboxes = []
-        self.min_spinboxes = []
-        self.max_spinboxes = []
-        self.get_min_buttons = []
-        self.get_max_buttons = []
-        self.swap_buttons = []
-        self.write_buttons = []
+        self.min_inputs = []
+        self.max_inputs = []
+        self.get_min_btns = []
+        self.get_max_btns = []
+        self.swap_btns = []
+        self.write_btns = []
 
         # Create rows for each axis
         axis_names = ["Outer", "Middle", "Inner"]
@@ -2987,11 +3030,11 @@ class JointLimitsTab(QWidget):
             grid_layout.addWidget(zone_label, row, 0)
 
             # Checkbox for has-limits
-            has_limits_cb = QCheckBox()
-            has_limits_cb.setToolTip(f"Enable/disable avoid zone for axis {axis_num}")
-            has_limits_cb.stateChanged.connect(self.update_buttons)
-            grid_layout.addWidget(has_limits_cb, row, 1)
-            self.axis_checkboxes.append(has_limits_cb)
+            has_limits_checkbox = QCheckBox()
+            has_limits_checkbox.setToolTip(f"Enable/disable avoid zone for axis {axis_num}")
+            has_limits_checkbox.stateChanged.connect(self.update_buttons)
+            grid_layout.addWidget(has_limits_checkbox, row, 1)
+            self.axis_checkboxes.append(has_limits_checkbox)
 
             from_container = QWidget()
             from_layout = QHBoxLayout(from_container)
@@ -2999,22 +3042,22 @@ class JointLimitsTab(QWidget):
             from_layout.addWidget(QLabel("From"))
 
             # Min spinbox
-            min_sb = QDoubleSpinBox()
-            min_sb.setRange(0, 360)
-            min_sb.setDecimals(1)
-            min_sb.setSingleStep(1.0)
-            min_sb.setWrapping(True)
-            min_sb.setSuffix("°")
-            min_sb.setToolTip(f"Start angle of the limit zone for axis {axis_num}")
-            from_layout.addWidget(min_sb)
-            self.min_spinboxes.append(min_sb)
+            min_input = QDoubleSpinBox()
+            min_input.setRange(0, 360)
+            min_input.setDecimals(1)
+            min_input.setSingleStep(1.0)
+            min_input.setWrapping(True)
+            min_input.setSuffix("°")
+            min_input.setToolTip(f"Start angle of the limit zone for axis {axis_num}")
+            from_layout.addWidget(min_input)
+            self.min_inputs.append(min_input)
 
             # Get current min button
             get_min_btn = QPushButton("Get cur")
             get_min_btn.setToolTip(f"Load with current joint position.  Not written automatically.")
             get_min_btn.clicked.connect(lambda checked, n=axis_num: self.on_get_current(n, True))
             from_layout.addWidget(get_min_btn)
-            self.get_min_buttons.append(get_min_btn)
+            self.get_min_btns.append(get_min_btn)
 
             grid_layout.addWidget(from_container, row, 2)
 
@@ -3024,22 +3067,22 @@ class JointLimitsTab(QWidget):
             to_layout.addWidget(QLabel("To"))
 
             # Max spinbox
-            max_sb = QDoubleSpinBox()
-            max_sb.setRange(0, 360)
-            max_sb.setDecimals(1)
-            max_sb.setSingleStep(1.0)
-            max_sb.setWrapping(True)
-            max_sb.setSuffix("°")
-            max_sb.setToolTip(f"End angle of the limit zone for axis {axis_num}")
-            to_layout.addWidget(max_sb)
-            self.max_spinboxes.append(max_sb)
+            max_input = QDoubleSpinBox()
+            max_input.setRange(0, 360)
+            max_input.setDecimals(1)
+            max_input.setSingleStep(1.0)
+            max_input.setWrapping(True)
+            max_input.setSuffix("°")
+            max_input.setToolTip(f"End angle of the limit zone for axis {axis_num}")
+            to_layout.addWidget(max_input)
+            self.max_inputs.append(max_input)
 
             # Get current max button
             get_max_btn = QPushButton("Get cur")
             get_max_btn.setToolTip(f"Load with current joint position.  Not written automatically.")
             get_max_btn.clicked.connect(lambda checked, n=axis_num: self.on_get_current(n, False))
             to_layout.addWidget(get_max_btn)
-            self.get_max_buttons.append(get_max_btn)
+            self.get_max_btns.append(get_max_btn)
 
             grid_layout.addWidget(to_container, row, 3)
 
@@ -3055,14 +3098,18 @@ class JointLimitsTab(QWidget):
                 swap_btn.setText("↔")
             swap_btn.clicked.connect(lambda checked, n=axis_num: self.on_swap_limits(n))
             grid_layout.addWidget(swap_btn, row, 4)
-            self.swap_buttons.append(swap_btn)
+            self.swap_btns.append(swap_btn)
 
             # Write button
             write_btn = QPushButton("Write")
             write_btn.setToolTip(f"Actually write the settings for axis {axis_num} to the gimbal")
+            try:
+                write_btn.setIcon(QIcon.fromTheme('go-next'))
+            except:
+                pass
             write_btn.clicked.connect(lambda checked, n=axis_num: self.on_write_axis(n))
             grid_layout.addWidget(write_btn, row, 5)
-            self.write_buttons.append(write_btn)
+            self.write_btns.append(write_btn)
 
         tip_label = QLabel("Switch away and back to this tab to reload values from gimbal")
         font = tip_label.font()
@@ -3080,18 +3127,22 @@ class JointLimitsTab(QWidget):
         label.setToolTip(tooltip)
         buffer_layout.addWidget(label)
 
-        self.buffer_spinbox = QDoubleSpinBox()
-        self.buffer_spinbox.setRange(0.0, 45.0)
-        self.buffer_spinbox.setDecimals(1)
-        self.buffer_spinbox.setSingleStep(1.0)
-        self.buffer_spinbox.setSuffix("°")
-        self.buffer_spinbox.setToolTip(tooltip)
-        buffer_layout.addWidget(self.buffer_spinbox)
+        self.buffer_input = QDoubleSpinBox()
+        self.buffer_input.setRange(0.0, 45.0)
+        self.buffer_input.setDecimals(1)
+        self.buffer_input.setSingleStep(1.0)
+        self.buffer_input.setSuffix("°")
+        self.buffer_input.setToolTip(tooltip)
+        buffer_layout.addWidget(self.buffer_input)
 
         buffer_layout.addStretch()
 
         self.buffer_write_btn = QPushButton("Write")
         self.buffer_write_btn.setToolTip("Write the 'config.control.limit-margin' parameter")
+        try:
+            self.buffer_write_btn.setIcon(QIcon.fromTheme('go-next'))
+        except:
+            pass
         self.buffer_write_btn.clicked.connect(self.on_write_buffer)
         buffer_layout.addWidget(self.buffer_write_btn)
 
@@ -3159,18 +3210,18 @@ class JointLimitsTab(QWidget):
         def callback(value):
             if value is not None:
                 joint_angle = self.geometry.angle_normalize_360(float(value) * self.geometry.encoder_scale[enc_num])
-                spinboxes = self.min_spinboxes if is_min else self.max_spinboxes
+                spinboxes = self.min_inputs if is_min else self.max_inputs
                 spinboxes[axis_num].setValue(joint_angle)
 
         self.connection.read_param(f'encoders.{enc_num}.reading', callback)
 
     def on_swap_limits(self, axis_num):
         """Swap min and max limit values."""
-        min_val = self.min_spinboxes[axis_num].value()
-        max_val = self.max_spinboxes[axis_num].value()
+        min_val = self.min_inputs[axis_num].value()
+        max_val = self.max_inputs[axis_num].value()
 
-        self.min_spinboxes[axis_num].setValue(max_val)
-        self.max_spinboxes[axis_num].setValue(min_val)
+        self.min_inputs[axis_num].setValue(max_val)
+        self.max_inputs[axis_num].setValue(min_val)
 
     def on_write_axis(self, axis_num):
         """Write limit settings for a specific axis."""
@@ -3178,8 +3229,8 @@ class JointLimitsTab(QWidget):
             return
 
         enabled = self.axis_checkboxes[axis_num].isChecked()
-        min_val = self.min_spinboxes[axis_num].value()
-        max_val = self.max_spinboxes[axis_num].value()
+        min_val = self.min_inputs[axis_num].value()
+        max_val = self.max_inputs[axis_num].value()
 
         self.connection.write_param(f'config.axes.has-limits.{axis_num}', enabled)
         self.connection.write_param(f'config.axes.limit-min.{axis_num}', min_val)
@@ -3193,15 +3244,15 @@ class JointLimitsTab(QWidget):
         if not self.connection.is_connected() or self.connection.calibrating:
             return
 
-        self.connection.write_param('config.control.limit-margin', self.buffer_spinbox.value())
+        self.connection.write_param('config.control.limit-margin', self.buffer_input.value())
         logger.info("New 'config.control.limit-margin' sent to gimbal")
 
     def update_values(self):
         """Update all displayed values from gimbal."""
         for i in range(3):
             self.axis_checkboxes[i].setChecked(self.geometry.has_limits[i])
-            self.min_spinboxes[i].setValue(self.geometry.limit_min[i])
-            self.max_spinboxes[i].setValue(self.geometry.limit_max[i])
+            self.min_inputs[i].setValue(self.geometry.limit_min[i])
+            self.max_inputs[i].setValue(self.geometry.limit_max[i])
 
         self.update_buttons()
 
@@ -3215,17 +3266,17 @@ class JointLimitsTab(QWidget):
 
         # Enable/disable axis controls
         for axis_num in range(3):
-            self.write_buttons[axis_num].setEnabled(enabled)
+            self.write_btns[axis_num].setEnabled(enabled)
             self.axis_checkboxes[axis_num].setEnabled(enabled)
 
             axis_enabled = enabled and self.axis_checkboxes[axis_num].isChecked()
-            self.min_spinboxes[axis_num].setEnabled(axis_enabled)
-            self.max_spinboxes[axis_num].setEnabled(axis_enabled)
-            self.get_min_buttons[axis_num].setEnabled(axis_enabled)
-            self.get_max_buttons[axis_num].setEnabled(axis_enabled)
-            self.swap_buttons[axis_num].setEnabled(axis_enabled)
+            self.min_inputs[axis_num].setEnabled(axis_enabled)
+            self.max_inputs[axis_num].setEnabled(axis_enabled)
+            self.get_min_btns[axis_num].setEnabled(axis_enabled)
+            self.get_max_btns[axis_num].setEnabled(axis_enabled)
+            self.swap_btns[axis_num].setEnabled(axis_enabled)
 
-        self.buffer_spinbox.setEnabled(enabled)
+        self.buffer_input.setEnabled(enabled)
         self.buffer_write_btn.setEnabled(enabled)
 
     def start_updates(self):
@@ -3237,7 +3288,7 @@ class JointLimitsTab(QWidget):
 
         def buffer_cb(value):
             if value is not None:
-                self.buffer_spinbox.setValue(float(value))
+                self.buffer_input.setValue(float(value))
 
         self.connection.read_param('config.control.limit-margin', buffer_cb)
 
@@ -3298,10 +3349,10 @@ class ParameterEditorTab(QWidget):
         # Filter field
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Filter:"))
-        self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Type to filter parameter names...")
-        self.filter_edit.textChanged.connect(self.on_filter_changed)
-        filter_layout.addWidget(self.filter_edit)
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Type to filter parameter names...")
+        self.filter_input.textChanged.connect(self.on_filter_changed)
+        filter_layout.addWidget(self.filter_input)
         layout.addLayout(filter_layout)
 
         # Scrollable parameter grid
@@ -3888,6 +3939,7 @@ class MainWindow(QMainWindow):
 
         # Port
         self.port_status = QLabel()
+        self.port_status.setToolTip('Currently connected serial port path, see Connection tab')
         bottom_layout.addWidget(self.port_status, 0)  # Fixed size
 
         # Busy indicator
@@ -3896,6 +3948,7 @@ class MainWindow(QMainWindow):
 
         # Console widget
         self.console = app_widgets.ConsoleWidget(self.connection)
+        self.console.setToolTip('Log of human-readable messages from the firmware -- all messages other than serial API protocol frames')
         bottom_layout.addWidget(self.console, 1)  # Takes remaining space
 
         bottom_widget.setLayout(bottom_layout)
