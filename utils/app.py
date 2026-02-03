@@ -25,7 +25,8 @@ try:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QDoubleSpinBox, QSpinBox, QComboBox, QFileDialog,
-        QScrollArea, QSizePolicy, QSpacerItem,
+        QScrollArea, QSizePolicy, QSpacerItem, QToolButton, QStyle,
+        QHeaderView,
         # Qt 6 only
         QAbstractSpinBox
     )
@@ -41,7 +42,8 @@ except ImportError:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QDoubleSpinBox, QSpinBox, QComboBox, QFileDialog,
-        QScrollArea, QSizePolicy, QSpacerItem,
+        QScrollArea, QSizePolicy, QSpacerItem, QToolButton, QStyle,
+        QHeaderView,
     )
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import (
@@ -1308,6 +1310,8 @@ class StatusTab(QWidget):
 
         self.connection.calibrating_changed.connect(self.update_buttons)
 
+        self.update_buttons()
+
     def start_updates(self):
         """Start update timers."""
         if self.connection.is_connected():
@@ -1763,7 +1767,7 @@ class PassthroughTab(QWidget):
 
     def on_calibrating(self):
         if self.connection.calibrating and self.running:
-            stop()
+            self.stop()
         else:
             self.update_buttons()
 
@@ -1969,6 +1973,8 @@ class PassthroughTab(QWidget):
     def stop_updates(self):
         if self.running:
             self.stop()
+
+        self.update_buttons()
 
 
 class CalibrationTab(QWidget):
@@ -2616,7 +2622,7 @@ class MotorGeometryCalibrationTab(QWidget):
 
     def stop_updates(self):
         """Stop updates."""
-        pass
+        self.update_buttons()
 
 
 class MotorPidEditorTab(QWidget):
@@ -2959,6 +2965,7 @@ class MotorPidEditorTab(QWidget):
         """Start updates."""
         self.load_values()
         self.motor_status_timer.start()
+        self.update_buttons()
 
     def stop_updates(self):
         """Stop updates."""
@@ -3379,7 +3386,6 @@ class ParameterEditorTab(QWidget):
         self.setLayout(layout)
 
         # Connect signals
-        self.connection.connection_changed.connect(self.on_connection_changed)
         self.connection.calibrating_changed.connect(self.update_buttons)
 
         self.update_buttons()
@@ -3791,10 +3797,6 @@ class ParameterEditorTab(QWidget):
 
         return None
 
-    def on_connection_changed(self, connected):
-        """Handle connection state changes."""
-        self.update_buttons()
-
     def update_buttons(self):
         """Update button enabled states."""
         enabled = self.connection.is_connected() and not self.connection.calibrating \
@@ -3816,7 +3818,15 @@ class ParameterEditorTab(QWidget):
 
     def stop_updates(self):
         """Stop updates."""
-        pass
+        self.update_buttons()
+
+
+class PopoutWindow(QMainWindow):
+    closed = pyqtSignal()
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -3826,6 +3836,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("OpenBGC Gimbal app")
         self.setGeometry(300, 100, 1000, 800)
+
+        self.popped_out_tabs = {}
 
         # Set global style sheet for disabled buttons
         self.setStyleSheet("""
@@ -3869,11 +3881,13 @@ class MainWindow(QMainWindow):
         # Left sidebar with tab tree
         self.tab_selector = QTreeWidget()
         self.tab_selector.setHeaderHidden(True)
-        self.tab_selector.setMaximumWidth(150)
+        self.tab_selector.setColumnCount(2)
         self.tab_selector.setMinimumWidth(150)
+        self.tab_selector.setMaximumWidth(150)
         self.tab_selector.setWordWrap(True)
         self.tab_selector.setUniformRowHeights(False)  # Allow variable row heights for word wrapping
-        self.tab_selector.itemSelectionChanged.connect(self.on_tab_selection_changed)
+        self.tab_selector.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.tab_selector.itemSelectionChanged.connect(self.update_tabs)
 
         # Create top-level items
         status_item = QTreeWidgetItem(self.tab_selector, ["Status"])
@@ -3897,8 +3911,13 @@ class MainWindow(QMainWindow):
         #calibration_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator) <-- hides the children, why?
 
         # Set column width to allow word wrapping
-        self.tab_selector.setColumnWidth(0, 250)
-        self.tab_selector.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.tab_selector.setColumnWidth(0, 200)
+        self.tab_selector.setColumnWidth(1, 18)
+        header = self.tab_selector.header()
+        header.setMinimumSectionSize(18)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
 
         # Ensure disabled items are visually distinct
         self.tab_selector.setStyleSheet("""
@@ -3915,18 +3934,22 @@ class MainWindow(QMainWindow):
         is_enabled_calib_with_axes = lambda: is_enabled_calib() and self.geometry.have_axes
 
         self.tabs = {
-            'status': (0, status_item, StatusTab(self.connection, self.geometry), is_enabled_normal),
-            'passthrough': (1, passthrough_item, PassthroughTab(self.connection, self.geometry), is_enabled_normal),
-            'calibration': (2, calibration_item, CalibrationTab(self.connection, self.geometry), is_enabled_calib),
-            'calib_axes': (3, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib),
-            'calib_motor': (4, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib),
-            'calib_pid': (5, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib),
-            'calib_limit': (6, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes),
-            'params': (7, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal),
-            'connection': (8, connection_item, ConnectionTab(self.connection), lambda: True),
+            'status': (0, status_item, StatusTab(self.connection, self.geometry), is_enabled_normal, True),
+            'passthrough': (1, passthrough_item, PassthroughTab(self.connection, self.geometry), is_enabled_normal, True),
+            'calibration': (2, calibration_item, CalibrationTab(self.connection, self.geometry, self), is_enabled_calib, False),
+            'calib_axes': (3, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib, True),
+            'calib_motor': (4, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib, True),
+            'calib_pid': (5, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib, True),
+            'calib_limit': (6, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes, True),
+            'params': (7, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal, True),
+            'connection': (8, connection_item, ConnectionTab(self.connection), lambda: True, False),
         }
 
-        for index, item, tab, enabled in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
+        for tab_id, (_, item, _, _, pop_out_ok) in self.tabs.items():
+            if pop_out_ok:
+                self.add_popout_button(tab_id, item)
+
+        for _, _, tab, _, _ in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
             self.stacked_widget.addWidget(tab)
 
         main_layout.addWidget(self.stacked_widget)
@@ -3962,37 +3985,97 @@ class MainWindow(QMainWindow):
         splitter.setCollapsible(0, False)  # Main content not collapsible
         splitter.setCollapsible(1, True)   # Bottom strip collapsible
 
+        self.update_tabs()
         return splitter
 
-    def on_tab_selection_changed(self):
-        """Handle tab selection change from tree widget."""
-        selected_items = self.tab_selector.selectedItems()
-        if not selected_items:
+    def add_popout_button(self, tab_id, item):
+        button = QToolButton()
+        button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
+        button.setAutoRaise(True)
+        button.setIconSize(QSize(12, 12))
+        button.setFixedSize(QSize(16, 16))
+        button.setStyleSheet("QToolButton { padding: 0px; }")
+        button.setToolTip("Open this tab in a separate window.\nClose the window to see it back here.")
+        button.clicked.connect(lambda checked=False, tid=tab_id: self.pop_out_tab(tid))
+        self.tab_selector.setItemWidget(item, 1, button)
+
+    def pop_out_tab(self, tab_id):
+        _, item, tab, is_enabled, pop_out_ok = self.tabs[tab_id]
+        if not pop_out_ok:# or not is_enabled():
             return
 
-        selected_item = selected_items[0]
+        if tab_id in self.popped_out_tabs:
+            window = self.popped_out_tabs[tab_id]
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            return
 
-        for index, item, tab, enabled in self.tabs.values():
-            if selected_item == item:
-                self.stacked_widget.setCurrentIndex(index)
-                if self.connection.is_connected():
-                    tab.start_updates()
-                else:
-                    tab.stop_updates()
-            else:
-                tab.stop_updates()
+        if self.tab_selector.currentItem() == item:
+            self.switch_to_tab('connection')
+
+        item.setHidden(True)
+        self.stacked_widget.removeWidget(tab)
+
+        window = PopoutWindow(self)
+        window.setWindowTitle('OpenBGC - ' + item.text(0))
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        tab.setParent(None)
+        window.setCentralWidget(tab)
+        tab.setVisible(True)
+
+        window.closed.connect(lambda tid=tab_id: self.on_popout_closed(tid))
+        self.popped_out_tabs[tab_id] = window
+
+        window.show()
+        self.update_tabs()
+
+    def on_popout_closed(self, tab_id):
+        window = self.popped_out_tabs.pop(tab_id, None)
+        if not window:
+            return
+
+        index, item, tab, _, _ = self.tabs[tab_id]
+        tab.setParent(self.stacked_widget)
+        self.stacked_widget.insertWidget(index, tab)
+        item.setHidden(False)
+
+        self.update_tabs()
 
     def update_tabs(self):
-        for index, item, tab, is_enabled in self.tabs.values():
-            if is_enabled():
+        current_item = self.tab_selector.currentItem()
+        for tab_id, (_, item, tab, is_enabled, _) in self.tabs.items():
+            enabled = is_enabled()
+            updating = enabled and (item == current_item or tab_id in self.popped_out_tabs)
+
+            if enabled:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+                if item == current_item:
+                    self.stacked_widget.setCurrentWidget(tab)
             else:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+
+            if updating and not hasattr(tab, 'updating'):
+                tab.start_updates()
+                tab.updating = True
+            elif not updating and hasattr(tab, 'updating'):
+                del tab.updating
                 tab.stop_updates()
 
     def switch_to_tab(self, tab_id):
         """Switch to a specific tab by id."""
-        self.tab_selector.setCurrentItem(self.tabs[tab_id][1])
+        _, item, _, is_enabled, _ = self.tabs[tab_id]
+        if not is_enabled():
+            return
+
+        if tab_id in self.popped_out_tabs:
+            window = self.popped_out_tabs[tab_id]
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            return
+
+        self.tab_selector.setCurrentItem(item)
 
     def on_connection_changed(self, connected: bool):
         """Handle connection state change."""
