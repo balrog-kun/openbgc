@@ -753,10 +753,10 @@ class GimbalConnection(QObject):
             raise Exception("Not connected")
         self.port.write(data)
 
-    def control(self, angles=None, speeds=None): # degrees and degrees/s respectively
+    def control(self, angles=None, speeds=None, nofollow=None): # degrees and degrees/s respectively
         modes = [
-            cmd.ControlMode.MODE_ANGLE if angles is not None and angles[i] is not None else
-            cmd.ControlMode.MODE_SPEED if speeds is not None and speeds[i] is not None else
+            cmd.ControlMode.MODE_ANGLE if angles and angles[i] is not None else
+            cmd.ControlMode.MODE_SPEED if speeds and speeds[i] is not None else
             cmd.ControlMode.MODE_IGNORE for i in range(3)
         ]
         targets = [
@@ -764,6 +764,7 @@ class GimbalConnection(QObject):
             {'speed': int(speeds[i] / sbgc_unit.degree_per_sec_factor)} if modes[i] == cmd.ControlMode.MODE_SPEED else
             None for i in range(3)
         ]
+        modes = [ modes[i] | (0 if nofollow and nofollow[i] else cmd.ControlMode.CONTROL_FLAG_MIX_FOLLOW) for i in range(3) ]
         self.send_command(cmd.CmdId.CMD_CONTROL, cmd.ControlRequest.build(dict(control_mode=modes, target=targets)))
 
     def write_param(self, param_name, value):
