@@ -61,8 +61,7 @@ def ctype_to_construct(
             if len(dims) == 1:
                 if sizeof != dims[0]:
                     raise Exception("String size mismatch")
-                # TODO: we want a type that stops at either NUL or sizeof chars
-                return CString('utf8')
+                return PaddedString(dims[0], 'utf8')
             base = base + '[' + str(dims[0]) + ']'
             dims = dims[1:]
         subcon = ctype_to_construct(base, sizeof, endian=endian)
