@@ -5,6 +5,7 @@ import time
 try:
     from PyQt6.QtWidgets import (
         QWidget, QPlainTextEdit, QToolTip, QScrollArea, QSizePolicy,
+        QLabel, QHBoxLayout, QToolButton, QStyle,
     )
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QRect, QSize,
@@ -15,6 +16,7 @@ try:
 except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QPlainTextEdit, QToolTip, QScrollArea, QSizePolicy,
+        QLabel, QHBoxLayout, QToolButton, QStyle,
     )
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QRect, QSize,
@@ -1061,3 +1063,53 @@ class AutoScrollArea(QScrollArea):
     def minimumSizeHint(self) -> QSize:
         """Return the minimum size hint."""
         return self._last_size
+
+
+class TabItemWidget(QWidget):
+    def __init__(self, text, item, parent=None, button_cb=None):
+        super().__init__(parent)
+        self.text = text
+        self.item = item
+        self.tab_selector = parent
+
+        self.label = QLabel(text)
+        self.label.setWordWrap(True)
+        self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self.layout = QHBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.addWidget(self.label, 1)
+
+        if button_cb is not None:
+            self.button = QToolButton()
+            self.button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
+            self.button.setAutoRaise(True)
+            self.button.setIconSize(QSize(12, 12))
+            self.button.setFixedSize(QSize(16, 16))
+            self.button.setToolTip("Open this tab in a separate window.\nClose it to see it back here.")
+            self.button.clicked.connect(button_cb)
+            self.layout.addWidget(self.button, 0, Qt.AlignmentFlag.AlignTop)
+        else:
+            self.button = None
+
+        self.setLayout(self.layout)
+
+        self.in_size_hint = False
+
+    def sizeHint(self):
+        if self.in_size_hint:
+            return QSize(10, 10)
+        self.in_size_hint = True
+        width = self.tab_selector.visualRect(self.tab_selector.indexFromItem(self.item, 0)).width()
+        self.in_size_hint = False
+
+        if self.button is not None:
+            bsize = self.button.sizeHint()
+            width -= bsize.width()# + self.layout.spacing()
+
+        metrics = self.label.fontMetrics()
+        text_rect = metrics.boundingRect(0, 0, width, 10000, Qt.TextFlag.TextWordWrap, self.text)
+        height = text_rect.height() + 6
+        if self.button is not None:
+            height = max(height, bsize.height())
+        return QSize(width, height)

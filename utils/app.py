@@ -25,8 +25,7 @@ try:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QDoubleSpinBox, QSpinBox, QComboBox, QFileDialog,
-        QScrollArea, QSizePolicy, QSpacerItem, QToolButton, QStyle,
-        QHeaderView,
+        QScrollArea, QSizePolicy, QSpacerItem,
         # Qt 6 only
         QAbstractSpinBox
     )
@@ -42,8 +41,7 @@ except ImportError:
         QLabel, QLineEdit, QPushButton, QListWidget, QStackedWidget,
         QTreeWidget, QTreeWidgetItem, QGroupBox, QGridLayout, QCheckBox,
         QSplitter, QDoubleSpinBox, QSpinBox, QComboBox, QFileDialog,
-        QScrollArea, QSizePolicy, QSpacerItem, QToolButton, QStyle,
-        QHeaderView,
+        QScrollArea, QSizePolicy, QSpacerItem,
     )
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import (
@@ -1128,6 +1126,8 @@ class StatusTab(QWidget):
 
             # Angle label
             angle_label = QLabel("unknown")
+            angle_label.setMinimumWidth(60)
+            angle_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             joints_layout.addWidget(angle_label, i + 1, 1)
             joints_layout.setAlignment(angle_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.encoder_labels.append(angle_label)
@@ -1175,6 +1175,8 @@ class StatusTab(QWidget):
 
             # Angle label (current value)
             angle_label = QLabel("unknown")
+            angle_label.setMinimumWidth(60)
+            angle_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             camera_layout.addWidget(angle_label, i + 1, 1)
             camera_layout.setAlignment(angle_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.camera_angle_labels.append(angle_label)
@@ -1220,6 +1222,8 @@ class StatusTab(QWidget):
 
             # Speed label (current value)
             speed_label = QLabel("0.0°/s")
+            speed_label.setMinimumWidth(60)
+            speed_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             camera_layout.addWidget(speed_label, i + 1, 5)
             camera_layout.setAlignment(speed_label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.camera_speed_labels.append(speed_label)
@@ -1722,6 +1726,7 @@ class PassthroughTab(QWidget):
 
         # Connect to signals
         self.connection.calibrating_changed.connect(self.on_calibrating)
+        self.geometry.geometry_changed.connect(self.update_buttons)
         # Or we could set a flag ourselves to prevent calibration and disable StatusTab controls
 
         # Initial state
@@ -1955,8 +1960,8 @@ class PassthroughTab(QWidget):
 
     def update_buttons(self):
         """Update button enabled states."""
-        enabled = (self.connection.is_connected() and
-                   not self.connection.calibrating) # TODO: and motors_on
+        enabled = (self.connection.is_connected() and not self.connection.calibrating and
+                   self.geometry.have_axes and self.geometry.have_forward) # TODO: and motors_on
 
         self.start_btn.setEnabled(enabled and not self.running)
         self.stop_btn.setEnabled(enabled and self.running)
@@ -2193,7 +2198,7 @@ class CalibrationTab(QWidget):
 
     def on_go_to_axes_tab(self):
         """Switch to axis calibration tab."""
-        self.main_window.switch_to_tab('calib_axes')
+        self.main_window.switch_to_tab('calib-axes')
 
     def on_set_home(self):
         self.connection.send_raw(b'k')
@@ -2206,13 +2211,13 @@ class CalibrationTab(QWidget):
         self.geometry.update()
 
     def on_go_to_motor_tab(self):
-        self.main_window.switch_to_tab('calib_motor')
+        self.main_window.switch_to_tab('calib-motor')
 
     def on_go_to_pid_tab(self):
-        self.main_window.switch_to_tab('calib_pid')
+        self.main_window.switch_to_tab('calib-pid')
 
     def on_go_to_limit_tab(self):
-        self.main_window.switch_to_tab('calib_limit')
+        self.main_window.switch_to_tab('calib-limit')
 
     def on_set_parking(self):
         def encoders_read_cb(values):
@@ -3837,22 +3842,37 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OpenBGC Gimbal app")
         self.setGeometry(300, 100, 1000, 800)
 
+        # Create connection and geometry
+        self.connection = GimbalConnection(debug)
+        self.geometry = GimbalGeometry(self.connection)
+
+        is_enabled_normal = lambda: self.connection.is_connected() and not self.connection.calibrating
+        is_enabled_calib = lambda: self.connection.is_connected()
+        is_enabled_calib_with_axes = lambda: is_enabled_calib() and self.geometry.have_axes
+
+        self.tabs = {
+            'status': (0, 'Status', StatusTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_normal, True),
+            'passthrough': (1, 'Control Passthrough', PassthroughTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_normal, True),
+            'calibration': (2, 'Calibration', CalibrationTab(self.connection, self.geometry, self), QTreeWidgetItem(), is_enabled_calib, False),
+            'calib-axes': (3, 'Axis calibration', AxisCalibrationTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib, True),
+            'calib-motor': (4, 'Motor geometry calibration', MotorGeometryCalibrationTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
+            'calib-pid': (5, 'Motor PID editor', MotorPidEditorTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
+            'calib-limit': (6, 'Joint limits', JointLimitsTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib_with_axes, True),
+            'params': (7, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
+            'connection': (8, 'Connection', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
+        }
+
         self.popped_out_tabs = {}
 
         # Set global style sheet for disabled buttons
         self.setStyleSheet("""
+            QPushButton:hover {
+                color: #888888;
+            }
             QPushButton:disabled {
                 color: #aaaaaa;
             }
-            QPushButton:disabled:hover {
-            }
-            QPushButton:disabled:pressed {
-            }
         """)
-
-        # Create connection and geometry
-        self.connection = GimbalConnection(debug)
-        self.geometry = GimbalGeometry(self.connection)
 
         # Create splitter for main content and bottom strip
         splitter = self.create_splitter()
@@ -3881,79 +3901,50 @@ class MainWindow(QMainWindow):
         # Left sidebar with tab tree
         self.tab_selector = QTreeWidget()
         self.tab_selector.setHeaderHidden(True)
-        self.tab_selector.setColumnCount(2)
-        self.tab_selector.setMinimumWidth(150)
-        self.tab_selector.setMaximumWidth(150)
-        self.tab_selector.setWordWrap(True)
+        self.tab_selector.setColumnCount(1)
+        self.tab_selector.setColumnWidth(0, 175)
+        self.tab_selector.setFixedWidth(180)
         self.tab_selector.setUniformRowHeights(False)  # Allow variable row heights for word wrapping
-        self.tab_selector.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.tab_selector.itemSelectionChanged.connect(self.update_tabs)
+        #self.tab_selector.setIndentation(12)
 
-        # Create top-level items
-        status_item = QTreeWidgetItem(self.tab_selector, ["Status"])
-        passthrough_item = QTreeWidgetItem(self.tab_selector, ["Control Passthrough"])
-        calibration_item = QTreeWidgetItem(self.tab_selector, ["Calibration"])
-        param_editor_item = QTreeWidgetItem(self.tab_selector, ["Parameter Editor"])
-        connection_item = QTreeWidgetItem(self.tab_selector, ["Connection"])
-
-        # Add sub-items for calibration
-        axis_calibration_item = QTreeWidgetItem(calibration_item, ["Axis calibration"])
-        calibration_item.addChild(axis_calibration_item)
-        motor_calibration_item = QTreeWidgetItem(calibration_item, ["Motor geometry calibration"])
-        calibration_item.addChild(motor_calibration_item)
-        pid_calibration_item = QTreeWidgetItem(calibration_item, ["Motor PID editor"])
-        calibration_item.addChild(pid_calibration_item)
-        limits_calibration_item = QTreeWidgetItem(calibration_item, ["Joint limits"])
-        calibration_item.addChild(limits_calibration_item)
-
-        # Expand calibration by default
-        calibration_item.setExpanded(True)
-        #calibration_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator) <-- hides the children, why?
-
-        # Set column width to allow word wrapping
-        self.tab_selector.setColumnWidth(0, 200)
-        self.tab_selector.setColumnWidth(1, 18)
-        header = self.tab_selector.header()
-        header.setMinimumSectionSize(18)
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        items = [(index, tab_id, item) for tab_id, (index, _, _, item, _, _) in self.tabs.items()]
+        for _, tab_id, item in sorted(items): # Sorting tuples is lexicographic so by first element
+            if tab_id.startswith('calib-'):
+                parent_item.addChild(item)
+            else:
+                self.tab_selector.addTopLevelItem(item)
+                parent_item = item
 
         # Ensure disabled items are visually distinct
         self.tab_selector.setStyleSheet("""
+            QTreeWidget::item { color: #000000; }
+            QTreeWidget::item:hover { background-color: #f5f5f5; }
             QTreeWidget::item:disabled { color: #aaaaaa; }
-            QTreeWidget::item:enabled { color: #000000; }
+            QTreeWidget::item QLabel { color: #000000; }
+            QTreeWidget::item QLabel:disabled { color: #aaaaaa; }
         """)
+        #   QTreeWidget::item QLabel:hover { color: #888888; }
         main_layout.addWidget(self.tab_selector)
 
         # Right side: stacked widget for tab content
         self.stacked_widget = QStackedWidget()
 
-        is_enabled_normal = lambda: self.connection.is_connected() and not self.connection.calibrating
-        is_enabled_calib = lambda: self.connection.is_connected()
-        is_enabled_calib_with_axes = lambda: is_enabled_calib() and self.geometry.have_axes
-
-        self.tabs = {
-            'status': (0, status_item, StatusTab(self.connection, self.geometry), is_enabled_normal, True),
-            'passthrough': (1, passthrough_item, PassthroughTab(self.connection, self.geometry), is_enabled_normal, True),
-            'calibration': (2, calibration_item, CalibrationTab(self.connection, self.geometry, self), is_enabled_calib, False),
-            'calib_axes': (3, axis_calibration_item, AxisCalibrationTab(self.connection, self.geometry), is_enabled_calib, True),
-            'calib_motor': (4, motor_calibration_item, MotorGeometryCalibrationTab(self.connection), is_enabled_calib, True),
-            'calib_pid': (5, pid_calibration_item, MotorPidEditorTab(self.connection), is_enabled_calib, True),
-            'calib_limit': (6, limits_calibration_item, JointLimitsTab(self.connection, self.geometry), is_enabled_calib_with_axes, True),
-            'params': (7, param_editor_item, ParameterEditorTab(self.connection), is_enabled_normal, True),
-            'connection': (8, connection_item, ConnectionTab(self.connection), lambda: True, False),
-        }
-
-        for tab_id, (_, item, _, _, pop_out_ok) in self.tabs.items():
-            if pop_out_ok:
-                self.add_popout_button(tab_id, item)
-
-        for _, _, tab, _, _ in sorted(self.tabs.values()): # Sorting tuples is lexicographic so by first element
-            self.stacked_widget.addWidget(tab)
-
         main_layout.addWidget(self.stacked_widget)
         main_widget.setLayout(main_layout)
+
+        # Set up tabs and tab_selector items
+        for tab_id in self.tabs:
+            _, text, tab, item, _, pop_out_ok = self.tabs[tab_id]
+
+            self.stacked_widget.addWidget(tab)
+
+            item.widget = app_widgets.TabItemWidget(text, item, self.tab_selector,
+                (lambda checked=False, tid=tab_id: self.pop_out_tab(tid)) if pop_out_ok else None)
+            self.tab_selector.setItemWidget(item, 0, item.widget)
+
+        # Expand calibration by default
+        self.tab_selector.expandAll()
 
         # Bottom part: status strip
         bottom_widget = QWidget()
@@ -3988,19 +3979,8 @@ class MainWindow(QMainWindow):
         self.update_tabs()
         return splitter
 
-    def add_popout_button(self, tab_id, item):
-        button = QToolButton()
-        button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
-        button.setAutoRaise(True)
-        button.setIconSize(QSize(12, 12))
-        button.setFixedSize(QSize(16, 16))
-        button.setStyleSheet("QToolButton { padding: 0px; }")
-        button.setToolTip("Open this tab in a separate window.\nClose the window to see it back here.")
-        button.clicked.connect(lambda checked=False, tid=tab_id: self.pop_out_tab(tid))
-        self.tab_selector.setItemWidget(item, 1, button)
-
     def pop_out_tab(self, tab_id):
-        _, item, tab, is_enabled, pop_out_ok = self.tabs[tab_id]
+        _, text, tab, item, is_enabled, pop_out_ok = self.tabs[tab_id]
         if not pop_out_ok:# or not is_enabled():
             return
 
@@ -4018,9 +3998,9 @@ class MainWindow(QMainWindow):
         self.stacked_widget.removeWidget(tab)
 
         window = PopoutWindow(self)
-        window.setWindowTitle('OpenBGC - ' + item.text(0))
+        window.setWindowTitle('OpenBGC - ' + text)
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        tab.setParent(None)
+        tab.setParent(window)
         window.setCentralWidget(tab)
         tab.setVisible(True)
 
@@ -4035,16 +4015,16 @@ class MainWindow(QMainWindow):
         if not window:
             return
 
-        index, item, tab, _, _ = self.tabs[tab_id]
+        _, _, tab, item, _, _ = self.tabs[tab_id]
         tab.setParent(self.stacked_widget)
-        self.stacked_widget.insertWidget(index, tab)
+        self.stacked_widget.addWidget(tab)
         item.setHidden(False)
 
         self.update_tabs()
 
     def update_tabs(self):
         current_item = self.tab_selector.currentItem()
-        for tab_id, (_, item, tab, is_enabled, _) in self.tabs.items():
+        for tab_id, (index, _, tab, item, is_enabled, _) in self.tabs.items():
             enabled = is_enabled()
             updating = enabled and (item == current_item or tab_id in self.popped_out_tabs)
 
@@ -4054,6 +4034,7 @@ class MainWindow(QMainWindow):
                     self.stacked_widget.setCurrentWidget(tab)
             else:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            item.widget.label.setEnabled(enabled)
 
             if updating and not hasattr(tab, 'updating'):
                 tab.start_updates()
@@ -4064,7 +4045,7 @@ class MainWindow(QMainWindow):
 
     def switch_to_tab(self, tab_id):
         """Switch to a specific tab by id."""
-        _, item, _, is_enabled, _ = self.tabs[tab_id]
+        _, _, _, item, is_enabled, _ = self.tabs[tab_id]
         if not is_enabled():
             return
 
