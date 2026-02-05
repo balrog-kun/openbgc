@@ -455,6 +455,7 @@ class GimbalConnection(QObject):
             debug_cb=self._debug_cb if debug else None
         )
         self.serial_notifier: Optional[QSocketNotifier] = None
+        self.new_connection = False
 
     def _debug_cb(self, info):
         """Debug callback for InStream."""
@@ -471,9 +472,10 @@ class GimbalConnection(QObject):
             self.serial_notifier.activated.connect(self._read_serial_data)
             self.serial_notifier.setEnabled(True)
             self.port_path = port_path
-            self.connection_changed.emit(True)
+            self.new_connection = True
             return True
         except Exception as e:
+            self.port = None
             error_msg = f"Connection error: {e}"
             logger.debug(error_msg)
             self.error_occurred.emit(error_msg)
@@ -494,12 +496,15 @@ class GimbalConnection(QObject):
         self.port_path = None
         self.pending_requests.clear()
         self.queued_requests.clear()
-        self.connection_changed.emit(False)
+        if not self.new_connection:
+            self.connection_changed.emit(False)
+        self.new_connection = False
+        self.set_calibrating(False)
         self._check_busy_state()
 
     def is_connected(self) -> bool:
         """Check if connected."""
-        return self.port is not None and self.port.is_open
+        return self.port is not None and self.port.is_open and not self.new_connection
 
     def _read_serial_data(self):
         """Read available data from the serial port and feed it to the InStream."""
@@ -559,7 +564,7 @@ class GimbalConnection(QObject):
 
     def read_param(self, param_names, callback: Callable[[Any], None]):
         """Read one or more parameters by name. Callback receives the parsed values as a list."""
-        if not self.is_connected():
+        if self.port is None:
             callback(None)
             return
 
@@ -606,7 +611,7 @@ class GimbalConnection(QObject):
                 except:
                     by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
                     if param_name not in by_name:
-                        callback(None)
+                        self._handle_param_error(callback)
                         return
                     pdef = by_name[param_name]
                 pdefs.append(pdef)
@@ -615,7 +620,7 @@ class GimbalConnection(QObject):
             # Build request
             out_payload = cmd_obgc.GetParamRequest.build(dict(param_ids=param_ids))
             out_frame = fr.FrameV1.build(dict(
-                hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC), size=len(out_payload)),
+                hdr=dict(cmd_id=cmd_obgc.CmdId.CMD_OBGC, size=len(out_payload)),
                 pld=out_payload
             ))
 
@@ -632,19 +637,25 @@ class GimbalConnection(QObject):
             error_msg = f"Read param error: {e}"
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
-            callback(None)
+            self._handle_param_error(callback)
+
+    def _handle_param_error(self, callback):
+        callback(None)
+
+        if self.new_connection:
+            self.disconnect()
 
     def _handle_param_response(self, param_ids, data, callback, pdefs, param_names):
         """Handle a parameter response for one or more parameters."""
         if data is None:
-            callback(None)
+            self._handle_param_error(callback)
             return
 
         total_size = sum([pdef.size for pdef in pdefs])
         if len(data) != total_size:
             error_msg = f"Reading params {str(param_names)} size mismatch: expected {total_size}, got {len(data)}"
             logger.error(error_msg)
-            callback(None)
+            self._handle_param_error(callback)
             # TODO: clear pending_requests but do invoke the callbacks, ratelimit messages
             # If this happens, we should recover sync after clearing queue and ignoring a few responses
             # Maybe we should move pending_requests back to queued_requests
@@ -671,8 +682,12 @@ class GimbalConnection(QObject):
             if self.debug:
                 logger.debug(f"Param response parse error, data={data.hex()}")
             self.error_occurred.emit(error_msg)
-            callback(None)
+            self._handle_param_error(callback)
             return
+
+        if self.new_connection:
+            self.new_connection = False
+            self.connection_changed.emit(True)
 
         if len(values) == 1:
             callback(values[0])
@@ -681,7 +696,7 @@ class GimbalConnection(QObject):
 
     def send_command(self, cmd_id, payload=None):
         """Send a command to the gimbal."""
-        if not self.is_connected():
+        if self.port is None:
             return False
 
         try:
@@ -749,7 +764,7 @@ class GimbalConnection(QObject):
 
     def send_raw(self, data: bytes):
         """Send raw data to the serial port."""
-        if not self.is_connected():
+        if self.port is None:
             raise Exception("Not connected")
         self.port.write(data)
 
@@ -765,7 +780,7 @@ class GimbalConnection(QObject):
             None for i in range(3)
         ]
         modes = [ modes[i] | (0 if nofollow and nofollow[i] else cmd.ControlMode.CONTROL_FLAG_MIX_FOLLOW) for i in range(3) ]
-        self.send_command(cmd.CmdId.CMD_CONTROL, cmd.ControlRequest.build(dict(control_mode=modes, target=targets)))
+        return self.send_command(cmd.CmdId.CMD_CONTROL, cmd.ControlRequest.build(dict(control_mode=modes, target=targets)))
 
     def write_param(self, param_name, value):
         by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
@@ -773,15 +788,8 @@ class GimbalConnection(QObject):
         param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
         value_bytes = param_type_cls.build(value)
 
-        # Build request
-        out_payload = cmd_obgc.SetParamRequest.build(dict(param_id=pdef.id, value=value_bytes))
-        out_frame = fr.FrameV1.build(dict(
-            hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC)),
-            pld=out_payload
-        ))
-
         # TODO: perhaps drain the read queue before doing this, for now let callers do it if needed
-        self.port.write(out_frame)
+        return self.send_command(cmd_obgc.CmdId.CMD_OBGC, cmd_obgc.SetParamRequest.build(dict(param_id=pdef.id, value=value_bytes)))
 
 
 def list_convert(val):
