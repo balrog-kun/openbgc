@@ -960,10 +960,10 @@ class ConnectionTab(QWidget):
 
         self.port_list = QListWidget()
         self.port_list.itemDoubleClicked.connect(self.on_port_selected)
-        # Set height for approximately 5 lines
-        #font_metrics = self.port_list.fontMetrics()
-        #line_height = font_metrics.lineSpacing()
-        #self.port_list.setFixedHeight(line_height * 5 + 4)  # +4 for borders
+        # Set height for approximately 6 lines
+        font_metrics = self.port_list.fontMetrics()
+        line_height = font_metrics.lineSpacing()
+        self.port_list.setMaximumHeight(line_height * 6 + 4)  # +4 for borders
         port_layout.addWidget(self.port_list)
 
         port_group.setLayout(port_layout)
@@ -972,7 +972,8 @@ class ConnectionTab(QWidget):
         # Connection controls
         control_layout = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
-        self.connect_btn.setToolTip('Attempt connect to given port, directly loads some data from gimbal')
+        self.connect_btn.setToolTip('Attempt connect to given port.  On success automatically\n'
+                                    'loads some parameters from gimbal.')
         try:
             self.connect_btn.setIcon(QIcon.fromTheme('go-next'))
         except:
@@ -993,7 +994,76 @@ class ConnectionTab(QWidget):
         self.status_label.setToolTip('Latest connection status')
         layout.addWidget(self.status_label)
 
-        layout.addStretch()
+        layout.addStretch(1)
+
+        # Firmware info
+        firmware_group = QGroupBox("Firmware")
+        firmware_layout = QVBoxLayout()
+        self.firmware_version_label = QLabel()
+        self.firmware_build_label = QLabel()
+        firmware_layout.addWidget(self.firmware_version_label)
+        firmware_layout.addWidget(self.firmware_build_label)
+
+        firmware_btn_layout = QHBoxLayout()
+        self.reboot_btn = QPushButton("Reboot")
+        self.reboot_btn.clicked.connect(self.on_reboot)
+        self.reboot_btn.setToolTip('Restart currently running firmware and wait for it to come back.\n'
+                                   'Unsaved config changes will be lost.\n'
+                                   'This sends a command to the firmware and will only work if the firmware\n'
+                                   'is active and accepts commands.  The command is compatible with both\n'
+                                   'OpenBGC and original SimpleBGC32 firmware.')
+        self.bootloader_btn = QPushButton()
+        self.bootloader_btn.clicked.connect(self.on_bootloader)
+        self.bootloader_btn.setToolTip('Command the firmware to shut down and restart the MCU in bootloader mode.\n'
+                                       'Closes current connection.  If not connected, connects to selected port,\n'
+                                       'sends the command and disconnects.  Compatible with both OpenBGC and\n'
+                                       'original SimpleBGC32 firmware.  If the MCU is already in bootloader mode\n'
+                                       'the command will probably confuse the bootloader and you may need to\n'
+                                       'manually power cycle the gimbal to reboot.')
+        self.boot_btn = QPushButton('Connect && go back to firmware')
+        self.boot_btn.clicked.connect(self.on_boot)
+        self.boot_btn.setToolTip('UNIMPLEMENTED\n\n'
+                                 'Command the STM32 bootloader to jump back to firmware and wait for it\n'
+                                 'to boot.  If the MCU is not currently in bootloader mode, the firmware\n'
+                                 'should ignore the command.')
+        firmware_btn_layout.addWidget(self.reboot_btn)
+        firmware_btn_layout.addWidget(self.bootloader_btn)
+        firmware_btn_layout.addWidget(self.boot_btn)
+        firmware_btn_layout.addStretch()
+        firmware_layout.addLayout(firmware_btn_layout)
+        firmware_group.setLayout(firmware_layout)
+        layout.addWidget(firmware_group)
+
+        # Config storage
+        config_group = QGroupBox("Config")
+        config_layout = QVBoxLayout()
+        self.config_info_label = QLabel('Store and restore gimbal configuration to/from non-volatile memory.  '
+                                        'Any config changes made in other tabs immediately go live but will '
+                                        'not persist over power off unless written to persistent storage.  '
+                                        'The storage may be MCU flash or onboard EEPROM depending on firmware '
+                                        'choice.  Shouldn\'t conflict with SimpleBGC32 storage but keep '
+                                        'backups anyway.')
+        self.config_info_label.setWordWrap(True)
+        config_layout.addWidget(self.config_info_label)
+        config_btn_layout = QHBoxLayout()
+        self.cfg_write_btn = QPushButton("Write to storage")
+        self.cfg_write_btn.clicked.connect(self.on_cfg_write)
+        self.cfg_write_btn.setToolTip('Save any changes in configuration to persistent storage in the gimbal.\n'
+                                      'Do this after any changes made in the Calibration tabs or Parameter\n'
+                                      'Editor tab, to preserve them after power off or reset.\n\n'
+                                      'Warning: overwrites previous config, no confirmation asked.')
+        self.cfg_revert_btn = QPushButton("Revert from storage")
+        self.cfg_revert_btn.clicked.connect(self.on_cfg_revert)
+        self.cfg_revert_btn.setToolTip('Reread last saved config from persistent storage in the gimbal reverting\n'
+                                       'changes made since then.\n\n'
+                                       'Warning: discards current config, no confirmation asked.')
+        config_btn_layout.addWidget(self.cfg_write_btn)
+        config_btn_layout.addWidget(self.cfg_revert_btn)
+        config_btn_layout.addStretch()
+        config_layout.addLayout(config_btn_layout)
+        config_group.setLayout(config_layout)
+        layout.addWidget(config_group)
+
         self.setLayout(layout)
 
         # Start port monitoring
@@ -1005,7 +1075,12 @@ class ConnectionTab(QWidget):
 
         # Connect signals
         self.connection.connection_changed.connect(self.on_connection_changed)
+        self.connection.calibrating_changed.connect(self.update_buttons)
         self.connection.error_occurred.connect(self.on_error)
+
+        self.boot_param_timer = QTimer()
+        self.boot_param_timer.setSingleShot(True)
+        self.on_connection_changed(self.connection.is_connected())
 
     def refresh_ports(self):
         """Refresh the list of available serial ports."""
@@ -1044,34 +1119,139 @@ class ConnectionTab(QWidget):
             self.status_label.setText("Error: Please enter a port path")
             return
 
+        self.status_label.setText(f"Connecting to {port_path}...")
+
         if self.connection.connect(port_path):
-            self.status_label.setText(f"Connected to {port_path}")
+            self.request_firmware_info()
         else:
             self.status_label.setText("Connection failed")
 
     def on_disconnect(self):
         """Handle disconnect button click."""
+        self.boot_param_timer.stop()
         self.connection.disconnect()
         self.status_label.setText("Disconnected")
 
-    def on_connection_changed(self, connected: bool):
+    def update_buttons(self):
         """Handle connection state change."""
+        connected_fully = self.connection.is_connected()
+        connected = self.connection.port is not None
+        running = connected_fully and not self.connection.calibrating
+
         self.connect_btn.setEnabled(not connected)
         self.disconnect_btn.setEnabled(connected)
+
+        self.reboot_btn.setEnabled(running)
+        self.bootloader_btn.setEnabled(running or not connected)
+        if connected:
+            self.bootloader_btn.setText("Go to bootloader")
+        else:
+            self.bootloader_btn.setText("Connect && go to bootloader")
+        self.boot_btn.setEnabled(not connected)
+
+        self.cfg_write_btn.setEnabled(running)
+        self.cfg_revert_btn.setEnabled(running)
+
+    def on_connection_changed(self, connected):
+        # This is only called after GimbalConnection has successfully read a parameter
+        # confirming communication, so pretty late.
         if connected:
             self.status_label.setText(f"Connected to {self.connection.port_path}")
         else:
             self.status_label.setText("Disconnected")
+            self.reset_firmware_info()
+            self.boot_param_timer.stop()
+
+        self.update_buttons()
 
     def on_error(self, error_msg: str):
         """Handle error from connection."""
         logger.error(f"Connection error: {error_msg}")
         self.status_label.setText(f"Error: {error_msg}")
+        self.reset_firmware_info()
+
+    def request_firmware_info(self):
+        def read_cb(values):
+            if self.connection.calibrating:
+                # Note: in the on_boot case, the connection_changed notifictions will be
+                # emitted and the listeners may queue their connection.read_param()
+                # calls but they don't check connection.calibrating right after connect
+                # so it doesn't matter what order these signals are emitted in.
+                #
+                # In the on_reboot case there's no connection_changed, although maybe
+                # there should be so as to trigger geometry params reread etc. (TODO)
+                self.connection.set_calibrating(False)
+                if values is not None:
+                    self.status_label.setText(f"Boot Ok")
+
+            if values is None:
+                self.reset_firmware_info()
+                self.status_label.setText("Firmware info request error")
+                return
+
+            self.firmware_version_label.setText(f"Running version: {values[0]}")
+            self.firmware_build_label.setText(f"Build date: {values[1]}")
+
+        # TODO: set ~10s timer, kill connection attempt on timeout
+        # note we're called from on_connect, on_reboot or on_boot
+        self.connection.read_param(['commit-str', 'build-str'], read_cb)
+
+    def reset_firmware_info(self):
+        self.firmware_version_label.setText("Running version: -")
+        self.firmware_build_label.setText("Build date: -")
+
+    def on_reboot(self):
+        def after_drain():
+            payload = cmd.ResetRequest.build(None)
+            self.connection.send_command(cmd.CmdId.CMD_RESET, payload)
+
+            # Wait 4s.  Even though we request no delay in the CMD_RESET, there's an
+            # at least 2s delay on boot for emergency 'q' command listen time and it
+            # flushes serial data so we have to send our GET_PARAMs after that.
+            self.boot_param_timer.timeout.connect(self.request_firmware_info)
+            self.boot_param_timer.start(4000)
+
+            self.status_label.setText("Reboot requested, waiting for status")
+
+        self.connection.set_calibrating(True)
+        self.connection.drain_queues(after_drain)
+
+    def on_bootloader(self):
+        def after_drain():
+            payload = cmd.BootMode3Request.build(None)
+            self.connection.send_command(cmd.CmdId.CMD_BOOT_MODE_3, payload)
+
+            self.status_label.setText("Jump to bootloader requested, disconnecting")
+            self.connection.disconnect()
+
+        if not self.connection.is_connected():
+            port_path = self.port_input.text().strip()
+            if not port_path:
+                self.status_label.setText("Error: Please enter a port path")
+                return
+            if not self.connection.connect(port_path):
+                self.status_label.setText("Connection failed")
+                return
+            after_drain()
+        else:
+            self.connection.drain_queues(after_drain)
+
+    def on_boot(self):
+        # TODO
+        pass
+
+    def on_cfg_write(self):
+        self.connection.send_raw(b'w')
+
+    def on_cfg_revert(self):
+        self.connection.send_raw(b'r')
 
     def closeEvent(self, event):
         """Clean up resources when widget is closed."""
         if hasattr(self, 'port_monitor'):
             self.port_monitor.stop()
+        self.boot_param_timer.stop()
+        self.connection.disconnect()
         super().closeEvent(event)
 
     def start_updates(self):
@@ -3868,7 +4048,7 @@ class MainWindow(QMainWindow):
             'calib-pid': (5, 'Motor PID editor', MotorPidEditorTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-limit': (6, 'Joint limits', JointLimitsTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib_with_axes, True),
             'params': (7, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
-            'connection': (8, 'Connection', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
+            'connection': (8, 'Connection & config', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
         }
 
         self.popped_out_tabs = {}
