@@ -2199,6 +2199,7 @@ class CalibrationTab(QWidget):
         # Calibration controls
         controls_group = QGroupBox("Calibration Steps")
         controls_layout = QGridLayout()
+        controls_layout.setHorizontalSpacing(40)
 
         # TODO: keep as one line, let the toolkit do the line wrapping
         descriptions = {
@@ -2249,6 +2250,9 @@ class CalibrationTab(QWidget):
                 "low voltage alarm and motor force compensation.  Optional."),
         }
 
+        motor_geom_params = [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)]
+        motor_pid_params = [f'config.motor-pid.{i}.kp' for i in range(3)]
+
         # Define calibration steps with their corresponding geometry flags
         self.calibration_steps = [
             ('balance', "Camera balance",
@@ -2273,16 +2277,20 @@ class CalibrationTab(QWidget):
              lambda: self.geometry.have_forward),
             ('motor', "Motor geometry",
              [("Go to tab", self.on_go_to_motor_tab, None)],
-             [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)],
-             lambda: False), # TODO
+             motor_geom_params,
+             lambda: all([self.params.get(p) for p in motor_geom_params])),
             ('pid', "Motor PIDs",
              [("Go to tab", self.on_go_to_pid_tab, None)],
-             [f'config.motor-pid.{i}.kp' for i in range(3)],
-             lambda: True), # No way to know whether configured (?)
+             motor_geom_params,
+             # No way to know whether configured?  Maybe check if the Kp's are different
+             # from the default value of 0.03.  Although nothing is wrong with that value,
+             # it'll probably have been touched and the probability to end up with the same
+             # 32-bit float value again after tuning is tiny.
+             lambda: all([self.params.get(p) for p in motor_geom_params])),
             ('limit', "Joint limits",
              [("Go to tab", self.on_go_to_limit_tab, None)],
-             [f'config.axes.has-limits.{i}' for i in range(3)],
-             lambda: False), # TODO
+             [],
+             lambda: any(self.geometry.has_limits)),
             ('parking', "Parking position",
              [("Set", self.on_set_parking, 'go-next')],
              [],
@@ -2293,18 +2301,23 @@ class CalibrationTab(QWidget):
              lambda: False), # TODO
         ]
 
+        self.params = {}
+
         self.calibration_checkboxes = {}
         self.calibration_labels = {}
         self.calibration_btns = {}
 
         row = 0
-        for step_id, step_name, buttons, params, check in self.calibration_steps:
-            # TODO: read the params
-
+        for step_id, step_name, buttons, _, _ in self.calibration_steps:
             # Checkbox in first column
             checkbox = QCheckBox()
             checkbox.setEnabled(False) # Read-only
             checkbox.setToolTip(descriptions[step_id])
+            checkbox.setStyleSheet('background-color: #ccc;')
+            # This would have been better but it overrides the native rendering completely
+            #checkbox.setStyleSheet('QCheckBox::indicator { background-color: #ccc; }')
+            checkbox.setMaximumSize(checkbox.sizeHint())
+
             controls_layout.addWidget(checkbox, row, 0)
             self.calibration_checkboxes[step_id] = checkbox
 
@@ -2354,8 +2367,11 @@ class CalibrationTab(QWidget):
                 button.setEnabled(enabled)
 
     def update_checkboxes(self):
-        for step_id, step_name, buttons, params, check in self.calibration_steps:
-            self.calibration_checkboxes[step_id].setChecked(check())
+        for step_id, _, _, _, check in self.calibration_steps:
+            checked = check()
+            checkbox = self.calibration_checkboxes[step_id]
+            checkbox.setChecked(checked)
+            checkbox.setToolTip("Already calibrated once" if checked else "Not done")
 
     def start_updates(self):
         """Update calibration status display."""
@@ -2365,6 +2381,22 @@ class CalibrationTab(QWidget):
         # Update checkboxes based on current geometry state
         self.update_checkboxes()
         self.update_buttons()
+
+        req_params = {}
+        for _, _, _, params, _ in self.calibration_steps:
+            for param in params:
+                req_params[param] = None
+        keys = list(req_params.keys())
+
+        def read_cb(values):
+            if values is None:
+                return
+
+            # Update checkboxes again now with the rest of the params
+            self.params.update(zip(keys, values))
+            self.update_checkboxes()
+
+        self.connection.read_param(keys, read_cb)
 
     def stop_updates(self):
         pass
