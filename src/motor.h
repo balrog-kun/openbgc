@@ -14,6 +14,7 @@ typedef struct obgc_motor_s {
     struct obgc_motor_pid_stats_s {
         float tracking[3];
         float tracking_dev[3];
+        float i;
     } pid_stats;
 } obgc_motor;
 

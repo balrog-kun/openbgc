@@ -18,7 +18,6 @@ struct motor_bldc_s {
     struct obgc_bldc_with_encoder_calib_data_s calib_data;
     float electric_scale;
     float target_omega;
-    float i;
     float prev_theta;
     float prev_omega;
     float prev_target;
@@ -81,7 +80,7 @@ static int motor_bldc_on(struct motor_bldc_s *motor) {
     motor->on = true;
     motor_bldc_update_theta(motor);
     motor->prev_omega = 0;
-    motor->i = 0;
+    motor->obj.pid_stats.i = 0;
     motor->prev_target = 0;
     return 0;
 }
@@ -284,7 +283,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         error = -powf(-error, params->kp_expo);
 #endif
     /* Basic PID (note we applied Kd before Kp so Kd is strictly in time units) */
-    torque = error * params->kp + motor->i * params->ki;
+    torque = error * params->kp + motor->obj.pid_stats.i * params->ki;
     /* Friction torque */
     torque += omega * params->kdrag;
     if (omega > 0.01f)
@@ -297,7 +296,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         torque -= motor->kstiction;
 
     error = motor->target_omega - raw_omega;
-    motor->i = motor->i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
+    motor->obj.pid_stats.i = motor->obj.pid_stats.i * (1.0f - params->ki_falloff) + error; /* TODO: (1 - falloff) ^ dt? error * dt? */
 
     /* TODO: get frame acceleration from AHRS and add some amount of torque to counter that.
      * Actually, since the frame acceleration will have already acted on the motor, probably just

@@ -171,6 +171,9 @@ PARAM_DEF_PTR_RO(motors[2], pid_stats.tracking)
 PARAM_DEF_PTR_RO(motors[0], pid_stats.tracking_dev)
 PARAM_DEF_PTR_RO(motors[1], pid_stats.tracking_dev)
 PARAM_DEF_PTR_RO(motors[2], pid_stats.tracking_dev)
+PARAM_DEF_PTR_RO(motors[0], pid_stats.i)
+PARAM_DEF_PTR_RO(motors[1], pid_stats.i)
+PARAM_DEF_PTR_RO(motors[2], pid_stats.i)
 PARAM_DEF_SETTER(motors_on, NULL) /* TODO */
 
 PARAM_DEF_RO(frame_q)
