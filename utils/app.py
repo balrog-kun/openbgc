@@ -1675,6 +1675,7 @@ class StatusTab(QWidget):
         else:
             for i in range(3):
                 self.angle_bars[i].set_home_angle(None)
+            home_angles = (0, 0, 0)
 
         if self.geometry.have_parking:
             park_angles = self.geometry.get_park_angles()
