@@ -371,7 +371,7 @@ class AngleBarWidget(QWidget):
                 if self.width() - min_pixel < 3:
                     min_pixel = self.width() - 3
                 painter.drawRect(min_pixel, center_y - 5, self.width() - min_pixel, 10)
-                painter.drawRect(0, center_y - 5, min(max_pixel, 3), 10)
+                painter.drawRect(0, center_y - 5, max(max_pixel, 3), 10)
 
         # Draw center line
         painter.setPen(QColor(128, 128, 128))
