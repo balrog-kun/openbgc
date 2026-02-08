@@ -170,7 +170,7 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
     }
 
     pairs = 360.0f / diff;
-    if (fabsf(pairs - roundf(pairs)) > 0.1f) {
+    if (fabsf(pairs - roundf(pairs)) > 0.01f * (motor->calib_data.pp_max_error ?: 10)) {
         char msg[128];
         sprintf(msg, "Electrical angle (360) not close enough to a multiple of mechanical "
                 "angle distance (%.4f)", diff);
@@ -200,12 +200,16 @@ static int motor_bldc_get_calibration(struct motor_bldc_s *motor, struct obgc_mo
 }
 
 static void motor_bldc_set_calibration(struct motor_bldc_s *motor, const struct obgc_motor_calib_data_s *data) {
-    if (data && data->bldc_with_encoder.pole_pairs) {
+    motor->obj.ready = false;
+
+    if (data) {
         memcpy(&motor->calib_data, &data->bldc_with_encoder, sizeof(motor->calib_data));
-        motor->electric_scale = (float) motor->calib_data.pole_pairs * motor->calib_data.sensor_direction;
-        motor->obj.ready = true;
-    } else
-        motor->obj.ready = false;
+
+        if (data->bldc_with_encoder.pole_pairs) {
+            motor->electric_scale = (float) motor->calib_data.pole_pairs * motor->calib_data.sensor_direction;
+            motor->obj.ready = true;
+        }
+    }
 }
 
 static void motor_bldc_override_cur_omega(struct motor_bldc_s *motor, float val) {

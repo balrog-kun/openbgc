@@ -22,6 +22,7 @@ typedef struct obgc_bldc_with_encoder_calib_data_s {
     uint16_t pole_pairs;
     float zero_electric_offset;
     int8_t sensor_direction;
+    uint8_t pp_max_error;
 } obgc_bldc_with_encoder_calib_data;
 
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */

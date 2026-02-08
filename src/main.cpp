@@ -2106,12 +2106,12 @@ void setup(void) {
     motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
     motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
 
-    /* 'm' to autocalibrate and print new values.  Zero .pole_pairs will trigger calibration on power-on */
+    /* 'm' to autocalibrate and print new values */
     for (i = 0; i < 3; i++) {
         motors[i] = motor_bldc_new(encoders[i], motor_drivers[i]);
         motors[i]->pid_params = &config.motor_pid[i];
 
-        if (config.motor_calib[i].bldc_with_encoder.pole_pairs && motors[i]->cls->set_calibration)
+        if (motors[i]->cls->set_calibration)
             motors[i]->cls->set_calibration(motors[i], &config.motor_calib[i]);
 
 #if 0
