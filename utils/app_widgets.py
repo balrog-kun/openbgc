@@ -634,8 +634,10 @@ class Gimbal3DWidget(QOpenGLWidget):
         segments = []
         camera_pos = (0, 0, 0)
         camera_q = self.calculate_camera_orientation()
-        camera_size = self.geometry.vector_rotate((self.camera_width, self.camera_depth, self.camera_height), camera_q)
-        camera_pos_dist = abs(0.5 * self.geometry.vector_dot(camera_size, axes_world[2]))
+        axis_body = self.geometry.vector_rotate(axes_world[2], self.geometry.quaternion_conjugate(camera_q))
+        camera_size = (self.camera_width, self.camera_depth, self.camera_height)
+        # We can ignore signs in the local frame because the camera box is assumed symmetric
+        camera_pos_dist = 0.5 * self.geometry.vector_dot(camera_size, [abs(v) for v in axis_body])
         # Leave a 1cm space between camera box and the top of the inner joint motor
         # maybe should just use self.arm_radius - self.motor_height * 2
         motor_top = self.geometry.vector_sum(camera_pos, self.geometry.vector_mult_scalar(axes_world[2], -(camera_pos_dist + 0.01)))
