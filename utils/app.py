@@ -1039,9 +1039,10 @@ class ConnectionTab(QWidget):
         config_layout = QVBoxLayout()
         self.config_info_label = QLabel('Store and restore gimbal configuration to/from non-volatile memory.  '
                                         'Any config changes made in other tabs immediately go live but will '
-                                        'not persist over power off unless written to persistent storage.  '
+                                        'not persist over power off unless written to persistent storage with '
+                                        'the button below.\n'
                                         'The storage may be MCU flash or onboard EEPROM depending on firmware '
-                                        'choice.  Shouldn\'t conflict with SimpleBGC32 storage but keep '
+                                        'choice.  Shouldn\'t conflict with SimpleBGC32 config storage but keep '
                                         'backups anyway.')
         self.config_info_label.setWordWrap(True)
         config_layout.addWidget(self.config_info_label)
@@ -2452,7 +2453,7 @@ class CalibrationTab(QWidget):
             self.geometry.update()
             logger.info(f"New parking angles set")
 
-        self.read_param([f"encoders.{i}.reading" for i in range(3)], encoders_read_cb)
+        self.connection.read_param([f"encoders.{i}.reading" for i in range(3)], encoders_read_cb)
 
 
 class AxisCalibrationTab(QWidget):
