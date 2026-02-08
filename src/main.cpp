@@ -1258,18 +1258,6 @@ handle_set_param:
         control.settings->have_forward = 1;
         control_update_aux_values();
         break;
-    case '[':
-        temp_scale -= 0.005f;
-        serial->println(temp_scale);
-        spower -= 0x10;
-        serial->println(spower);
-        break;
-    case ']':
-        temp_scale += 0.005f;
-        serial->println(temp_scale);
-        spower += 0x10;
-        serial->println(spower);
-        break;
     case 't':
         set_use_motor = true;
         break;
@@ -1921,7 +1909,6 @@ void setup(void) {
 
     error_serial = serial = new HardwareSerial(USART1);
     serial->begin(115200);
-    for (i = 0; i < 20000; i++) serial->println("debug");////
     while (!*serial); /* Wait for serial port connection */
     delay(2000);
     if (serial->available()) {
@@ -2043,15 +2030,17 @@ void setup(void) {
 
     serial->println("Main MPU6050 initialized!");
 
-    ahrs_defaults(&config.main_ahrs);
-    ahrs_defaults(&config.frame_ahrs);
+    if (!have_config) {
+        ahrs_defaults(&config.main_ahrs);
+        ahrs_defaults(&config.frame_ahrs);
+    }
 
     main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z, &config.main_ahrs,
             M_PIf / 0x800 /*encoder[0]->cls->resolution * D2R*/);
     ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
     delay(100);
 
-    if (!have_config || config.main_ahrs.calibrate_on_start)
+    if (config.main_ahrs.calibrate_on_start)
         ahrs_calibrate(main_ahrs);
     else
         ahrs_reset_orientation(main_ahrs);
