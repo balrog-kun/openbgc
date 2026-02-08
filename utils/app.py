@@ -3463,8 +3463,8 @@ class JointLimitsTab(QWidget):
             return
 
         enabled = self.axis_checkboxes[axis_num].isChecked()
-        min_val = self.min_inputs[axis_num].value()
-        max_val = self.max_inputs[axis_num].value()
+        min_val = math.radians(self.min_inputs[axis_num].value())
+        max_val = math.radians(self.max_inputs[axis_num].value())
 
         self.connection.write_param(f'config.axes.has-limits.{axis_num}', enabled)
         self.connection.write_param(f'config.axes.limit-min.{axis_num}', min_val)
