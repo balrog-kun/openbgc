@@ -2,7 +2,7 @@
 
 This code is a basic opensource firmware for SimpleBGC32 camera gimbals.  It is completely independent of the authentic SimpleBGC32 firmware.
 
-Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal (likely very similar to BaseCam reference design, possibly drop-in compatible with H2-45 and Adventurer) and the necessary mathematical algorithms implemented but little more than that.  PID calibration is manual-only.
+Before I go any further, this code is in its early stage.  It's just around v0.1 Proof of Concept stage where with some configuration and calibration effort you can get camera stabilization working.  The code has minimal drivers for basically all of the peripherals and all of the physical electrical connections figured out for the PiltoFly H2 gimbal -- likely very similar to BaseCam reference design, possibly drop-in compatible with H2-45 and/or Adventurer.
 
 ## Licensing
 
@@ -48,6 +48,13 @@ Most code here is currently a least-effort minimum to get something working.  Ri
 The official firmware from BasecamElectronics is honestly very well made, robust, flexible, configurable.  The GUI is excellent too.  Apparently the team behind it was occasionally even taking requests/suggestions from forums.  However no one can expect them to support every user's custom one-off need, and their forums have been closed for ~a year at the time of writing and no other way to contact them.
 
 In my case I need to get just a tiny more bit of extra precision from the orientation angle tracking because my camera is set at ~1400mm focal length, i.e. very high zoom, for sky photography (astrophotography).  The official firmware's tracking precision is not bad, probably close to the hardware's limitations.  But there's a couple of algorithmic ideas that I want to try to see if I can get an improvement.
+
+## Installation and usage
+
+Until better documentation is available refer to these walk-through videos:
+
+* [OpenBGC setup part 1: flashing](https://www.youtube.com/watch?v=vO-vN2ZL8Ac)
+* [OpenBGC setup part 2: calibration](https://www.youtube.com/watch?v=L7Ofs9QW8jE)
 
 ## STorM32
 
