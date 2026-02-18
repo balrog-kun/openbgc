@@ -495,7 +495,8 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
 }
 
 void control_step(struct control_data_s *control) {
-    float conj_main_q[4] = INIT_CONJ_Q(control->main_ahrs->q);
+    float main_q[4] = INIT_Q(control->main_ahrs->q);
+    float main_q_d[3] = INIT_VEC(control->main_ahrs->velocity_vec);
     float target_q[4], delta_q[4];
     float delta_axis[3];
     float joint_velocities_target[3];
@@ -511,9 +512,21 @@ void control_step(struct control_data_s *control) {
 
     control_check_gimbal_lock(control);
 
+    /* Where are we now: apply a D term to main_ahrs->q like in a PID */
+    /* TODO: apply D separately in control_calc_path_step_joint_target() which doesn't
+     * use delta_axis? But then we mostly use that path type for long paths where
+     * tiny corrections don't matter that much, plus we already handle current
+     * velocity in the motor PID loop which is converted from main_ahrs->velocity_vec
+     * in control_update_joint_vel() and passed to .override_cur_velocity() and then
+     * included in the P term.
+     */
+    vector_mult_scalar(main_q_d, control->settings->ahrs_q_kd * control->dt * 0.5);
+    quaternion_mult_add_xyz_global(main_q, main_q_d);
+
     /* Where do we want to go */
     control_calc_target(control, target_q, target_ypr);
-    quaternion_mult_to(target_q, conj_main_q, delta_q); /* Global delta to target_q */
+    main_q[0] = -main_q[0];
+    quaternion_mult_to(target_q, main_q, delta_q); /* Global delta to target_q */
     quaternion_to_rotvec(delta_q, delta_axis);
     control_apply_attenuation(control, delta_axis);
     control->delta_angle = vector_norm(delta_axis); /* Like q_to_axis_angle but we did the attenuation first */

@@ -24,6 +24,7 @@ struct control_settings_s {
     bool prio_max_accel_over_max_vel;
     bool prio_target_dir_over_max_accel;
     float ahrs_velocity_kp;
+    float ahrs_q_kd;
     float limit_margin; /* [rad] */
     float limit_search_v; /* [rad/s] */
     uint8_t default_path;

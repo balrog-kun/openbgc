@@ -557,6 +557,8 @@ static void control_setup(void) {
          */
         control.settings->ahrs_velocity_kp = 0.05;
 
+        control.settings->ahrs_q_kd = 5; /* In units of control.dt */
+
         control.settings->rc_mode_angle = false;
         control.settings->rc_gain = 20; /* deg/s */
         control.settings->rc_deadband = 6;
