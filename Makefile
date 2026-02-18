@@ -108,7 +108,7 @@ openbgc-%.tar.gz: $(FIRMWARE_BIN) client stm32ld
 	cp $(FIRMWARE_BIN) $(DIR)/openbgc-$*-pfly-h2.bin
 	cp Makefile $(DIR)/
 	cp $(STM32LD_BIN) $(DIR)/tools/stm32ld-$(ARCH)
-	cp utils/param_{defs,map,utils}.py utils/app{,_widgets,_iio}.py $(DIR)/client/
+	cp utils/param_{defs,map,utils}.py utils/app{,_widgets,_iio,_calib_tabs}.py $(DIR)/client/
 	cp utils/param-tool.py $(DIR)/client/ # TODO: use install?
 	cp utils/sbgcserialapi/*.py $(DIR)/client/sbgcserialapi/
 	chmod 0755 $(DIR)/client/{app,param-tool}.py
