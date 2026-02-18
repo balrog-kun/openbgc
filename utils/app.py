@@ -2089,7 +2089,7 @@ class PassthroughTab(QWidget):
                     # Units are m/s^2 for the accelerometer values, rad/s for the gyro values
 
         if fallback:
-            logger.info(f'Permissions not set up for IIO buffers, falling back to sysfs which may not work great')
+            logger.info('Permissions not set up for IIO buffers, falling back to sysfs which may not work great')
             self.update_iio_sysfs_only()
         else:
             logger.debug(f'Found {len(acc)} system IIO accelerometers, {len(gyro)} gyroscopes')
@@ -2712,6 +2712,7 @@ class MainWindow(QMainWindow):
             'calib-motor': (4, 'Motor geometry calibration', calib.MotorGeometryCalibrationTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-pid': (5, 'Motor PID editor', calib.MotorPidEditorTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-limit': (6, 'Joint limits', calib.JointLimitsTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib_with_axes, True),
+            'calib-vbat': (6, 'Battery voltage', calib.VbatSenseTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
             'params': (7, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
             'connection': (8, 'Connection & config', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
         }

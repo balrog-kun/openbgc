@@ -105,12 +105,13 @@ class CalibrationTab(QWidget):
                 "the joints, if present, to allow the firmware to avoid hitting them\n" +
                 "and plan motion trajectories that don't cross the limit angles."),
             "parking": ("Save the current joint angles as the parking position.  Optional."),
-            "voltage": ("TODO: Set the battery/supply voltage sensing scale for correct\n" +
+            "voltage": ("Set the battery/supply voltage sensing scale for correct\n" +
                 "low voltage alarm and motor force compensation.  Optional."),
         }
 
         motor_geom_params = [f'config.motor-calib.{i}.bldc-with-encoder.pole-pairs' for i in range(3)]
         motor_pid_params = [f'config.motor-pid.{i}.kp' for i in range(3)]
+        vbat_params = ['config.vbat.scale', 'config.vbat.lvco']
 
         # Define calibration steps with their corresponding geometry flags
         self.calibration_steps = [
@@ -154,10 +155,10 @@ class CalibrationTab(QWidget):
              [("Set", self.on_set_parking, 'go-next')],
              [],
              lambda: self.geometry.have_parking),
-            ('voltage', "Voltage sense",
-             [],
-             [],
-             lambda: False), # TODO
+            ('voltage', "Battery voltage sensing",
+             [("Go to tab", self.on_go_to_vbat_tab, None)],
+             vbat_params,
+             lambda: all([self.params.get(p) != 0 for p in vbat_params])),
         ]
 
         self.params = {}
@@ -258,7 +259,7 @@ class CalibrationTab(QWidget):
         self.connection.read_param(keys, read_cb)
 
     def stop_updates(self):
-        pass
+        self.update_buttons()
 
     def on_gyro_redo(self):
         """Handle gyro calibration redo button click."""
@@ -312,6 +313,9 @@ class CalibrationTab(QWidget):
             logger.info(f"New parking angles set")
 
         self.connection.read_param([f"encoders.{i}.reading" for i in range(3)], encoders_read_cb)
+
+    def on_go_to_vbat_tab(self):
+        self.main_window.switch_to_tab('calib-vbat')
 
 
 class AxisCalibrationTab(QWidget):
@@ -477,7 +481,7 @@ class AxisCalibrationTab(QWidget):
     def start_updates(self):
         self.update_buttons()
     def stop_updates(self):
-        pass
+        self.update_buttons()
 
 
 class MotorGeometryCalibrationTab(QWidget):
@@ -1397,3 +1401,172 @@ class JointLimitsTab(QWidget):
     def stop_updates(self):
         """Stop updates."""
         self.search_timer.stop()
+        self.update_buttons()
+
+
+class VbatSenseTab(QWidget):
+    def __init__(self, connection, parent=None):
+        super().__init__(parent)
+        self.connection = connection
+
+        layout = QVBoxLayout()
+
+        info_label = QLabel(
+            "Set up correct battery voltage (Vbat) sensing and low-voltage cut-off "
+            "(LVCO) to protect the battery.\n"
+            "The voltage scale may need to be adjusted if the voltage reported by "
+            "OpenBGC is consistently lower or higher than actual battery voltage.  "
+            "Different controller boards will have different voltage divider values "
+            "to adapt the input range to values that the Analog-to-Digital converter "
+            "can handle resulting in different scales.\n"
+            "The LVCO minimum voltage will depend on the battery type used, for "
+            "Li-Po packs set to 3.3V times cell count (in series)."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        grid_layout = QGridLayout()
+
+        tooltip = "Voltage currently reported by OpenBGC using default\nscale or what it was last set to."
+        info_label = QLabel("Detected voltage: ")
+        info_label.setToolTip(tooltip)
+        grid_layout.addWidget(info_label, 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.cur_label = QLabel("-")
+        self.cur_label.setToolTip(tooltip)
+        grid_layout.addWidget(self.cur_label, 0, 1)
+
+        tooltip = (
+            "To set correct voltage scale provide the actual voltage as measured by an\n"
+            "external tool (smart charger or multimeter), or the design max. voltage if\n"
+            "the battery is known to be fully charged, or the power supply's output\n"
+            "voltage if one is connected."
+        )
+        info_label = QLabel("Actual voltage: ")
+        info_label.setToolTip(tooltip)
+        grid_layout.addWidget(info_label, 1, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.actual_input = QDoubleSpinBox()
+        self.actual_input.setRange(0.5, 100.0)
+        self.actual_input.setDecimals(1)
+        self.actual_input.setSingleStep(0.2)
+        self.actual_input.setSuffix("V")
+        self.actual_input.setToolTip(tooltip)
+        self.actual_input.setMaximumWidth(80)
+        grid_layout.addWidget(self.actual_input, 1, 1)
+        self.scale_btn = QPushButton("Update scale")
+        try:
+            self.scale_btn.setIcon(QIcon.fromTheme('go-next'))
+        except:
+            pass
+        self.scale_btn.setToolTip(
+            "Set new scale based on the detected and actual voltages.\n"
+            "Battery or power supply must be connected."
+        )
+        self.scale_btn.clicked.connect(self.on_set_scale)
+        grid_layout.addWidget(self.scale_btn, 1, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        tooltip = (
+            "If the input voltage goes below this value, motors or any other load under\n"
+            "OpenBGC control will be disabled."
+        )
+        info_label = QLabel("Minimum voltage: ")
+        info_label.setToolTip(tooltip)
+        grid_layout.addWidget(info_label, 2, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.min_input = QDoubleSpinBox()
+        self.min_input.setRange(0.5, 100.0)
+        self.min_input.setDecimals(1)
+        self.min_input.setSingleStep(0.2)
+        self.min_input.setSuffix("V")
+        self.min_input.setToolTip(tooltip)
+        self.min_input.setMaximumWidth(80)
+        grid_layout.addWidget(self.min_input, 2, 1)
+        self.min_btn = QPushButton("Update")
+        try:
+            self.min_btn.setIcon(QIcon.fromTheme('go-next'))
+        except:
+            pass
+        self.min_btn.clicked.connect(self.on_set_lvco)
+        grid_layout.addWidget(self.min_btn, 2, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        grid_layout.setColumnStretch(0, 2)
+        grid_layout.setColumnStretch(1, 0)
+        grid_layout.setColumnStretch(2, 2)
+        layout.addLayout(grid_layout)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # Auto-search timer
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_vbat)
+        self.update_timer.setInterval(1000)  # 1 Hz
+
+        # Connect to signals
+        self.connection.calibrating_changed.connect(self.update_buttons)
+
+        # Initial state
+        self.update_values()
+
+    def on_set_scale(self):
+        def callback(values):
+            if values is None:
+                return
+
+            cur_vbat, cur_scale = values    # cur_vbat in bat mV, cur_scale in 0.001 (bat V / adc V)
+            if cur_vbat == 0 or cur_scale == 0:
+                logger.error("VBAT must be positive")
+                return
+            raw_vbat = cur_vbat / cur_scale # in adc V
+            actual_vbat = self.actual_input.value() * 1000 # in bat mV
+            new_scale = actual_vbat / raw_vbat # in 0.001 (bat V / adc V) again
+            self.connection.write_param("config.vbat.scale", int(new_scale))
+
+        self.connection.read_param(["vbat", "config.vbat.scale"], callback)
+
+    def on_set_lvco(self):
+        new_lvco = self.min_input.value() * 1000
+        self.connection.write_param("config.vbat.lvco", int(new_lvco))
+
+    def update_values(self):
+        self.update_actual = True
+        self.vbat = 0
+        self.update_buttons()
+
+        def callback(value):
+            if value is not None:
+                self.min_input.setValue(value * 0.001)
+
+        self.connection.read_param("config.vbat.lvco", callback)
+
+    def update_buttons(self):
+        enabled = self.connection.is_connected() and not self.connection.calibrating
+
+        self.scale_btn.setEnabled(enabled and self.vbat > 0 and not self.update_actual)
+        self.min_btn.setEnabled(enabled)
+
+    def update_vbat(self):
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        def callback(value):
+            if value is None:
+                self.cur_label.setText('-')
+                self.vbat = 0
+
+            self.vbat = value * 0.001
+            self.cur_label.setText(f'{self.vbat:.1f}V')
+            if self.update_actual:
+                self.update_actual = False
+                self.actual_input.setValue(self.vbat)
+            self.update_buttons()
+
+        self.connection.read_param("vbat", callback)
+
+    def start_updates(self):
+        """Start updates."""
+        self.update_values() # calls update_buttons()
+        self.update_timer.start()
+
+    def stop_updates(self):
+        """Stop updates."""
+        self.update_timer.stop()
+        self.update_buttons()
