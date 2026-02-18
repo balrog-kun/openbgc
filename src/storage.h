@@ -17,7 +17,7 @@ extern "C" {
 extern struct obgc_storage_config_s {
     /* Hardware setup */
     /* TODO: add this when we support anything other than PilotFly H2.
-     * Local/remote encoder types, motor types, IMU types, the deprecated IMU orientation, pinout, VBAT scale, min voltage.
+     * Local/remote encoder types, motor types, IMU types, the deprecated IMU orientation, pinout?
      */
 
     /* Calibration data */
@@ -27,6 +27,11 @@ extern struct obgc_storage_config_s {
     struct obgc_motor_pid_params_s motor_pid[3];
     struct obgc_ahrs_config_s main_ahrs;
     struct obgc_ahrs_config_s frame_ahrs;
+
+    struct {
+        uint16_t scale;
+        uint16_t lvco;
+    } vbat;
 
     /* User settings -- if we ever want profiles, they'd encapsualte these */
     struct control_settings_s control;

@@ -39,7 +39,6 @@ extern "C" {
 #define SBGC_VBAT          PA0   /* Through R17 (140k?) to BAT+ and R18 to GND (4.7k) */
 #define SBGC_VBAT_R_BAT    140000
 #define SBGC_VBAT_R_GND    4700
-#define SBGC_VBAT_SCALE    0.9f  /* TODO: make user configurable */
 
 /* Onboard DRV8313 for the yaw motor */
 #define SBGC_YAW_DRV8313_IN1     PA1   /* TIM2 */
@@ -861,41 +860,63 @@ static void blink(void *) {
 static struct main_loop_cb_s blink_cb = { .cb = blink };
 
 static void vbat_update(void *) {
-    uint16_t raw = analogRead(SBGC_VBAT); /* TODO: noisy, use multiple samples */
+    static uint32_t raw_avg = 0;
+    uint16_t raw;
+    bool new_vbat_ok;
+    static bool ext_power = false;
     static int vbat_prev = 0;
-    static int lvco = 0;
-    static unsigned long vbat_ts = 0;
     static unsigned long msg_ts = 0;
     unsigned long now = millis();
 
-    vbat = (uint64_t) raw * 3300/*mV*/ * (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) / (4095 * SBGC_VBAT_R_GND) * SBGC_VBAT_SCALE;
-    vbat_ok = lvco > 0 && vbat > lvco;
+    raw = analogRead(SBGC_VBAT); /* 220uS on STM32F3 */
 
-    /* TODO: Allow user to set min/max alarm voltages, fall back to the below if unset */
-    /* TODO: scale calibration? */
-    if (!lvco) {
-        if (vbat > 3000) {
-            if (!vbat_ts)
-                vbat_ts = now;
-            else if (now - vbat_ts >= 10000) {
-                /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
-                int cells = vbat / (vbat < 10000 ? 4500 : 4400) + 1;
-                lvco = cells * 3300;
-                vbat_ts = 0;
-                serial->print("VBAT low-voltage cutoff set at ");
-                serial->print((lvco / 100) * 0.1f);
-                serial->println("V (guessed)");
-                powered_init();
-                goto print_update;
-            }
-        } else
-            vbat_ts = 0;
-    } else if (vbat <= lvco) {
-        lvco = -1; /* Only do this once */
-        serial->println("VBAT low, disabling motors!");
-        motors_on_off(false);
-        /* TODO: play a sound? is there any data to save? */
-        goto print_update;
+    if (raw == 0) {
+        raw_avg = -1;
+        ext_power = true;
+    } else if (raw_avg != (uint32_t) -1)
+        raw_avg += raw;
+
+    /* Average over 0.5s, could also just use an LPF */
+#define VBAT_AVG_SAMPLES (TARGET_LOOP_RATE / 2)
+    if (cycle_cnt % VBAT_AVG_SAMPLES)
+        return;
+
+    raw = raw_avg == (uint32_t) -1 ? 0 : raw_avg / VBAT_AVG_SAMPLES;
+    raw_avg = 0;
+
+    if (!cycle_cnt) /* Handle overflow */
+        return;
+
+    if (!config.vbat.scale)
+        config.vbat.scale = (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) * 900 / SBGC_VBAT_R_GND;
+
+    vbat = (uint64_t) raw * 3300/*mV*/ * config.vbat.scale / (4095 * 1000);
+    new_vbat_ok = config.vbat.lvco > 0 && vbat > config.vbat.lvco;
+
+    if (vbat_ok != new_vbat_ok) {
+        /* Allow vbat_ok to go from false to true fast on startup, with hysteresis after that */
+        vbat_ok = new_vbat_ok &&
+            (vbat_ok || ext_power || cycle_cnt < TARGET_LOOP_RATE * 5 ||
+             vbat > config.vbat.lvco + config.vbat.lvco / 8);
+
+        if (vbat_ok) {
+            powered_init();
+        } else {
+            serial->println("VBAT low, disabling motors!");
+            motors_on_off(false);
+            /* TODO: play a sound? is there any data to save? */
+            msg_ts = 0;
+        }
+    }
+
+    if (!config.vbat.lvco && vbat > 3300) {
+        /* This calc works roughly for 1-6S Li-Po packs if between 3.6 and 4.4V (Li-HV) per cell at startup */
+        int cells = vbat / (vbat < 10000 ? 4500 : 4400) + 1;
+        config.vbat.lvco = cells * 3300;
+        serial->print("VBAT low-voltage cutoff set at ");
+        serial->print((config.vbat.lvco / 100) * 0.1f);
+        serial->println("V (guessed)");
+        msg_ts = 0;
     }
 
     if (now - msg_ts < 2000)
@@ -904,7 +925,6 @@ static void vbat_update(void *) {
     if (abs(vbat - vbat_prev) < 400)
         return;
 
-print_update:
     vbat_prev = vbat;
     msg_ts = now;
     serial->print("VBAT now at ");

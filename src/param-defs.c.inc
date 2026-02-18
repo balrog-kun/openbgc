@@ -184,3 +184,5 @@ PARAM_DEF_RO(rel_q)
 
 PARAM_DEF_RO(vbat)
 PARAM_DEF_RO(vbat_ok)
+PARAM_DEF(config.vbat.scale)
+PARAM_DEF(config.vbat.lvco)
