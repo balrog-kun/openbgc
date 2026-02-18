@@ -1340,7 +1340,7 @@ class JointLimitsTab(QWidget):
         if not self.connection.is_connected() or self.connection.calibrating:
             return
 
-        self.connection.write_param('config.control.limit-margin', self.buffer_input.value())
+        self.connection.write_param('config.control.limit-margin', math.radians(self.buffer_input.value()))
         logger.info("New 'config.control.limit-margin' sent to gimbal")
 
     def update_values(self):
@@ -1384,7 +1384,7 @@ class JointLimitsTab(QWidget):
 
         def buffer_cb(value):
             if value is not None:
-                self.buffer_input.setValue(float(value))
+                self.buffer_input.setValue(math.degrees(float(value)))
 
         self.connection.read_param('config.control.limit-margin', buffer_cb)
 
