@@ -717,10 +717,10 @@ class MotorGeometryCalibrationTab(QWidget):
 class MotorPidEditorTab(QWidget):
     """Tab for motor PID parameter editing."""
 
-    def __init__(self, connection, parent=None):
+    def __init__(self, connection, motors, parent=None):
         super().__init__(parent)
         self.connection = connection
-        self.motors_on = None  # Unknown initially
+        self.motors = motors
 
         layout = QVBoxLayout()
 
@@ -753,7 +753,7 @@ class MotorPidEditorTab(QWidget):
         grid_layout = QGridLayout()
 
         # Headers
-        # TODO: remap if have_axes?
+        # TODO: remap if have_axes? requires geometry
         #l = [QLabel("Outer (0)"), QLabel("Middle (1)"), QLabel("Inner (2)")]
         l = [QLabel("Motor 0"), QLabel("Motor 1"), QLabel("Motor 2")]
         for i in range(3):
@@ -916,12 +916,12 @@ class MotorPidEditorTab(QWidget):
         motor_layout.addStretch()
 
         self.motor_on_btn = QPushButton("On")
-        self.motor_on_btn.clicked.connect(self.on_motor_on)
+        self.motor_on_btn.clicked.connect(self.motors.on)
         self.motor_on_btn.setEnabled(False)  # Disabled until connected
         motor_layout.addWidget(self.motor_on_btn)
 
         self.motor_off_btn = QPushButton("Off")
-        self.motor_off_btn.clicked.connect(self.on_motor_off)
+        self.motor_off_btn.clicked.connect(self.on_motors_off)
         self.motor_off_btn.setEnabled(False)  # Disabled until connected
         motor_layout.addWidget(self.motor_off_btn)
 
@@ -931,13 +931,9 @@ class MotorPidEditorTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # Motor status update timer (1 Hz)
-        self.motor_status_timer = QTimer()
-        self.motor_status_timer.timeout.connect(self.update_motor_status)
-        self.motor_status_timer.setInterval(1000)  # 1 Hz
-
         # Connect to connection changes
         self.connection.calibrating_changed.connect(self.update_buttons)
+        self.motors.on_changed.connect(self.new_motors_status)
 
         # Load initial values
         self.load_values()
@@ -998,41 +994,16 @@ class MotorPidEditorTab(QWidget):
             enabled = (i == motor_num)
             self.connection.write_param(f'use-motor.{i}', enabled)
 
-    def on_motor_on(self):
-        """Handle motor on button click."""
-        self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
-        self.motors_on = None
-        self.new_motors_status()
-
-    def on_motor_off(self):
-        """Handle motor off button click."""
-        self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
-        self.motors_on = None
-        self.new_motors_status()
+    def on_motors_off(self):
+        """Handle motors off button click."""
+        self.motors.off()
         # Reset use-motors to all disabled
         for i in range(3):
             self.connection.write_param(f'use-motor.{i}', False)
 
-    def update_motor_status(self):
-        """Update motors status display."""
-        if not self.connection.is_connected() or self.connection.calibrating:
-            return
-
-        def callback(value):
-            if value is not None:
-                motors_on = bool(value)
-            else:
-                motors_on = None
-
-            if self.motors_on != motors_on:
-                self.motors_on = motors_on
-                self.new_motors_status()
-
-        self.connection.read_param("motors-on", callback)
-
     def new_motors_status(self):
         """Update motor status display."""
-        status_text = "ON" if self.motors_on == True else ("Off" if self.motors_on == False else "unknown")
+        status_text = "ON" if self.motors.is_on == True else ("Off" if self.motors.is_on == False else "unknown")
         self.motor_status_label.setText(status_text)
         # Make text red if motors are ON, default color otherwise
         if status_text == "ON":
@@ -1044,25 +1015,25 @@ class MotorPidEditorTab(QWidget):
     def update_buttons(self):
         """Update button enabled states."""
         connection_ok = self.connection.is_connected() and not self.connection.calibrating
-        self.motor_on_btn.setEnabled(not self.motors_on and connection_ok)
+        self.motor_on_btn.setEnabled(self.motors.is_on == False and connection_ok)
         self.motor_off_btn.setEnabled(connection_ok)
         # PID parameter buttons
         for btn in list(self.send_btns.values()) + self.test_btns:
             btn.setEnabled(connection_ok)
+        # TODO: speed setpoint buttons only if have_axes and have_forward
 
     def start_updates(self):
         """Start updates."""
         self.load_values()
-        self.motor_status_timer.start()
-        self.update_buttons()
+        self.motors.get(self)
+        self.new_motors_status() # Calls update_buttons
 
     def stop_updates(self):
         """Stop updates."""
-        self.motor_status_timer.stop()
         self.motor_status_label.setText("unknown")
         self.motor_status_label.setStyleSheet("")
-        self.motors_on = None
         self.update_buttons()
+        self.motors.put(self)
 
 
 class JointLimitsTab(QWidget):
@@ -1070,7 +1041,7 @@ class JointLimitsTab(QWidget):
 
     PATH_LIMIT_SEARCH = 'control_data_s::CONTROL_PATH_LIMIT_SEARCH' # 4 works too
 
-    def __init__(self, connection, geometry, parent=None):
+    def __init__(self, connection, geometry, motors, parent=None):
         super().__init__(parent)
         self.connection = connection
         self.geometry = geometry
