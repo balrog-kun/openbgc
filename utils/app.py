@@ -1819,10 +1819,11 @@ class StatusTab(QWidget):
 
 
 class PassthroughTab(QWidget):
-    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, parent=None):
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, motors: MotorsMonitor, parent=None):
         super().__init__(parent)
         self.connection = connection
         self.geometry = geometry
+        self.motors = motors
 
         layout = QVBoxLayout()
 
@@ -1956,6 +1957,7 @@ class PassthroughTab(QWidget):
         self.connection.calibrating_changed.connect(self.on_calibrating)
         self.geometry.geometry_changed.connect(self.update_buttons)
         # Or we could set a flag ourselves to prevent calibration and disable StatusTab controls
+        self.motors.on_changed.connect(self.new_motors_status)
 
         # Initial state
         self.running = False
@@ -1967,6 +1969,7 @@ class PassthroughTab(QWidget):
             return
 
         self.running = True
+        self.were_motors_off = not self.motors.is_on
         self.init_values = [None, None, None]
         self.timer.start()
         self.update_buttons()
@@ -1988,6 +1991,9 @@ class PassthroughTab(QWidget):
         for n in self.iio_devs_used:
             self.iio_devs_used[n].start_buffering()
 
+        if self.were_motors_off:
+            self.motors.on()
+
     def stop(self):
         self.timer.stop()
         self.running = False
@@ -1998,11 +2004,18 @@ class PassthroughTab(QWidget):
         del self.iio_devs_used
         self.update_buttons()
 
+        if self.were_motors_off and self.motors.is_on != False:
+            self.motors.off()
+
     def on_calibrating(self):
         if self.connection.calibrating and self.running:
             self.stop()
         else:
             self.update_buttons()
+
+    def new_motors_status(self):
+        if self.running and self.motors.is_on == False:
+            self.stop()
 
     def send_control(self):
         if not self.connection.is_connected() or self.connection.calibrating or not self.running:
@@ -2189,7 +2202,7 @@ class PassthroughTab(QWidget):
     def update_buttons(self):
         """Update button enabled states."""
         enabled = (self.connection.is_connected() and not self.connection.calibrating and
-                   self.geometry.have_axes and self.geometry.have_forward) # TODO: and motors_on
+                   self.geometry.have_axes and self.geometry.have_forward)
 
         self.start_btn.setEnabled(enabled and not self.running)
         self.stop_btn.setEnabled(enabled and self.running)
@@ -2200,14 +2213,16 @@ class PassthroughTab(QWidget):
             self.controls[i]['source'].setEnabled(not self.running)
 
     def start_updates(self):
-        # TODO: load motors-on
         self.update_buttons()
+        self.motors.get(self)
+        self.new_motors_status() # Calls update_buttons
 
     def stop_updates(self):
         if self.running:
             self.stop()
 
         self.update_buttons()
+        self.motors.put(self)
 
 
 class ParameterEditorTab(QWidget):
@@ -2746,7 +2761,7 @@ class MainWindow(QMainWindow):
 
         self.tabs = {
             'status': (0, 'Status', StatusTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_normal, True),
-            'passthrough': (1, 'Control Passthrough', PassthroughTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_ready, True),
+            'passthrough': (1, 'Control Passthrough', PassthroughTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_ready, True),
             'calibration': (2, 'Calibration', calib.CalibrationTab(self.connection, self.geometry, self), QTreeWidgetItem(), is_enabled_calib, False),
             'calib-axes': (3, 'Axis calibration', calib.AxisCalibrationTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-motor': (4, 'Motor geometry calibration', calib.MotorGeometryCalibrationTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
