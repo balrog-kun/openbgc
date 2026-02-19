@@ -1040,6 +1040,7 @@ class JointLimitsTab(QWidget):
     """Tab for joint limits calibration and configuration."""
 
     PATH_LIMIT_SEARCH = 'control_data_s::CONTROL_PATH_LIMIT_SEARCH' # 4 works too
+    PATH_INTERPOLATE_JOINT = 'control_data_s::CONTROL_PATH_INTERPOLATE_JOINT' # 0
 
     def __init__(self, connection, geometry, motors, parent=None):
         super().__init__(parent)
@@ -1233,8 +1234,9 @@ class JointLimitsTab(QWidget):
 
     def on_search_automatically(self):
         """Handle automatic limit search."""
-        if not self.connection.is_connected():
+        if not self.connection.is_connected() or self.connection.calibrating:
             return
+        # If motors are already on, still start the search
 
         def after_drain():
             # Disable all limits first
@@ -1257,14 +1259,20 @@ class JointLimitsTab(QWidget):
             return
 
         def callback(value):
-            if value is not None and str(value) != self.PATH_LIMIT_SEARCH:
-                logger.info("Limit search done")
-                self.search_timer.stop()
-                self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
-                self.connection.set_calibrating(False)
-                self.geometry.update()
+            if values is not None:
+                path_type, motors_on = values
+                if not motors_on or str(path_type) != self.PATH_LIMIT_SEARCH:
+                    logger.info("Limit search done")
+                    self.search_timer.stop()
+                    self.connection.set_calibrating(False)
+                    if motors_on == True:
+                        self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
+                    if str(path_type) == self.PATH_LIMIT_SEARCH:
+                        self.connection.write_param('control.path-type', self.PATH_INTERPOLATE_JOINT)
+                    self.geometry.update()
 
-        self.connection.read_param('control.path-type', callback)
+        # Can't use self.motors.is_on here because self.connection.calibrating is True
+        self.connection.read_param(['control.path-type', 'motors-on'], callback)
 
     def on_get_current(self, axis_num, is_min):
         """Get current position and set as limit."""
