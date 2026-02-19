@@ -922,8 +922,8 @@ class PortMonitor(QObject):
             self.monitor_thread.join(timeout=1.0)
 
 
-class MotorsMonitor(QObject):
-    on_changed = pyqtSignal()
+class ParamMonitor(QObject):
+    changed = pyqtSignal()
 
     def __init__(self, connection: GimbalConnection, parent=None):
         super().__init__(parent)
@@ -931,15 +931,12 @@ class MotorsMonitor(QObject):
         self.users = {}
 
         self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_is_on)
-        self.update_timer.setInterval(1000) # 1 Hz
 
         self.connection.connection_changed.connect(self.update_running)
         self.connection.calibrating_changed.connect(self.update_running)
 
-        self.is_on = None
+        self.reset_value()
 
-    # Note: Might need a get/put pair for monitor users and another for actual motors users
     def get(self, obj):
         at1 = not self.users
         self.users[id(obj)] = None
@@ -958,7 +955,19 @@ class MotorsMonitor(QObject):
             self.update_timer.start()
         else:
             self.update_timer.stop()
-            self.is_on = None
+            self.reset_value()
+
+
+class MotorsMonitor(ParamMonitor):
+    def __init__(self, connection: GimbalConnection, parent=None):
+        super().__init__(connection, parent)
+        self.update_timer.timeout.connect(self.update_is_on)
+        self.update_timer.setInterval(1000) # 1 Hz
+
+        # Note: Might need a get/put pair for monitor users and another for actual motors users
+
+    def reset_value(self):
+        self.is_on = None
 
     def update_is_on(self):
         def callback(value):
@@ -969,7 +978,7 @@ class MotorsMonitor(QObject):
 
             if self.is_on != is_on:
                 self.is_on = is_on
-                self.on_changed.emit()
+                self.changed.emit()
 
         self.connection.read_param("motors-on", callback)
 
@@ -978,8 +987,8 @@ class MotorsMonitor(QObject):
             return
 
         self.connection.send_command(cmd.CmdId.CMD_MOTORS_ON)
-        self.is_on = None
-        self.on_changed.emit()
+        self.reset_value()
+        self.changed.emit()
         self.update_running() # Calls self.update_timer.start() and restarts the timer
 
     def off(self):
@@ -987,9 +996,32 @@ class MotorsMonitor(QObject):
             return
 
         self.connection.send_command(cmd.CmdId.CMD_MOTORS_OFF, cmd.MotorsOffRequest.build({}))
-        self.is_on = None
-        self.on_changed.emit()
+        self.reset_value()
+        self.changed.emit()
         self.update_running() # Calls self.update_timer.start() and restarts the timer
+
+
+class VbatMonitor(ParamMonitor):
+    def __init__(self, connection: GimbalConnection, parent=None):
+        super().__init__(connection, parent)
+        self.update_timer.timeout.connect(self.update_value)
+        self.update_timer.setInterval(1000) # 1 Hz
+
+    def reset_value(self):
+        self.value = None
+
+    def update_value(self):
+        def callback(value):
+            if value is not None:
+                value = float(value) * 0.001
+            else:
+                value = None
+
+            if self.value != value:
+                self.value = value
+                self.changed.emit()
+
+        self.connection.read_param("vbat", callback)
 
 
 class ConnectionTab(QWidget):
@@ -1334,11 +1366,12 @@ class ConnectionTab(QWidget):
 class StatusTab(QWidget):
     """Tab for displaying gimbal status and 3D visualization."""
 
-    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, motors: MotorsMonitor, parent=None):
+    def __init__(self, connection: GimbalConnection, geometry: GimbalGeometry, motors: MotorsMonitor, vbat: VbatMonitor, parent=None):
         super().__init__(parent)
         self.connection = connection
         self.geometry = geometry
         self.motors = motors
+        self.vbat = vbat
 
         layout = QVBoxLayout()
 
@@ -1566,31 +1599,28 @@ class StatusTab(QWidget):
         self.update_timer.timeout.connect(self.update_encoders_and_forces)
         self.update_timer.setInterval(200)  # 5 Hz
 
-        # Update timer (1 Hz for battery voltage)
-        self.vbat_timer = QTimer()
-        self.vbat_timer.timeout.connect(self.update_vbat)
-        self.vbat_timer.setInterval(1000)  # 1 Hz
-
         self.connection.calibrating_changed.connect(self.update_buttons)
-        self.motors.on_changed.connect(self.new_motors_status)
+        self.motors.changed.connect(self.new_motors_status)
+        self.vbat.changed.connect(self.new_vbat)
 
         self.update_buttons()
 
     def start_updates(self):
         """Start update timers."""
         self.motors.get(self)
+        self.vbat.get(self)
         if self.connection.is_connected():
             self.update_timer.start()
-            self.vbat_timer.start()
             self.new_motors_status() # Calls update_buttons
+            self.new_vbat()
             if not self.connection.calibrating:
                 self.connection.read_param("config.control.max-vel", self.update_max_vel)
 
     def stop_updates(self):
         """Stop update timers."""
         self.update_timer.stop()
-        self.vbat_timer.stop()
         self.motors.put(self)
+        self.vbat.put(self)
         # Reset displays and disable buttons
         self.vbat_label.setText("unknown")
         self.motor_status_label.setText("unknown")
@@ -1681,19 +1711,14 @@ class StatusTab(QWidget):
 
         self.connection.read_param(req_params, callback)
 
-    def update_vbat(self):
+    def new_vbat(self):
         """Update battery voltage display."""
-        if not self.connection.is_connected() or self.connection.calibrating:
+        if self.vbat.value is None:
+            self.vbat_label.setText("...")
             return
 
-        def callback(value):
-            if value is not None:
-                # vbat is in millivolts, convert to volts with 1 decimal place
-                voltage = float(value) / 1000.0
-                self.vbat_label.setText(f"{voltage:.1f} V")
-                # TODO: add and read vbat_min occasionally, display this in red if vbat near or below vbat_min
-
-        self.connection.read_param("vbat", callback)
+        self.vbat_label.setText(f"{self.vbat.value:.1f} V")
+        # TODO: read config.vbat.lvco on start_updates, display this in red if vbat near or below min and not zero
 
     def new_motors_status(self):
         status_text = "On" if self.motors.is_on == True else ("Off" if self.motors.is_on == False else "...")
@@ -1957,7 +1982,7 @@ class PassthroughTab(QWidget):
         self.connection.calibrating_changed.connect(self.on_calibrating)
         self.geometry.geometry_changed.connect(self.update_buttons)
         # Or we could set a flag ourselves to prevent calibration and disable StatusTab controls
-        self.motors.on_changed.connect(self.new_motors_status)
+        self.motors.changed.connect(self.new_motors_status)
 
         # Initial state
         self.running = False
@@ -2752,6 +2777,7 @@ class MainWindow(QMainWindow):
         self.connection = GimbalConnection(debug)
         self.geometry = GimbalGeometry(self.connection)
         self.motors = MotorsMonitor(self.connection)
+        self.vbat = VbatMonitor(self.connection)
 
         is_enabled_normal = lambda: self.connection.is_connected() and not self.connection.calibrating
         is_enabled_ready = lambda: self.connection.is_connected() and not self.connection.calibrating and \
@@ -2760,14 +2786,14 @@ class MainWindow(QMainWindow):
         is_enabled_calib_with_axes = lambda: is_enabled_calib() and self.geometry.have_axes
 
         self.tabs = {
-            'status': (0, 'Status', StatusTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_normal, True),
+            'status': (0, 'Status', StatusTab(self.connection, self.geometry, self.motors, self.vbat), QTreeWidgetItem(), is_enabled_normal, True),
             'passthrough': (1, 'Control Passthrough', PassthroughTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_ready, True),
             'calibration': (2, 'Calibration', calib.CalibrationTab(self.connection, self.geometry, self), QTreeWidgetItem(), is_enabled_calib, False),
             'calib-axes': (3, 'Axis calibration', calib.AxisCalibrationTab(self.connection, self.geometry), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-motor': (4, 'Motor geometry calibration', calib.MotorGeometryCalibrationTab(self.connection), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-pid': (5, 'Motor PID editor', calib.MotorPidEditorTab(self.connection, self.motors), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-limit': (6, 'Joint limits', calib.JointLimitsTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_calib_with_axes, True),
-            'calib-vbat': (6, 'Battery voltage', calib.VbatSenseTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
+            'calib-vbat': (6, 'Battery voltage', calib.VbatSenseTab(self.connection, self.vbat), QTreeWidgetItem(), is_enabled_normal, True),
             'params': (7, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
             'connection': (8, 'Connection & config', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
         }

@@ -933,7 +933,7 @@ class MotorPidEditorTab(QWidget):
 
         # Connect to connection changes
         self.connection.calibrating_changed.connect(self.update_buttons)
-        self.motors.on_changed.connect(self.new_motors_status)
+        self.motors.changed.connect(self.new_motors_status)
 
         # Load initial values
         self.load_values()
@@ -1384,9 +1384,10 @@ class JointLimitsTab(QWidget):
 
 
 class VbatSenseTab(QWidget):
-    def __init__(self, connection, parent=None):
+    def __init__(self, connection, vbat, parent=None):
         super().__init__(parent)
         self.connection = connection
+        self.vbat = vbat
 
         layout = QVBoxLayout()
 
@@ -1474,13 +1475,9 @@ class VbatSenseTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # Auto-search timer
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_vbat)
-        self.update_timer.setInterval(1000)  # 1 Hz
-
         # Connect to signals
         self.connection.calibrating_changed.connect(self.update_buttons)
+        self.vbat.changed.connect(self.new_vbat)
 
         # Initial state
         self.update_values()
@@ -1507,7 +1504,6 @@ class VbatSenseTab(QWidget):
 
     def update_values(self):
         self.update_actual = True
-        self.vbat = 0
         self.update_buttons()
 
         def callback(value):
@@ -1519,33 +1515,27 @@ class VbatSenseTab(QWidget):
     def update_buttons(self):
         enabled = self.connection.is_connected() and not self.connection.calibrating
 
-        self.scale_btn.setEnabled(enabled and self.vbat > 0 and not self.update_actual)
+        self.scale_btn.setEnabled(enabled and self.vbat.value is not None and self.vbat.value > 0 and not self.update_actual)
         self.min_btn.setEnabled(enabled)
 
-    def update_vbat(self):
-        if not self.connection.is_connected() or self.connection.calibrating:
+    def new_vbat(self):
+        if self.vbat.value is None:
+            self.cur_label.setText('-')
             return
 
-        def callback(value):
-            if value is None:
-                self.cur_label.setText('-')
-                self.vbat = 0
-
-            self.vbat = value * 0.001
-            self.cur_label.setText(f'{self.vbat:.1f}V')
-            if self.update_actual:
-                self.update_actual = False
-                self.actual_input.setValue(self.vbat)
-            self.update_buttons()
-
-        self.connection.read_param("vbat", callback)
+        self.cur_label.setText(f'{self.vbat.value:.1f}V')
+        if self.update_actual:
+            self.update_actual = False
+            self.actual_input.setValue(self.vbat.value)
+        self.update_buttons()
 
     def start_updates(self):
         """Start updates."""
+        self.vbat.get(self)
+        self.new_vbat()
         self.update_values() # calls update_buttons()
-        self.update_timer.start()
 
     def stop_updates(self):
         """Stop updates."""
-        self.update_timer.stop()
-        self.update_buttons()
+        self.vbat.put(self)
+        self.new_vbat() # calls update_buttons()
