@@ -383,7 +383,7 @@ static void control_calc_path_step_park(struct control_data_s *control,
 static void control_calc_path_step_limit_search(struct control_data_s *control,
         const float *angles_current, float *out_joint_deltas) {
 #define MIN_DIFF (0.1f * D2R) /* Should use encoder resolution+stddev instead */
-#define MIN_TIME_US 1000000
+#define MIN_TIME_US 300000
     float diff1, diff2, diff3;
     int i;
     __auto_type search = &control->limit_search;

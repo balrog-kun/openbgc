@@ -572,7 +572,7 @@ static void control_setup(void) {
          * On the other hand the search is going to take forever if the value is too low.
          * Do consider setting the limits manually if the search is not practical.
          */
-        control.settings->limit_search_v = 5 * D2R;
+        control.settings->limit_search_v = 15 * D2R;
     }
 
     control_update_aux_values();
