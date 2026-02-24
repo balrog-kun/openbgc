@@ -2331,13 +2331,21 @@ class ParameterEditorTab(QWidget):
         """Create widgets for all parameters."""
         # TODO: possibly use a tree display for the names, group parameters by path prefixes
         # TODO: a tree of dicts would also work in the saved JSON file
-        # TODO: until then perhaps just sort by name or add sorting controls in the UI
+
+        # Until then just sort by path (TODO: sorting controls in the UI)
+        # This is mostly just lexical sorting but we put all items that have no more
+        # children (i.e. have no more dots in their path) grouped before or after
+        # all of the other items within the prefix.
+        def sortkey(pdef):
+            path = pdef.name
+            pos = path.rfind('.')
+            return path[:pos + 1] + ' ' + path[pos + 1:]
 
         row = 1
-        for param_id, pdef in param_defs.params.items():
+        for pdef in sorted(param_defs.params.values(), key=sortkey):
             # Parameter name
             name_label = QLabel(pdef.name)
-            name_label.setToolTip(f"Parameter ID: {param_id}")
+            name_label.setToolTip(f"Parameter ID: {pdef.id}")
             self.param_layout.addWidget(name_label, row, 0)
             # TODO: add read-only icon after name, if read-only
 
@@ -2353,7 +2361,7 @@ class ParameterEditorTab(QWidget):
             # Read button
             read_btn = QPushButton()
             read_btn.setToolTip(f"Read {pdef.name} from gimbal")
-            read_btn.clicked.connect(lambda checked, pid=param_id: self.on_read_param(pid))
+            read_btn.clicked.connect(lambda checked, pid=pdef.id: self.on_read_param(pid))
             try:
                 read_btn.setIcon(QIcon.fromTheme("view-refresh"))
                 read_btn.setText("")
@@ -2364,7 +2372,7 @@ class ParameterEditorTab(QWidget):
             # Write button
             write_btn = QPushButton()
             write_btn.setToolTip(f"Write {pdef.name} to gimbal")
-            write_btn.clicked.connect(lambda checked, pid=param_id: self.on_write_param(pid))
+            write_btn.clicked.connect(lambda checked, pid=pdef.id: self.on_write_param(pid))
             try:
                 write_btn.setIcon(QIcon.fromTheme("go-next"))
                 write_btn.setText("")
@@ -2391,7 +2399,7 @@ class ParameterEditorTab(QWidget):
             self.param_layout.addWidget(type_scroll_area, row, 5)
 
             # Store widget references
-            self.param_widgets[param_id] = {
+            self.param_widgets[pdef.id] = {
                 'name': name_label,
                 'value': value_widget,
                 'value_area': value_scroll_area,
