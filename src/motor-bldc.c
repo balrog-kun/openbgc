@@ -13,6 +13,7 @@ struct motor_bldc_s {
     obgc_motor obj;
     obgc_foc_driver *driver;
     obgc_encoder *enc;
+    obgc_ahrs *ahrs;
     struct main_loop_cb_s loop_cb;
     bool on;
     struct obgc_bldc_with_encoder_calib_data_s calib_data;
@@ -51,8 +52,16 @@ struct motor_bldc_s {
  */
 
 static void motor_bldc_update_theta(struct motor_bldc_s *motor) {
-    motor->prev_theta = motor->enc->reading;
-    motor->prev_ts = micros();
+    uint32_t now = micros();
+
+    if (motor->enc)
+        motor->prev_theta = motor->enc->reading;
+    else {
+        float omega = motor->target_omega;
+        motor->prev_theta += omega * (now - motor->prev_ts) * 0.000001f;
+    }
+
+    motor->prev_ts = now;
 }
 
 static int motor_bldc_init(struct motor_bldc_s *motor) {
@@ -97,10 +106,23 @@ static void motor_bldc_free(struct motor_bldc_s *motor) {
     free(motor);
 }
 
+static void motor_bldc_delay(struct motor_bldc_s *motor, uint32_t delay) {
+    if (motor->ahrs) {
+        uint32_t end_ts = micros() + delay;
+
+        do {
+            main_loop_sleep();
+            ahrs_update(motor->ahrs);
+        } while ((int32_t) ((uint32_t) micros() - end_ts) < 0);
+    } else
+        delayMicroseconds(delay);
+}
+
 static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
     int ret, i;
     float mech0, mech1, diff, pairs;
     int8_t dir;
+    float q0[4];
 
     if (motor->on) {
         error_print("Must be off");
@@ -129,43 +151,56 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
 #define CALIB_START_OFFSET 270 /* SimpleFOC starts at 270deg, seems to work just as poorly as 0 */
     for (i = 1; i <= 360; i += 1) {
         motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->obj.pid_params->v_max, i + CALIB_START_OFFSET);
-        delayMicroseconds(2000000 / 360);
+        motor_bldc_delay(motor, 2000000 / 360);
     }
 
-    delay(1000); /* Wait for the rotor to settle */
+    motor_bldc_delay(motor, 1000000); /* Wait for the rotor to settle */
 
     encoder_update(motor->enc);
     motor_bldc_update_theta(motor);
     mech1 = motor->prev_theta;
+    if (!motor->enc)
+        memcpy(q0, motor->ahrs->q, 4 * sizeof(float));
 
     /* Rotate one full electrical rotation the other direction */
     for (i = 1; i <= 360; i += 1) {
         motor->driver->cls->set_phase_voltage(motor->driver, 0.0f, motor->obj.pid_params->v_max, 360 - i + CALIB_START_OFFSET);
-        delayMicroseconds(2000000 / 360);
+        motor_bldc_delay(motor, 2000000 / 360);
     }
 
-    delay(1000); /* Wait for the rotor to settle */
+    motor_bldc_delay(motor, 1000000); /* Wait for the rotor to settle */
 
     encoder_update(motor->enc);
     motor_bldc_update_theta(motor);
     mech0 = motor->prev_theta;
     motor->driver->cls->off(motor->driver);
 
-    diff = mech1 - mech0;
-    if (diff >= 180.0f)
-        diff -= 360.0f;
-    else if (diff <= -180.f)
-        diff += 360.0f;
+    if (motor->enc) {
+        diff = mech1 - mech0;
+        if (diff >= 180.0f)
+            diff -= 360.0f;
+        else if (diff <= -180.f)
+            diff += 360.0f;
 
-    if (diff > 0) /* Assuming pole pairs > 1 */
+        if (diff > 0) /* Assuming pole pairs > 1 */
+            dir = 1;
+        else {
+            dir = -1;
+            diff = -diff;
+        }
+    } else {
+        float q1[4], q_diff[4], axis[3];
+
+        memcpy(q1, motor->ahrs->q, 4 * sizeof(float));
+        q1[0] = -q1[0];
+        quaternion_mult_to(q0, q1, q_diff);
+        quaternion_to_axis_angle(q_diff, axis, &diff);
+        diff *= R2D;
         dir = 1;
-    else {
-        dir = -1;
-        diff = -diff;
     }
 
     if (diff < 0.5f) {
-        error_print("Less than 0.5deg motion seen by encoder");
+        error_print("Less than 0.5deg motion seen by encoder/AHRS");
         return -2; /* Too little motion seen by encoder (assuming pole pairs < ~720) */
     }
 
@@ -180,11 +215,18 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
 
     motor->calib_data.pole_pairs = roundf(pairs);
 
+    if (!motor->enc) {
+        motor->calib_data.zero_electric_offset = 0;
+        goto ready;
+    }
+
     mech1 -= CALIB_START_OFFSET / motor->calib_data.pole_pairs * dir;
     mech1 += (360.0f / motor->calib_data.pole_pairs - diff) * 0.5f * dir; /* Try to improve accuracy */
 
     /* 0 mechanical angle expressed as electrical angle */
     motor->calib_data.zero_electric_offset = (dir == 1 ? 360.0f : 0.0f) - fmodf(mech1 * motor->calib_data.pole_pairs, 360.0f) * dir;
+
+ready:
     motor->calib_data.sensor_direction = dir;
     motor->electric_scale = (float) motor->calib_data.pole_pairs * dir;
     motor->obj.ready = true;
@@ -270,7 +312,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     else if (dtheta <= -180.f)
         dtheta += 360.0f;
 
-    invdt = 1000000.0f / (motor->prev_ts - prev_ts); /* TODO: zero check */
+    invdt = 1000000.0f / (motor->prev_ts - prev_ts); /* Zero check needed? */
     raw_omega = motor->have_ext_omega ? motor->ext_omega : (dtheta * invdt);
     accel = (raw_omega - motor->prev_omega) * invdt;
     motor->prev_omega = raw_omega;
@@ -318,6 +360,24 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
     /* Convert to electric angle */
     theta = motor->prev_theta * motor->electric_scale + motor->calib_data.zero_electric_offset;
 
+    if (!motor->enc) {
+        /* Without encoders don't attempt FOC, do direct (blind) sinusoidal drive.
+         *
+         * Use a hybrid of direct and FOC actually, to create torque, but with
+         * lead angle limited roughly to the linear sin() region to retain tracking.
+         */
+        float lead = clamp(torque * (motor->calib_data.sensor_direction * 10), -45, +45);
+        vq = 0.0f;
+        /* Arbitrary reduction from FOC maximum strength knowing this amount of current
+         * is now being wasted constantly.
+         * TODO: scale amplitude with error to some extent, but with a high minimum to
+         * retain tracking.
+         */
+        vd = params->v_max * 0.5f;
+        motor->driver->cls->set_phase_voltage(motor->driver, vq, vd, theta + lead);
+        return;
+    }
+
     /* Calculate output voltages.
      *
      * Since we expect low angular velocities in our use cases, don't bother with non-zero
@@ -342,7 +402,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         motor->obj.pid_stats.tracking_dev[idx] * (1.0f - TRACKING_GAIN);
 }
 
-obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver) {
+static obgc_motor *motor_bldc_new_full(obgc_encoder *enc, obgc_ahrs *ahrs, obgc_foc_driver *driver) {
     struct motor_bldc_s *motor = (struct motor_bldc_s *) malloc(sizeof(struct motor_bldc_s));
 
     memset(motor, 0, sizeof(*motor));
@@ -350,6 +410,7 @@ obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver) {
 
     motor->enc = enc;
     motor->driver = driver;
+    motor->ahrs = ahrs;
 
     motor->loop_cb.cb = (void (*)(void *)) motor_bldc_loop;
     motor->loop_cb.data = motor;
@@ -360,6 +421,14 @@ obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver) {
 error:
     motor_bldc_class.free(&motor->obj);
     return NULL;
+}
+
+obgc_motor *motor_bldc_with_encoder_new(obgc_encoder *enc, obgc_foc_driver *driver) {
+    return motor_bldc_new_full(enc, NULL, driver);
+}
+
+obgc_motor *motor_bldc_new(obgc_ahrs *ahrs, obgc_foc_driver *driver) {
+    return motor_bldc_new_full(NULL, ahrs, driver);
 }
 
 void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
@@ -396,4 +465,31 @@ void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param,
         params->v_max = val;
         break;
     }
+}
+
+struct motor_bldc_synthetic_encoder_s {
+    obgc_encoder obj;
+    struct motor_bldc_s *motor;
+};
+
+static int32_t motor_bldc_synthetic_encoder_read(struct motor_bldc_synthetic_encoder_s *enc) {
+    return enc->motor->prev_theta * enc->obj.cls->scale;
+}
+
+static obgc_encoder_class motor_bldc_synthetic_encoder_class = {
+    .read        = (int32_t (*)(obgc_encoder *enc)) motor_bldc_synthetic_encoder_read,
+    .free        = (void (*)(obgc_encoder *enc)) free, /* In theory we should ref count motor */
+    .scale       = 1024,
+    .resolution  = 1.0f / 128, /* Actual value is FOC driver's PWM resolution / pole pair count */
+    .motor_based = true,
+};
+
+obgc_encoder *motor_bldc_get_synthetic_encoder(obgc_motor *motor) {
+    struct motor_bldc_synthetic_encoder_s *enc = (struct motor_bldc_synthetic_encoder_s *)
+        malloc(sizeof(struct motor_bldc_synthetic_encoder_s));
+
+    memset(enc, 0, sizeof(*enc));
+    enc->obj.cls = &motor_bldc_synthetic_encoder_class;
+    enc->motor = (struct motor_bldc_s *) motor;
+    return &enc->obj;
 }

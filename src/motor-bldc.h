@@ -4,6 +4,7 @@
 
 #include "encoder.h"
 #include "motor.h"
+#include "ahrs.h"
 
 typedef enum obgc_motor_bldc_param_e {
     BLDC_PARAM_KP = 1, /* roughly [V / (deg/s)], should be [A / (deg/s)] */
@@ -19,7 +20,10 @@ typedef enum obgc_motor_bldc_param_e {
     __BLDC_PARAM_MAX
 } obgc_motor_bldc_param;
 
-obgc_motor *motor_bldc_new(obgc_encoder *enc, obgc_foc_driver *driver);
+obgc_motor *motor_bldc_with_encoder_new(obgc_encoder *enc, obgc_foc_driver *driver);
+obgc_motor *motor_bldc_new(obgc_ahrs *ahrs, obgc_foc_driver *driver);
+
 void motor_bldc_set_param(obgc_motor *motor, obgc_motor_bldc_param param, float val);
+obgc_encoder *motor_bldc_get_synthetic_encoder(obgc_motor *motor);
 
 #endif /* MOTOR_BLDC_H */
