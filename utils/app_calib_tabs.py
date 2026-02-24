@@ -1258,7 +1258,7 @@ class JointLimitsTab(QWidget):
         if not self.connection.is_connected():
             return
 
-        def callback(value):
+        def callback(values):
             if values is not None:
                 path_type, motors_on = values
                 if not motors_on or str(path_type) != self.PATH_LIMIT_SEARCH:

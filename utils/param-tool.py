@@ -68,7 +68,7 @@ else:
     if pdef.size != len(vbytes):
         print(f'error: {pdef.name} value must be {pdef.size} bytes, got {len(vbytes)}')
         sys.exit(-1)
-    out_payload = cmd_obgc.SetParamRequest.build(dict(param_ids=pdef.id, value=vbytes))
+    out_payload = cmd_obgc.SetParamRequest.build(dict(param_id=pdef.id, value=vbytes))
 
 out_frame = fr.FrameV1.build(dict(hdr=dict(cmd_id=int(cmd_obgc.CmdId.CMD_OBGC)), pld=out_payload))
 
