@@ -401,7 +401,7 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
         search->step++;
         break;
     case 1: /* limit_min search */
-        out_joint_deltas[num] = control->settings->limit_search_v;
+        out_joint_deltas[num] = control->settings->limit_search_v * control->dt;
         diff1 = angle_normalize_pi(angles_current[num] - search->last_angle);
         diff2 = angle_normalize_pi(angles_current[num] - search->start_angle);
         diff3 = angle_normalize_pi(search->last_angle - search->start_angle);
@@ -456,7 +456,7 @@ static void control_calc_path_step_limit_search(struct control_data_s *control,
                 out_joint_deltas);
         break;
     case 3: /* limit_max search */
-        out_joint_deltas[num] = -control->settings->limit_search_v;
+        out_joint_deltas[num] = -control->settings->limit_search_v * control->dt;
         diff1 = angle_normalize_pi(angles_current[num] - search->last_angle);
         diff2 = angle_normalize_pi(angles_current[num] - control->axes->limit_min[num]);
         diff3 = angle_normalize_pi(search->last_angle - control->axes->limit_min[num]);
