@@ -1233,7 +1233,6 @@ class ConnectionTab(QWidget):
         """Handle disconnect button click."""
         self.boot_param_timer.stop()
         self.connection.disconnect()
-        self.status_label.setText("Disconnected")
 
     def update_buttons(self):
         """Handle connection state change."""
@@ -2820,10 +2819,10 @@ class MainWindow(QMainWindow):
         self.geometry.geometry_changed.connect(self.update_tabs)
 
         # Initially disable non-connection tabs
-        self.on_connection_changed(False)
+        self.update_tabs()
 
-        # Select status tab initially
-        self.switch_to_tab('status')
+        # Select Connection tab initially
+        self.switch_to_tab('connection')
 
     def create_splitter(self):
         """Create the main splitter with tab content and bottom strip."""
@@ -2888,7 +2887,7 @@ class MainWindow(QMainWindow):
         #bottom_layout.setContentsMargins(5, 5, 5, 5)
 
         # Port
-        self.port_status = QLabel()
+        self.port_status = QLabel('Offline')
         self.port_status.setToolTip('Currently connected serial port path, see Connection tab')
         bottom_layout.addWidget(self.port_status, 0)  # Fixed size
 
@@ -3009,6 +3008,8 @@ class MainWindow(QMainWindow):
             self.switch_to_tab('connection')
 
             self.port_status.setText("Offline")
+
+            self.console.on_text_logged(' -------- 8< ------------ 8< -------- \n')
 
 
 def main():
