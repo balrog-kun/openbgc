@@ -624,6 +624,14 @@ void control_step(struct control_data_s *control) {
         struct obgc_motor_s *motor = control->motors[num];
         /* TODO: any downside if we make the scales always positive and invert the axes in axes_calibrate? */
 
+        /* Gimbal lock handling: though we're modifying the inputs to respond well
+         * in gimbal lock positions, this doesn't seem to be enough so for now also
+         * attenuate the outputs.  This is a big hammer but it *does* seem to
+         * prevent uncontrollable swings and keep middle axis under control.
+         */
+        if (i != 1)
+            joint_velocities_target[i] *= 1.0f - control->att_factor;
+
         /* Note we could merge the three calls into one "torque" value but that would ask for
          * the whole PID logic to be moved here and we don't want that, let it do its job.
          */

@@ -403,7 +403,7 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
     /* Since we'll be using it more than once, pre-calculate the pseudo-inverse
      * rather than solve the equation once in axes_q_to_step_proj().
      */
-    if (fabsf(data->cos_lock_angle) < 0.95f /* about cos(8 degrees) */) {
+    if (fabsf(data->cos_lock_angle) < 0.95f /* about cos(18 degrees) */) {
         /* The pseudo-inverse with regularization (non-zero damp factor) is supposed to better
          * handle gimbal lock situations than matrix_t_invert() would.  But near gimbal lock
          * each user needs to have a different fallback (speed vs. angle vs. torque), so we use
