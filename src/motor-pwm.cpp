@@ -97,7 +97,7 @@ static void motor_pwm_free(struct obgc_motor_s *motor_obj) {
     free(motor);
 }
 
-static int motor_pwm_recalibrate(struct obgc_motor_s *motor_obj) {
+static int motor_pwm_recalibrate(struct obgc_motor_s *motor_obj, float *out_axis) {
     struct motor_pwm_s *motor = container_of(motor_obj, struct motor_pwm_s, motor_obj);
     int ret;
 

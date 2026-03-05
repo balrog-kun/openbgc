@@ -1368,15 +1368,54 @@ handle_set_param:
         }
 
         for (i = 0; i < 3; i++) {
+            float axis[3] = {};
+
             if (!motors[i] || !use_motor[i])
                 continue;
 
-            if (motors[i]->cls->recalibrate(motors[i]) != 0)
+            if (motors[i]->cls->recalibrate(motors[i], axis) != 0)
                 serial->println("Motor calibration failed");
             else if (motors[i]->cls->get_calibration(motors[i], &config.motor_calib[i]) != 0)
                 serial->println("Motor calibration no data");
             else {
                 char msg[200];
+
+                /* If no encoder, try to update config.axes.axis_to_encoder since
+                 * axes_calibrate() didn't have the data we have now.
+                 */
+                if (encoders[i]->cls->motor_based && config.have_axes) {
+                    float max_cos_align = 0;
+                    int best = -1;
+
+                    for (int j = 0; j < 3; j++) {
+                        float cos_align = vector_dot(axis, config.axes.axes[j]);
+
+                        if (fabsf(cos_align) > fabsf(max_cos_align)) {
+                            best = j;
+                            max_cos_align = cos_align;
+                        }
+                    }
+
+                    if (fabsf(max_cos_align) <= 0.9f) /* About 25 deg */
+                        serial->println("No match for axis, not updating axis_to_encoder");
+                    else {
+                        /* TODO: also check if this axis was already matched to another motor
+                         * or had an encoder.
+                         */
+                        int prev;
+
+                        for (prev = 0; prev < 3; prev++)
+                            if (config.axes.axis_to_encoder[prev] == i)
+                                break;
+
+                        config.axes.axis_to_encoder[prev] = config.axes.axis_to_encoder[best];
+                        config.axes.axis_to_encoder[best] = i;
+                        config.axes.encoder_scale[i] = copysignf(1.0f, max_cos_align);
+                        serial->print("Match for axis ");
+                        serial->println(best);
+                    }
+                }
+
                 sprintf(msg, "Motor %i calibration = { .pole_pairs = %i, .zero_electric_offset = %f, .sensor_direction = %i }",
                         i, config.motor_calib[i].bldc_with_encoder.pole_pairs,
                         config.motor_calib[i].bldc_with_encoder.zero_electric_offset,

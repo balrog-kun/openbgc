@@ -66,11 +66,12 @@ static void motor_bldc_update_theta(struct motor_bldc_s *motor) {
 
 static int motor_bldc_init(struct motor_bldc_s *motor) {
     int ret;
+    float axis[3];
 
     if (motor->obj.ready)
         return 0;
 
-    return motor->obj.cls->recalibrate(&motor->obj);
+    return motor->obj.cls->recalibrate(&motor->obj, axis);
 }
 
 static void motor_bldc_set(struct motor_bldc_s *motor, float vel) {
@@ -118,7 +119,7 @@ static void motor_bldc_delay(struct motor_bldc_s *motor, uint32_t delay) {
         delayMicroseconds(delay);
 }
 
-static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
+static int motor_bldc_recalibrate(struct motor_bldc_s *motor, float *out_axis) {
     int ret, i;
     float mech0, mech1, diff, pairs;
     int8_t dir;
@@ -189,12 +190,12 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor) {
             diff = -diff;
         }
     } else {
-        float q1[4], q_diff[4], axis[3];
+        float q1[4], q_diff[4];
 
         memcpy(q1, motor->ahrs->q, 4 * sizeof(float));
         q1[0] = -q1[0];
         quaternion_mult_to(q0, q1, q_diff);
-        quaternion_to_axis_angle(q_diff, axis, &diff);
+        quaternion_to_axis_angle(q_diff, out_axis, &diff);
         diff *= R2D;
         dir = 1;
     }
@@ -284,7 +285,7 @@ static obgc_motor_class motor_bldc_class = {
     .on                    = (int (*)(obgc_motor *)) motor_bldc_on,
     .off                   = (void (*)(obgc_motor *)) motor_bldc_off,
     .free                  = (void (*)(obgc_motor *)) motor_bldc_free,
-    .recalibrate           = (int (*)(obgc_motor *)) motor_bldc_recalibrate,
+    .recalibrate           = (int (*)(obgc_motor *, float *)) motor_bldc_recalibrate,
     .get_calibration       = (int (*)(obgc_motor *, obgc_motor_calib_data *)) motor_bldc_get_calibration,
     .set_calibration       = (void (*)(obgc_motor *, const obgc_motor_calib_data *)) motor_bldc_set_calibration,
     .override_cur_velocity = (void (*)(obgc_motor *, float)) motor_bldc_override_cur_omega,

@@ -55,7 +55,7 @@ typedef struct obgc_motor_class_s {
     int (*on)(obgc_motor *motor);
     void (*off)(obgc_motor *motor);
     void (*free)(obgc_motor *motor);
-    int (*recalibrate)(obgc_motor *motor);
+    int (*recalibrate)(obgc_motor *motor, float *out_axis);
     int (*get_calibration)(obgc_motor *motor, obgc_motor_calib_data *out_data);
     void (*set_calibration)(obgc_motor *motor, const obgc_motor_calib_data *data);
     void (*override_cur_velocity)(obgc_motor *motor, float omega);
