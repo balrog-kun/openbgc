@@ -1004,7 +1004,6 @@ static int config_write(void) {
 static void serial_ui_run(void *) {
     uint8_t cmd;
     int i, param;
-    struct axes_calibrate_data_s cs;
     static uint8_t dlpf = 0;
 
 start:
@@ -1162,17 +1161,23 @@ handle_set_param:
          * the software sees maps to which joint.
          */
         serial->println("Recalibrating arm/joint setup: motor/encoder order, axes, neutral angles, direction and scale");
-        cs.main_ahrs = main_ahrs;
-        cs.frame_ahrs = frame_ahrs;
-        cs.encoders = encoders;
-        cs.print = calibrate_print;
-        cs.cancel = calibrate_cancel;
-        cs.out = &config.axes;
 
-        /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
         {
+            struct axes_calibrate_data_s cs;
+            obgc_encoder *cs_encoders[3];
             bool prev_quiet = quiet;
 
+            cs.main_ahrs = main_ahrs;
+            cs.frame_ahrs = frame_ahrs;
+            cs.encoders = cs_encoders;
+            cs.print = calibrate_print;
+            cs.cancel = calibrate_cancel;
+            cs.out = &config.axes;
+
+            for (i = 0; i < 3; i++)
+                cs.encoders[i] = encoders[i]->cls->motor_based ? NULL : encoders[i];
+
+            /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
             quiet = 1;
             config.have_axes = !axes_calibrate(&cs);
             quiet = prev_quiet;
@@ -1180,6 +1185,23 @@ handle_set_param:
 
         if (!config.have_axes)
             break;
+
+        for (i = 0; i < 3; i++)
+            if (config.axes.axis_to_encoder[i] == -1) {
+                /* axes_calibrate() only knows about encoders but we use the same mapping for
+                 * motors everywhere.  Without encoders we assume that the motors are already
+                 * ordered in the outer->middle->inner order.  So use the first unused motor
+                 * for each axis to handle setups with a mix of encoder and non-encoder axes
+                 */
+                config.axes.axis_to_encoder[i] = 0;
+
+                for (int j = 0; j < 3; j++)
+                    if (i != j && config.axes.axis_to_encoder[i] == config.axes.axis_to_encoder[j]) {
+                        config.axes.axis_to_encoder[i]++;
+                        j = 0; /* Restart the check with the next motor */
+                        break;
+                    }
+            }
 
         /* Other code here just assumes 1.0 scale from the encoders (i.e. trust whatever scale is
          * documented in the spec and applied in encoder_update()) and so far this seems to work

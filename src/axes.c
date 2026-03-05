@@ -94,7 +94,7 @@ static void get_q(struct axes_calibrate_data_s *data, float *q, int naxis) {
  * have no physical meaning, they're each the orientation of an arbitrary element of the
  * corresponding part of the gimbal.  But we likely don't care about their physical orientations,
  * only relative relations.  Similarly the camera home orientation may not be related to any
- * physical part of the camera, only the relative home orientation that the user is wants to
+ * physical part of the camera, only the relative home orientation that the user wants to
  * maintain or in relation to which they want to operate.  The camera, the main IMU and the
  * inner arm are assumed to be rigidly connected and their orientations differ by constant
  * amounts.
@@ -110,6 +110,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
     float enc_scale_accum[3];
     float axis_accum[3];
     int i;
+    bool all_encoders = data->encoders[0] && data->encoders[1] && data->encoders[2];
 
     char msg[200];
     bool reinit = true;
@@ -118,11 +119,16 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
 
     data->print("1. Rotate the outer joint manually over full range of motion or at\r\n");
     data->print("   least 30 degs each direction, while keeping the other two joints'\r\n");
-    if (data->frame_ahrs) {
-        data->print("   angles fixed.\r\n");
-    } else {
-        data->print("   angles fixed.  Without frame IMU, keep the frame/base absolutely\r\n");
-        data->print("   static like a on tripod.\r\n");
+    data->print("   angles fixed.\r\n");
+
+    if (!data->frame_ahrs) {
+        data->print("   Without frame IMU, keep the frame/base absolutely static like\r\n");
+        data->print("   a on tripod.\r\n");
+    }
+
+    if (!all_encoders) {
+        data->print("   Without all 3 encoders, orient the base and the joints in their\r\n");
+        data->print("   home positions before collection 1st sample for each axis.\r\n");
     }
 
     while (naxis < 3) {
@@ -192,6 +198,9 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
             reinit_wait = false;
             data->print("   Start now                                      \r");
 
+            if (!all_encoders && naxis == 0)
+                memcpy(data->out->main_imu_mount_q, q, 4 * sizeof(float));
+
             get_enc(data, prev_enc);
             memcpy(conj_prev_q, q, sizeof(q));
             conj_prev_q[0] = -conj_prev_q[0];
@@ -211,6 +220,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
          * sqrt(1 - w^2) is the most likely to produce a nan but we don't expect diff_q to have
          * lost normalization by a lot.  w would be close to +/-1.0f if angle is close to 0 which
          * we have confirmed it isn't, or if all of q has drifted towards higher values.
+         * Note: could now as well use quaternion_to_axis_angle()
          */
         vector_mult_scalar(axis, 1.0f / sqrtf(1.0f - diff_q[0] * diff_q[0])); /* Divide by abs(sin(angle / 2)) to normalize */
 
@@ -314,6 +324,9 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
         data->print(msg);
         main_beep();
 
+        if (!all_encoders && corr_enc[best] <= 0.3f)
+            best = -1;
+
         accepted = corr_axis >= 0.9f && (best < 0 || corr_enc[best] >= 0.8f);
         if (!accepted)
             data->print("   Correlation is too low, let's redo this axis.\r\n");
@@ -350,9 +363,9 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
     }
 
     /* With all 3 encoders, this will give us exactly what we need */
-    /* TODO: but without encoders, I guess we'll be using the orientation of 3-rd joint axis wrt. the IMU,
-     * not sure how much we can really do without encoders here. */
-    get_q(data, data->out->main_imu_mount_q, 3);
+    if (all_encoders)
+        get_q(data, data->out->main_imu_mount_q, 3);
+
     return 0;
 }
 
