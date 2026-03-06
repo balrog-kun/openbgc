@@ -1191,7 +1191,10 @@ handle_set_param:
                 /* axes_calibrate() only knows about encoders but we use the same mapping for
                  * motors everywhere.  Without encoders we assume that the motors are already
                  * ordered in the outer->middle->inner order.  So use the first unused motor
-                 * for each axis to handle setups with a mix of encoder and non-encoder axes
+                 * for each axis to handle setups with a mix of encoder and non-encoder axes.
+                 *
+                 * We may update the mapping later in motor geometry calibration ('m') so this
+                 * is just the initial guess.
                  */
                 config.axes.axis_to_encoder[i] = 0;
 
@@ -1230,16 +1233,37 @@ handle_set_param:
         serial->println("Consecutive axes pairs assumed orthogonal");
         break;
     case 'k':
-        if (control_enable || config.control.tripod_mode) {
-            serial->println("Control, tripod mode must be disabled");
+        if (config.control.tripod_mode) {
+            serial->println("Tripod mode must be disabled");
             break;
         }
 
         serial->println("Saving current camera and base orientations as home orientations (0-pitch, 0-roll)"); /* And 0-yaw if not following */
         memcpy(control.settings->home_q, main_ahrs->q, sizeof(control.settings->home_q));
         memcpy(control.settings->home_frame_q, frame_q, sizeof(control.settings->home_frame_q));
-        for (i = 0; i < 3; i++)
-            control.settings->home_angles[i] = encoders[i] ? encoders[i]->reading_rad : 0;
+        for (i = 0; i < 3; i++) {
+            float home_angle = encoders[i]->reading_rad;
+
+            if (encoders[i]->cls->motor_based && motors_on) {
+                obgc_motor_calib_data *data = &config.motor_calib[i];
+
+                /* Shift the mechanical 0 angle to the home angle so that whenever motor
+                 * is first powered on it snaps to the home angle directly.  This should
+                 * give the user a symmetric error margin around the home angles when
+                 * preparing the gimbal to be powered on.  Since motors are on, don't
+                 * update the calibration in the motor object directly, let the user stop
+                 * motors, write to storage and re-read or reset before this takes effect.
+                 */
+                motors[i]->cls->get_calibration(motors[i], data);
+                data->bldc_with_encoder.zero_electric_offset +=
+                    home_angle * data->bldc_with_encoder.pole_pairs *
+                    data->bldc_with_encoder.sensor_direction; /* TODO: normalize */
+                home_angle = 0;
+            }
+
+            control.settings->home_angles[i] = home_angle;
+        }
+
         control.settings->have_home = 1;
         /* TODO: if have_forward, perhaps recalculate .forward_* and .aligned_* */
         control.settings->have_forward = 0;
