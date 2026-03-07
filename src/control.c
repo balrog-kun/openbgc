@@ -587,6 +587,11 @@ void control_step(struct control_data_s *control) {
      *    actual acceleration, *only* counteract the reaction torque.  We're effectively
      *    spending ~2x the energy we would without aligned axes, to produce the same amount
      *    of acceleration.
+     *    Note: with frame_ahrs we also have to take the torque exerted by frame motion into
+     *    account.  There's direct torque on the outer joint through friction and magnetic
+     *    field, there's direct torque on the middle joint in the axes perpendicular to the
+     *    outer joint axis and indirect in the outer joint axis, and then the same thing
+     *    on the inner joint.
      * 2. TODO: to anticipate Coriolis effect.  We have rotating bodies mounted on top
      *    of other rotating bodies (rotating frame of reference) and there's bound to be an
      *    effect.
@@ -618,6 +623,20 @@ void control_step(struct control_data_s *control) {
         }
 #endif
 
+    if (control->frame_ahrs) {
+        float frame_velocities[3] = INIT_VEC(control->frame_ahrs->velocity_vec);
+        float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
+
+        /* Note: pretty wasteful as we're undoing something the AHRS just did */
+        vector_rotate_by_quaternion(frame_velocities, conj_frame_q);
+        //control_apply_attenuation(control, frame_velocities);
+        vector_mult_matrix(frame_velocities, control->axes->jacobian_pinv);
+        vector_mult_scalar(frame_velocities, R2D);
+        vector_sub(joint_velocities_target, frame_velocities);
+
+        /* TODO: see comment about joint_extra_torque */
+    }
+
     /* Request new values from motors directly */
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
@@ -646,12 +665,39 @@ void control_step(struct control_data_s *control) {
 void control_update_joint_vel(struct control_data_s *control) {
     float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
     int i;
+    float joint_velocities[3] = INIT_VEC(control->main_ahrs->velocity_vec);
 
-    memcpy(control->joint_velocities, control->main_ahrs->velocity_vec, 3 * sizeof(float));
-    control_apply_attenuation(control, control->joint_velocities);
-    vector_rotate_by_quaternion(control->joint_velocities, conj_frame_q);
-    vector_mult_matrix(control->joint_velocities, control->axes->jacobian_pinv);
-    vector_mult_scalar(control->joint_velocities, R2D);
+    /* We have:
+     *  - control->velocity_vec which is the global velocity that we commanded
+     *    and includes an LPF factor of the velocities calculated from gyro input.
+     *    Updated only every 4 cycles.  This responds to the commanded
+     *    acceleration (A.)
+     *  - control->joint_velocities which is raw velocity component from gyro input
+     *    aligned with motor axis, updated in real time.  In absence of commanded
+     *    acceleration (A), this responds to:
+     *     B. acceleration of the base transmitted to the payload through joint
+     *        friction and magnetic field which are both weak but accumulate over
+     *        time.
+     *     C. disturbance from external forces on the payload including physical
+     *        contact with the payload, and linear accelerations (gravity and
+     *        base acceleration) acting on the unbalanced part of the payload
+     *        however small it may be.
+     *    We want to compensate for / cancel both B and C (up to some limit torque.)
+     *    But B implies a change in the motor's target angle rate, similar to A,
+     *    while C doesn't.  Without 2nd IMU we can't differentiate between B and
+     *    C so optimistically assume it's all B.
+     *  control->velocity_vec == A + LPF(B)
+     *  control->main_ahrs->velocity_vec == A + B + C
+     *  control->frame_ahrs->velocity_vec == B
+     */
+
+    if (control->frame_ahrs)
+        vector_sub(joint_velocities, control->frame_ahrs->velocity_vec);
+
+    //control_apply_attenuation(control, joint_velocities);
+    vector_rotate_by_quaternion(joint_velocities, conj_frame_q);
+    vector_mult_matrix(joint_velocities, control->axes->jacobian_pinv);
+    vector_mult_scalar(joint_velocities, R2D);
 
     for (i = 0; i < 3; i++) {
         int num = control->axes->axis_to_encoder[i];
@@ -659,6 +705,6 @@ void control_update_joint_vel(struct control_data_s *control) {
 
         if (motor->cls->override_cur_velocity)
             motor->cls->override_cur_velocity(motor,
-                    control->joint_velocities[i] / control->axes->encoder_scale[num]);
+                    joint_velocities[i] / control->axes->encoder_scale[num]);
     }
 }

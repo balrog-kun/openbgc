@@ -117,7 +117,6 @@ struct control_data_s {
 
     /* State */
     float velocity_vec[3];
-    float joint_velocities[3];
     float target_ypr_offsets[3];
     float delta_angle;
     float att_factor; /* Attenuate motor inputs along this axis by this factor */
