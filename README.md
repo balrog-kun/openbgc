@@ -15,10 +15,8 @@ Some code informed, advised or drafted by AI.
 * STMF3 MCU only at this point.
 * 3 axes required.
 * 1x or 2x Invensense MPU6050 IMU (main and "frame").
-* Encoders are required on all axes.  No-encoder setups are not supported due to the math choices made.
+* Encoders are required on all axes.  Early no-encoder support only with two IMUs.
 * Angles other than 90 degrees between joint axes *are* supported, no assumptions are made.
-  Long version: We can get by relatively easily without encoders if we have two IMUs *and* perpendicular rotation axes.  We can also get by without the frame IMU (main IMU only) if we have encoders on all axes, no need for them to be perpendicular in this case.  But any other setup will require you to get very creative with the math code.
-
 * Supported encoders are: only AS5600 for onboard encoder, or any model (don't care) when connected to SBGC32_I2C_Drv extension boards.
 
 * Bluetooth remote is supported (tested with the RM-1)
@@ -29,11 +27,11 @@ CAN communication is *not* supported.
 
 Is it possible to go back to the original firmware? *Yes*, it is.
 
-SimpleBGC32 GUI communication is *not* supported.  It's doable but many of the settings will be different due to different maths algorithms used, and many functionalities are likely never being implemented, such as scripting, variables, MAVLink, extra motors, RC virtual channels, external reference data, filesystem etc.  Currently most settings are basically hardcoded.
+SimpleBGC32 GUI communication is *not* supported.  It's doable but many of the settings will be different due to different maths algorithms used, and many functionalities are likely never being implemented, such as scripting, variables, MAVLink, extra motors, RC virtual channels, external reference data, filesystem etc.  HW peripheral models and addresses are currently hardcoded.
 
-The SimpleBGC serial API is only support to the (small) extent needed for bluetooth remote support (tested with the RM-1 model) and the 2-hand base controls.
+The SimpleBGC serial API is only support to the (small) extent needed for bluetooth remote support (tested with the RM-1 model) and the 2-hand base controls.  OpenBGC implements its own extensions to the SimpleBGC serial API for setup, control, monitoring.
 
-An early-stage GUI companion app is present as utils/app.py.
+A relatively complete GUI companion app is present at utils/app.py.
 
 ## OpenBGC -- SimpleBGC32 opensource firmware
 
@@ -41,7 +39,7 @@ This repository hosts a basic firmware for camera gimbals, specifically for the 
 
 This is the case with the excellent PilotFly H2 gimbal, which this code is currently tested on.  Very robust design and seemingly full firmware compatibility with other models and manufacturers as well as with DIY gimbals using SimpleBGC32 controllers or their clones.  PilotFly H2 uses a [tiny, round controller PCB](board-photos/pilotfly-h2-controller-front.jpg) which is not offered by BasecamElectronics but matches their schematics and the gimbal overall connection layout matches the SimpleBGC32 recommended encoder-enabled modular design.
 
-Most code here is currently a least-effort minimum to get something working.  Right now there are IMU drivers with an AHRS algorithm, encoder reading, LED control, some autodetect/autocalibrate/self-test and bootloader/flashing management (but no reflashing from GUI yet), rough motor driver support, RC channel and MODE button inputs.  It is easily possible to go back to original firmware but make sure to back all your settings up.  This firmware attempts to write its settings to the end of the memory block so as not to interfere with the original firmware's storage, but no guarantees.
+Most code here is currently a least-effort minimum to get something working.  Right now there are IMU drivers with an AHRS algorithm, encoder reading, LED control, some autodetect/autocalibrate/self-test and bootloader/flashing management (but no reflashing from GUI yet), BLDC motor drivers, RC channel and MODE button inputs.  It is easily possible to go back to original firmware but make sure to back all your settings up.  This firmware attempts to write its settings to the end of the memory block so as to not interfere with the original firmware's storage, but no guarantees.
 
 ## Motivation
 
