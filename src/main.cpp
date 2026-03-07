@@ -2166,10 +2166,13 @@ void setup(void) {
     else
         serial->println("SBGC32_I2C_Drv init failed");
 
+#define ENCODERS
+#ifdef ENCODERS
     encoders[0] = as5600_new(i2c_main);
     encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
     encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
+#endif
 
     /*
      * We stopped using the SimpleFOC high-level motor abstraction so that we can use common code for
@@ -2204,7 +2207,12 @@ void setup(void) {
 
     /* 'm' to autocalibrate and print new values */
     for (i = 0; i < 3; i++) {
-        motors[i] = motor_bldc_new(encoders[i], motor_drivers[i]);
+#ifdef ENCODERS
+        motors[i] = motor_bldc_with_encoder_new(encoders[i], motor_drivers[i]);
+#else
+        motors[i] = motor_bldc_new(main_ahrs, motor_drivers[i]);
+        encoders[i] = motor_bldc_get_synthetic_encoder(motors[i]);
+#endif
         motors[i]->pid_params = &config.motor_pid[i];
 
         if (motors[i]->cls->set_calibration)
@@ -2219,13 +2227,23 @@ void setup(void) {
             continue;
 
         /* Set defaults */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.03f);
+#ifdef ENCODERS
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.05f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.01f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.002f); /* Look 0.002s ahead */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.5f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
         motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Limit to 0.2 x VBAT */
         motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
+#else
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.5f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.03f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.0f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
+        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Constant drain at 0.2 x VBAT */
+        motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
+#endif
     }
 
     serial->println("Motors early init done");
