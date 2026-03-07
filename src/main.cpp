@@ -96,7 +96,7 @@ static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs
 static HardwareSerial *serial;
 
 #ifdef PERF
-unsigned long perf_ts[12];
+unsigned long perf_ts[15];
 uint8_t perf_cnt;
 #endif
 
@@ -406,6 +406,16 @@ static void main_ahrs_debug_print(const char *str) {
     serial->println(str);
 }
 
+static void frame_ahrs_debug_print(const char *str) {
+    if (quiet)
+        return;
+
+    serial->print("[");
+    serial->print(micros());
+    serial->print("][frame] ");
+    serial->println(str);
+}
+
 static void main_ahrs_from_encoders_debug(void) {
     float q[4], q_gyr[4], angles[3];
     char buf[128];
@@ -587,7 +597,7 @@ static void control_setup(void) {
                 encoder_update(encoders[i]);
 
             /* Can't leave frame_q uninitialized */
-            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q, frame_q, false);
+            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q, frame_q, false);
         }
     }
 }
@@ -642,6 +652,31 @@ static void motors_on_off(bool on) {
         serial->println("Motors on");
     else
         serial->println("Motors off");
+
+    if (on && (encoders[0]->cls->motor_based || encoders[1]->cls->motor_based || encoders[2]->cls->motor_based)) {
+#if 0
+        /* Give the motors a moment to snap to the initial electrical angle and
+         * stabilize before we set any target veloocity.
+         */
+        delay(1000);
+#endif
+        /* Actually don't, start the feedback loop right away, perhaps it will
+         * improve the snap behaviour.
+         */
+
+        if (config.have_axes) {
+            /* Encoder readings only start to be valid now so update everything
+             * that depends on them.
+             */
+            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q,
+                    frame_q, config.control.tripod_mode);
+
+            if (config.control.tripod_mode)
+                ahrs_reset_orientation(main_ahrs);
+            else if (frame_ahrs)
+                ahrs_reset_orientation(frame_ahrs);
+        }
+    }
 }
 
 void main_emergency_stop_low_level(void) {
@@ -943,7 +978,7 @@ static void misc_debug_update(void *) {
     // probe_out_pins_update();
     // probe_in_pins_update();
 
-    if (main_ahrs->debug_print && !main_ahrs->debug_cnt)
+    if (main_ahrs->debug_print && !(main_ahrs->debug_cnt & 1023))
         main_ahrs_from_encoders_debug();
 
     if (INFO_CYCLE) {
@@ -1168,11 +1203,14 @@ handle_set_param:
             bool prev_quiet = quiet;
 
             cs.main_ahrs = main_ahrs;
-            cs.frame_ahrs = frame_ahrs;
             cs.encoders = cs_encoders;
             cs.print = calibrate_print;
             cs.cancel = calibrate_cancel;
             cs.out = &config.axes;
+
+            /* Don't pass frame_ahrs, the alignment between the two AHRSes is based on encoders
+             * and we're only about to calibrate them (if we even have them.)
+             */
 
             for (i = 0; i < 3; i++)
                 cs.encoders[i] = encoders[i]->cls->motor_based ? NULL : encoders[i];
@@ -2114,6 +2152,16 @@ void setup(void) {
         while (1);
     }
 
+    /* TODO: This needs to have an enable/disable control but once we make all
+     * peripheral models and addresses configurable we get that automatically,
+     * so do that ASAP.
+     * These will be mainly the IMUs, motors and encoders, possibly memory, VBAT
+     * pin, RC and MODE pins.
+     */
+    frame_imu = mpu6050_new(MPU6050_ALT_ADDR, i2c_main);
+    if (!frame_imu)
+        serial->println("Frame MPU6050 initialization failed!");
+
     /* We control the LPF cut-off frequency and the sampling rate of the MPU6050.  We want
      * to minimize the noise, which would be achieved by setting the highest sample rate,
      * reading all the samples from the FIFO and suming/averaging them ourselves.  But we
@@ -2135,7 +2183,10 @@ void setup(void) {
     // mpu6050_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
     mpu6050_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
-    serial->println("Main MPU6050 initialized!");
+    if (frame_imu)
+        mpu6050_set_srate(main_imu, 0, 1);
+
+    serial->println("IMUs initialized!");
 
     if (!have_config) {
         ahrs_defaults(&config.main_ahrs);
@@ -2157,7 +2208,19 @@ void setup(void) {
      * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions
      * from encoders?? */
 
-    /* TODO: frame_ahrs -- not crucial though, we fill in for it with encoder data and forget about yaw drift */
+    if (frame_imu) {
+        frame_ahrs = ahrs_new(frame_imu, SBGC_IMU_MINUS_Z, SBGC_IMU_X, &config.frame_ahrs,
+                M_PIf / 0x800);
+        ahrs_set_debug(frame_ahrs, frame_ahrs_debug_print);
+        delay(100);
+
+        if (config.frame_ahrs.calibrate_on_start)
+            ahrs_calibrate(frame_ahrs);
+        else
+            ahrs_reset_orientation(frame_ahrs);
+
+        serial->println("Frame AHRS initialized!");
+    }
 
     drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
     drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
@@ -2310,9 +2373,6 @@ void loop(void) {
     if (!config.have_axes || !config.control.tripod_mode)
         ahrs_update(main_ahrs);
 
-    if (frame_ahrs)
-        ahrs_update(frame_ahrs);
-
     PERF_SAVE_TS;
 
     if (ENCODERS_CYCLE) {
@@ -2325,13 +2385,15 @@ void loop(void) {
 
     if (config.have_axes) {
         if (AXES_JACOBIAN_CYCLE)
-            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, rel_q,
+            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q,
                     frame_q, config.control.tripod_mode);
 
         PERF_SAVE_TS;
 
         if (config.control.tripod_mode)
             ahrs_update(main_ahrs);
+        else if (frame_ahrs)
+            ahrs_update(frame_ahrs);
 
         PERF_SAVE_TS;
 

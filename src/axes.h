@@ -42,7 +42,8 @@ struct axes_calibrate_data_s {
 int axes_calibrate(struct axes_calibrate_data_s *data);
 
 void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encoders,
-        struct obgc_ahrs_s *main_ahrs, float *out_rel_q, float *frame_q, bool tripod_mode);
+        struct obgc_ahrs_s *main_ahrs, struct obgc_ahrs_s *frame_ahrs,
+        float *out_rel_q, float *frame_q, bool tripod_mode);
 
 void axes_apply_limits_step(const struct axes_data_s *data, float limit_margin,
         const float *angles_current, float *angles_delta);
