@@ -3,7 +3,7 @@
 #include <SimpleFOC.h>
 
 #include "i2c.h"
-#include "imu-mpu6050.h"
+#include "imu-mpuxxxx.h"
 #include "sbgc32_i2c_drv.h"
 #include "encoder-as5600.h"
 #include "storage.h"
@@ -211,8 +211,8 @@ static void scan_i2c(obgc_i2c *bus) {
      * Device found at 0x19 -- SBGC32_I2C_DRV_ADDR(1)
      * Device found at 0x1c -- SBGC32_I2C_DRV_ADDR(4)
      * Device found at 0x36 -- AS5600 encoder
-     * Device found at 0x68 -- MPU6050_DEFAULT_ADDR
-     * Device found at 0x69 -- MPU6050_ALT_ADDR
+     * Device found at 0x68 -- MPUXXXX_DEFAULT_ADDR
+     * Device found at 0x69 -- MPUXXXX_ALT_ADDR
      * 5 device(s) found
      * aux:
      * Device found at 0x50 -- MC_24FC256_BASE_ADDR
@@ -1110,7 +1110,7 @@ handle_set_param:
 
         motors_on_off(false);
         serial->println("Setting new MPU6050 clksource");
-        mpu6050_set_clksrc(main_imu, cmd - '0');
+        mpuxxxx_set_clksrc(main_imu, cmd - '0');
         delay(100);
         break;
     case '6' ... '9':
@@ -1120,7 +1120,7 @@ handle_set_param:
         motors_on_off(false);
         serial->println("Setting new MPU6050 sample rate");
         /* Sample rate becomes (dlpf ? 1k : 8k) / (param + 1) */
-        mpu6050_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
+        mpuxxxx_set_srate(main_imu, (cmd - '6') ? 1 << 2 * (cmd - '6') : 0, dlpf);
         delay(100);
         break;
     case '*':
@@ -1932,7 +1932,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
             bus->beginTransmission(*payload++ >> 1);
 
             while (--payload_len)
-                if (bus->write(*payload++) != 1) /* TODO: leverage write(data, len)? also in imu-mpu6050?,storage */
+                if (bus->write(*payload++) != 1) /* TODO: leverage write(data, len)? also in imu-mpuxxxx?,storage */
                     break;
 
             if (bus->endTransmission() || payload_len)
@@ -2146,7 +2146,7 @@ void setup(void) {
         memset(&config, 0, sizeof(config));
 
     /* Initialize IMUs */
-    main_imu = mpu6050_new(MPU6050_DEFAULT_ADDR, i2c_main);
+    main_imu = mpu6050_new(MPUXXXX_DEFAULT_ADDR, i2c_main);
     if (!main_imu) {
         serial->println("Main MPU6050 initialization failed!");
         while (1);
@@ -2158,7 +2158,7 @@ void setup(void) {
      * These will be mainly the IMUs, motors and encoders, possibly memory, VBAT
      * pin, RC and MODE pins.
      */
-    frame_imu = mpu6050_new(MPU6050_ALT_ADDR, i2c_main);
+    frame_imu = mpu6050_new(MPUXXXX_ALT_ADDR, i2c_main);
     if (!frame_imu)
         serial->println("Frame MPU6050 initialization failed!");
 
@@ -2174,17 +2174,17 @@ void setup(void) {
      * low for our use in the motor PID feedback, but ok for the AHRS.  Then sample at the
      * lowest rate higher than our main loop rate, but the base rate is already only 1kHz
      * with the DLPF enabled, so just leave it at that.  For speed keep USE_FIFO off in
-     * imu-mpu6050.cpp to receive only the last sample at any given time.
+     * imu-mpuxxxx.cpp to receive only the last sample at any given time.
      *
      * In practice the noise, DLPF settings, sample rate / integration rate (AHRS update
      * rate) and clock settings don't seem to affect the orientation precision anywhere
      * close to what the chip axis alignment errors do.
      */
-    // mpu6050_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
-    mpu6050_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
+    // mpuxxxx_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
+    mpuxxxx_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
     if (frame_imu)
-        mpu6050_set_srate(main_imu, 0, 1);
+        mpuxxxx_set_srate(main_imu, 0, 1);
 
     serial->println("IMUs initialized!");
 

@@ -3,31 +3,31 @@ extern "C" {
 #include "main.h"
 }
 
-#include "imu-mpu6050.h"
+#include "imu-mpuxxxx.h"
 
 /* Register definitions */
-#define MPU6050_REG_PWR_MGMT_1   0x6b
-#define MPU6050_REG_SMPLRT_DIV   0x19
-#define MPU6050_REG_CONFIG       0x1a
-#define MPU6050_REG_GYRO_CONFIG  0x1b
-#define MPU6050_REG_ACCEL_CONFIG 0x1c
-#define MPU6050_REG_FIFO_EN      0x23
-#define MPU6050_REG_USER_CTRL    0x6a
-#define MPU6050_REG_FIFO_COUNT   0x72
-#define MPU6050_REG_FIFO_R_W     0x74
-#define MPU6050_REG_WHO_AM_I     0x75
-#define MPU6050_REG_DATA_START   0x3b
+#define MPUXXXX_REG_SMPLRT_DIV   0x19
+#define MPUXXXX_REG_CONFIG       0x1a
+#define MPUXXXX_REG_GYRO_CONFIG  0x1b
+#define MPUXXXX_REG_ACCEL_CONFIG 0x1c
+#define MPUXXXX_REG_FIFO_EN      0x23
+#define MPUXXXX_REG_DATA_START   0x3b
+#define MPUXXXX_REG_PWR_MGMT_1   0x6b
+#define MPUXXXX_REG_USER_CTRL    0x6a
+#define MPUXXXX_REG_FIFO_COUNT   0x72
+#define MPUXXXX_REG_FIFO_R_W     0x74
+#define MPUXXXX_REG_WHO_AM_I     0x75
 
-struct mpu6050_s {
+struct mpuxxxx_s {
     obgc_imu obj;
     uint8_t i2c_addr;
     obgc_i2c *i2c;
     int16_t last_temp;
 };
 
-static void mpu6050_free(struct mpu6050_s *dev) {
+static void mpuxxxx_free(struct mpuxxxx_s *dev) {
     dev->i2c->beginTransmission(dev->i2c_addr);
-    dev->i2c->write(MPU6050_REG_PWR_MGMT_1);
+    dev->i2c->write(MPUXXXX_REG_PWR_MGMT_1);
     dev->i2c->write(0x87); /* DEVICE_RESET and stop the clk */
     dev->i2c->endTransmission();
     free(dev);
@@ -36,7 +36,7 @@ static void mpu6050_free(struct mpu6050_s *dev) {
 // #define USE_FIFO
 // #define BLOCK_UNTIL_NEW_DATA
 
-static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gyro) {
+static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gyro) {
 #ifdef USE_FIFO
     uint16_t byte_cnt = 0;
     uint8_t sample_cnt;
@@ -57,7 +57,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
 # else
     if (gyro) {
 # endif
-        if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
+        if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPUXXXX_REG_FIFO_COUNT, 1, true) != 2) {
             dev->i2c->error_cnt++;
             /* TODO: report error */
             return;
@@ -117,7 +117,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
             uint8_t byte_cnt_chunk = min((int) byte_cnt, MAX_CHUNK_SIZE);
 
             byte_cnt -= byte_cnt_chunk;
-            if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt_chunk, MPU6050_REG_FIFO_R_W, 1, true) !=
+            if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt_chunk, MPUXXXX_REG_FIFO_R_W, 1, true) !=
                     byte_cnt_chunk) {
                 dev->i2c->error_cnt++;
                 /* TODO: report error */
@@ -133,7 +133,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
              * the middle of an update and we can assume the FIFO start is aligned with
              * the beginning of a sample.  Fingers crossed.
              */
-            if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPU6050_REG_FIFO_COUNT, 1, true) != 2) {
+            if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPUXXXX_REG_FIFO_COUNT, 1, true) != 2) {
                 dev->i2c->error_cnt++;
                 /* TODO: report error */
                 return;
@@ -145,7 +145,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
     }
 #endif
 
-    if (dev->i2c->requestFrom(dev->i2c_addr, reg_data_size, MPU6050_REG_DATA_START, 1, true) != reg_data_size) {
+    if (dev->i2c->requestFrom(dev->i2c_addr, reg_data_size, MPUXXXX_REG_DATA_START, 1, true) != reg_data_size) {
         dev->i2c->error_cnt++;
         /* TODO: report error */
         return;
@@ -179,7 +179,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
         i += sample_cnt_chunk;
         byte_cnt = sample_cnt_chunk * FIFO_SAMPLE_SIZE;
 
-        if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt, MPU6050_REG_FIFO_R_W, 1, true) != byte_cnt) {
+        if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt, MPUXXXX_REG_FIFO_R_W, 1, true) != byte_cnt) {
             dev->i2c->error_cnt++;
             /* TODO: report error */
             return;
@@ -211,7 +211,7 @@ static void mpu6050_read_main(struct mpu6050_s *dev, int32_t *accel, int32_t *gy
             gyro_total[2] -= c;
     }
 
-    /* Note: could shift this and mpu6050_imu_class.gyro_scale left by a few bits to avoid
+    /* Note: could shift this and mpuxxxx_imu_class.gyro_scale left by a few bits to avoid
      * the rounding errors even more.  However even at current scale the noise seems to be
      * way over 1 LSB.
      */
@@ -227,27 +227,27 @@ failsafe:
     gyro[2] = (int16_t) (buffer[12] << 8 | buffer[13]);
 }
 
-static void mpu6050_read_temp(struct mpu6050_s *dev, int32_t *temp) {
+static void mpuxxxx_read_temp(struct mpuxxxx_s *dev, int32_t *temp) {
     *temp = ((int32_t) dev->last_temp << 16) / 340 + (int32_t) (36.53f * 65536);
 }
 
-static obgc_imu_class mpu6050_imu_class = {
-    .read_main   = (void (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpu6050_read_main,
-    .read_temp   = (void (*)(obgc_imu *imu, int32_t *temp_out)) mpu6050_read_temp,
-    .free        = (void (*)(obgc_imu *imu)) mpu6050_free,
+static obgc_imu_class mpuxxxx_imu_class = {
+    .read_main   = (void (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpuxxxx_read_main,
+    .read_temp   = (void (*)(obgc_imu *imu, int32_t *temp_out)) mpuxxxx_read_temp,
+    .free        = (void (*)(obgc_imu *imu)) mpuxxxx_free,
     .accel_scale = 65536, /* LSBs per 1g */
     .gyro_scale  = 131,   /* LSBs per 1deg/s */
 };
 
 obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
-    struct mpu6050_s *dev = (struct mpu6050_s *) malloc(sizeof(struct mpu6050_s));
+    struct mpuxxxx_s *dev = (struct mpuxxxx_s *) malloc(sizeof(struct mpuxxxx_s));
 
-    dev->obj.cls = &mpu6050_imu_class;
+    dev->obj.cls = &mpuxxxx_imu_class;
     dev->i2c = i2c;
     dev->i2c_addr = i2c_addr;
 
     /* Check device identity */
-    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 1, MPU6050_REG_WHO_AM_I, 1, true) != 1) {
+    if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 1, MPUXXXX_REG_WHO_AM_I, 1, true) != 1) {
         error_print("MPU6050 didn't reply");
         dev->i2c->error_cnt++;
         free(dev);
@@ -264,18 +264,18 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
     /* Initialization sequence */
     static uint8_t init_sequence[] = {
         /* Values 0-5 all work and it looks like other factors dominate gyro stddev, hard to see any dependency */
-        MPU6050_REG_PWR_MGMT_1,   0x01, /* X-gyro as PLL clock source */
-        MPU6050_REG_SMPLRT_DIV,   0x00, /* 1kHz gyro sample rate (8kHz without DLPF) */
-        MPU6050_REG_CONFIG,       0x01, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
-        MPU6050_REG_ACCEL_CONFIG, 0x00,
-        MPU6050_REG_GYRO_CONFIG,  0x00,
+        MPUXXXX_REG_PWR_MGMT_1,   0x01, /* X-gyro as PLL clock source */
+        MPUXXXX_REG_SMPLRT_DIV,   0x00, /* 1kHz gyro sample rate (8kHz without DLPF) */
+        MPUXXXX_REG_CONFIG,       0x01, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
+        MPUXXXX_REG_ACCEL_CONFIG, 0x00,
+        MPUXXXX_REG_GYRO_CONFIG,  0x00,
 #ifdef USE_FIFO
         /* With USE_FIFO, make sure the sample rate+DLPF settings above generate less
          * than about 44kB/s which is the fastest we can read over I2C at 400kHz.
          */
-        MPU6050_REG_USER_CTRL,    0x04, /* Reset FIFO */
-        MPU6050_REG_FIFO_EN,      0x70, /* Enable FIFO for gyro readings */
-        MPU6050_REG_USER_CTRL,    0x40, /* Enable FIFO in general */
+        MPUXXXX_REG_USER_CTRL,    0x04, /* Reset FIFO */
+        MPUXXXX_REG_FIFO_EN,      0x70, /* Enable FIFO for gyro readings */
+        MPUXXXX_REG_USER_CTRL,    0x40, /* Enable FIFO in general */
 #endif
     };
 
@@ -301,24 +301,24 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
     return &dev->obj;
 }
 
-void mpu6050_set_clksrc(obgc_imu *imu, uint8_t val) {
-    struct mpu6050_s *dev = (struct mpu6050_s *) imu;
+void mpuxxxx_set_clksrc(obgc_imu *imu, uint8_t val) {
+    struct mpuxxxx_s *dev = (struct mpuxxxx_s *) imu;
 
     dev->i2c->beginTransmission(dev->i2c_addr);
-    dev->i2c->write(MPU6050_REG_PWR_MGMT_1);
+    dev->i2c->write(MPUXXXX_REG_PWR_MGMT_1);
     dev->i2c->write(val);
     dev->i2c->endTransmission();
 }
 
-void mpu6050_set_srate(obgc_imu *imu, uint8_t smplrt_div, uint8_t dlpf_cfg) {
-    struct mpu6050_s *dev = (struct mpu6050_s *) imu;
+void mpuxxxx_set_srate(obgc_imu *imu, uint8_t smplrt_div, uint8_t dlpf_cfg) {
+    struct mpuxxxx_s *dev = (struct mpuxxxx_s *) imu;
 
     dev->i2c->beginTransmission(dev->i2c_addr);
-    dev->i2c->write(MPU6050_REG_SMPLRT_DIV);
+    dev->i2c->write(MPUXXXX_REG_SMPLRT_DIV);
     dev->i2c->write(smplrt_div);
     dev->i2c->endTransmission();
     dev->i2c->beginTransmission(dev->i2c_addr);
-    dev->i2c->write(MPU6050_REG_CONFIG);
+    dev->i2c->write(MPUXXXX_REG_CONFIG);
     dev->i2c->write(dlpf_cfg & 7);
     dev->i2c->endTransmission();
 }
