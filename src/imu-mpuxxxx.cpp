@@ -10,6 +10,7 @@ extern "C" {
 #define MPUXXXX_REG_CONFIG       0x1a
 #define MPUXXXX_REG_GYRO_CONFIG  0x1b
 #define MPUXXXX_REG_ACCEL_CONFIG 0x1c
+#define MPUXXXX_REG_ACCEL_CFG2   0x1d
 #define MPUXXXX_REG_FIFO_EN      0x23
 #define MPUXXXX_REG_DATA_START   0x3b
 #define MPUXXXX_REG_PWR_MGMT_1   0x6b
@@ -20,6 +21,7 @@ extern "C" {
 
 struct mpuxxxx_s {
     obgc_imu obj;
+    uint16_t model;
     uint8_t i2c_addr;
     obgc_i2c *i2c;
     int16_t last_temp;
@@ -239,23 +241,24 @@ static obgc_imu_class mpuxxxx_imu_class = {
     .gyro_scale  = 131,   /* LSBs per 1deg/s */
 };
 
-obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
+static obgc_imu *mpuxxxx_new(uint8_t i2c_addr, obgc_i2c *i2c, uint16_t model, uint8_t whoami) {
     struct mpuxxxx_s *dev = (struct mpuxxxx_s *) malloc(sizeof(struct mpuxxxx_s));
 
     dev->obj.cls = &mpuxxxx_imu_class;
+    dev->model = model;
     dev->i2c = i2c;
     dev->i2c_addr = i2c_addr;
 
     /* Check device identity */
     if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 1, MPUXXXX_REG_WHO_AM_I, 1, true) != 1) {
-        error_print("MPU6050 didn't reply");
+        error_print("MPU-XXXX didn't reply");
         dev->i2c->error_cnt++;
         free(dev);
         return NULL;
     }
 
-    if (dev->i2c->read() != 0x68) {
-        error_print("MPU6050 identity wasn't 0x68");
+    if (dev->i2c->read() != whoami) {
+        error_print("MPU-XXXX identity wrong");
         dev->i2c->error_cnt++;
         free(dev);
         return NULL;
@@ -268,6 +271,7 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
         MPUXXXX_REG_SMPLRT_DIV,   0x00, /* 1kHz gyro sample rate (8kHz without DLPF) */
         MPUXXXX_REG_CONFIG,       0x01, /* DLPF_CFG 0 = no LPF, 6 = slowest filter */
         MPUXXXX_REG_ACCEL_CONFIG, 0x00,
+        MPUXXXX_REG_ACCEL_CFG2,   0x00,
         MPUXXXX_REG_GYRO_CONFIG,  0x00,
 #ifdef USE_FIFO
         /* With USE_FIFO, make sure the sample rate+DLPF settings above generate less
@@ -301,6 +305,14 @@ obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
     return &dev->obj;
 }
 
+obgc_imu *mpu6050_new(uint8_t i2c_addr, obgc_i2c *i2c) {
+    return mpuxxxx_new(i2c_addr, i2c, 6050, 0x68);
+}
+
+obgc_imu *mpu9250_new(uint8_t i2c_addr, obgc_i2c *i2c) {
+    return mpuxxxx_new(i2c_addr, i2c, 9250, 0x71);
+}
+
 void mpuxxxx_set_clksrc(obgc_imu *imu, uint8_t val) {
     struct mpuxxxx_s *dev = (struct mpuxxxx_s *) imu;
 
@@ -321,4 +333,12 @@ void mpuxxxx_set_srate(obgc_imu *imu, uint8_t smplrt_div, uint8_t dlpf_cfg) {
     dev->i2c->write(MPUXXXX_REG_CONFIG);
     dev->i2c->write(dlpf_cfg & 7);
     dev->i2c->endTransmission();
+
+    if (dev->model == 9250) {
+        /* Set the same DLPF mode for the accelerometer */
+        dev->i2c->beginTransmission(dev->i2c_addr);
+        dev->i2c->write(MPUXXXX_REG_ACCEL_CFG2);
+        dev->i2c->write(dlpf_cfg & 7);
+        dev->i2c->endTransmission();
+    }
 }
