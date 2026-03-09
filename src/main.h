@@ -22,9 +22,9 @@ void main_beep(void);
 
 #ifdef __cplusplus
 # ifndef Arduino_h
-class HardwareSerial;
+class Stream;
 # endif
-extern HardwareSerial *error_serial;
+extern Stream *error_serial;
 #endif
 void error_serial_print(const char *func, const char *msg);
 #define error_print(msg) error_serial_print(__func__, (msg))

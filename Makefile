@@ -6,21 +6,33 @@ ifeq ($(V), 1)
 	pio_verbose := -v
 endif
 
+BOARDS := simplebgc32_regular storm32_stm32f1
+
+# Select the board we're currently working with.  Override this on the command
+# line or here.  Mainly affects upload since we always build for all boards.
+ifeq ($(DEV_BOARD),)
+	DEV_BOARD := simplebgc32_regular
+	#DEV_BOARD := storm32_stm32f1
+endif
+
 REL_VER := $(strip $(shell [ -e rel-version ] && cat rel-version))
 ARCH := $(shell uname -m)
 
 ifeq ($(REL_VER),)
-	FIRMWARE_BIN := .pio/build/simplebgc32_regular/firmware.bin
+	FIRMWARE_ELF := .pio/build/$(DEV_BOARD)/firmware.elf
+	FIRMWARE_BIN := .pio/build/$(DEV_BOARD)/firmware.bin
+	FIRMWARE_BIN_ALL := $(patsubst %, .pio/build/%/firmware.bin, $(BOARDS))
 	STM32LD_BIN := stm32ld.git/stm32ld
 else
-	FIRMWARE_BIN := openbgc-$(REL_VER)-pfly-h2.bin
+	FIRMWARE_BIN := openbgc-$(REL_VER)-$(DEV_BOARD).bin
+	FIRMWARE_BIN_ALL := $(patsubst %, openbgc-$(REL_VER)-%.bin, $(BOARDS))
 	STM32LD_BIN := tools/stm32ld-$(ARCH)
 endif
 
 all: compile
 compile build: $(FIRMWARE_BIN)
 ifeq ($(REL_VER),)
-$(FIRMWARE_BIN): src/*.c src/*.cpp src/*.h src/TwoWire.h
+$(FIRMWARE_BIN_ALL): src/*.c src/*.cpp src/*.h src/TwoWire.h
 	pio run $(pio_verbose)
 endif
 
@@ -72,13 +84,13 @@ stm32ld: $(STM32LD_BIN)
 
 tags:
 	ctags src/*.{c,h,cpp}
-gdb: .pio/build/simplebgc32_regular/firmware.elf
-	gdb-multiarch .pio/build/simplebgc32_regular/firmware.elf
+gdb: $(FIRMWARE_ELF)
+	gdb-multiarch $(FIRMWARE_ELF)
 
 utils/param_map.py: utils/build-param-map-py.txt src/param-defs.c.inc src/util.h
 	cpp utils/build-param-map-py.txt -o $@
-utils/param_defs.py: .pio/build/simplebgc32_regular/firmware.elf utils/param_map.py utils/param_utils.py utils/build-param-defs.py
-	gdb-multiarch .pio/build/simplebgc32_regular/firmware.elf -x utils/param_map.py -x utils/param_utils.py -x utils/build-param-defs.py
+utils/param_defs.py: $(FIRMWARE_ELF) utils/param_map.py utils/param_utils.py utils/build-param-defs.py
+	gdb-multiarch $(FIRMWARE_ELF) -x utils/param_map.py -x utils/param_utils.py -x utils/build-param-defs.py
 
 utils/sbgcserialapi:
 	git clone https://github.com/balrog-kun/sbgcserialapi.git $@
@@ -97,7 +109,7 @@ ifneq ($(filter release,$(MAKECMDGOALS)),)
 endif
 release: openbgc-$(VER).tar.gz
 
-openbgc-%.tar.gz: $(FIRMWARE_BIN) client stm32ld
+openbgc-%.tar.gz: $(FIRMWARE_BIN_ALL) client stm32ld
 	$(eval DIR := openbgc-$*)
 	rm -rf $(DIR)
 	mkdir $(DIR)
@@ -105,7 +117,9 @@ openbgc-%.tar.gz: $(FIRMWARE_BIN) client stm32ld
 	mkdir $(DIR)/client
 	mkdir $(DIR)/client/sbgcserialapi
 	echo $* > $(DIR)/rel-version
-	cp $(FIRMWARE_BIN) $(DIR)/openbgc-$*-pfly-h2.bin
+	for board in $(BOARDS); do \
+		cp .pio/build/$$board/firmware.bin $(DIR)/openbgc-$*-$$board.bin; \
+	done
 	cp Makefile $(DIR)/
 	cp $(STM32LD_BIN) $(DIR)/tools/stm32ld-$(ARCH)
 	cp utils/param_{defs,map,utils}.py utils/app{,_widgets,_iio,_calib_tabs}.py $(DIR)/client/

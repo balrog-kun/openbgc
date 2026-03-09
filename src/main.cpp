@@ -134,15 +134,19 @@ static uint16_t cycle_cnt;
 #define CONTROL_CYCLE       EVERY_4_CYCLES(2)
 #define CONTROL_RATE        (TARGET_LOOP_RATE / 4)
 
-HardwareSerial *error_serial;
+Stream *error_serial;
 
 static const char commit_str[64] = "openbgc " STRINGIFY(COMMIT_ID_SHORT);
 static const char build_str[64] = "openbgc " __TIMESTAMP__;
-static const char board_str[64] = "Unknown";
+static const char board_str[64] = "openbgc " BOARD_NAME;
 static uint16_t mcu_id;
 static uint16_t mcu_rev_id;
 static uint32_t mcu_unique_id;
 uint32_t now;
+
+#ifndef __STM32F3_CMSIS_VERSION
+# define __STM32F3_CMSIS_VERSION 0
+#endif
 
 #include "params.c.inc"
 
@@ -2120,7 +2124,7 @@ void setup(void) {
      */
     i2c_main = new obgc_i2c_subcls<TwoWire>(SBGC_SDA_MAIN, SBGC_SCL_MAIN);
     i2c_main->begin();
-    i2c_main->setClock(400000); /* 400kHz I2C */
+    // i2c_main->setClock(400000); /* 400kHz I2C */
 
     i2c_int = new obgc_i2c_subcls<FlexWire>(SBGC_SDA_AUX, SBGC_SCL_AUX);
     i2c_int->begin();

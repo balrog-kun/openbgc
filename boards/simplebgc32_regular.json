@@ -1,6 +1,6 @@
 {
   "build": {
-    "_comment": "Based on Pilotfly H2 (GH_ENCODER_MB2_RevB), shouldn't differ much from Basecam's generic SimpleBGC32 Regular board",
+    "_comment": "Use this file for Basecam original SimpleBGC32 and compatible boards, anything using STM32F303 MCUs like Pilotfly H2 (GH_ENCODER_MB2_RevB), where it was tested.",
     "core": "stm32",
     "cpu": "cortex-m4",
     "extra_flags": "-DSTM32F3 -DSTM32F303xC",
@@ -26,17 +26,14 @@
     "stm32cube",
     "libopencm3"
   ],
-  "name": "SimpleBGC Regular board",
+  "name": "SimpleBGC Regular or similar board",
   "upload": {
     "maximum_ram_size": 32768,
     "maximum_size": 131072,
     "protocol": "serial",
     "protocols": [
-      "dfu",
       "serial",
-      "jlink",
-      "stlink",
-      "blackmagic"
+      "stlink"
     ]
   },
   "url": "https://www.basecamelectronics.com/simplebgc32bit/",

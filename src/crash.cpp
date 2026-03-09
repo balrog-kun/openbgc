@@ -64,15 +64,20 @@ extern "C" void UsageFault_Handler(void) {
 
 /* TODO: use the usart number from error_serial */
 
+#ifdef STM32F1
+# include <stm32f1xx_ll_usart.h>
+#else
+# include <stm32f3xx_ll_usart.h>
+#endif
+
 static void crash_usart_write(USART_TypeDef *USARTx, uint8_t ch) {
-    /* STM32F3-specific, F1/F4 would be slightly different */
-    while (!(USARTx->ISR & USART_ISR_TXE));  /* Wait until TX buffer empty */
-    USARTx->TDR = ch;                        /* Write byte */
+    while (!LL_USART_IsActiveFlag_TXE(USARTx));  /* Wait until TX buffer empty */
+    LL_USART_TransmitData8(USARTx, ch);          /* Write byte */
 }
 
 static uint8_t crash_usart_read(USART_TypeDef *USARTx) {
-    while (!(USARTx->ISR & USART_ISR_RXNE)); /* Wait until RX buffer not empty */
-    return USARTx->RDR;
+    while (!LL_USART_IsActiveFlag_RXNE(USARTx)); /* Wait until RX buffer not empty */
+    return LL_USART_ReceiveData8(USARTx);
 }
 
 #define FLASH_SIZE 0x20000 /* 128k */

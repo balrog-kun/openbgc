@@ -1,0 +1,45 @@
+{
+  "build": {
+    "_comment": "Use this file for any STorM32 board using the STM32F103RC MCU, tested on v1.3.",
+    "core": "stm32",
+    "cpu": "cortex-m3",
+    "extra_flags": "-DSTM32F1 -DSTM32F103xE",
+    "f_cpu": "72000000L",
+    "framework_extra_flags": {
+      "arduino": "-DARDUINO_STORM32_V1_31_RC -DCUSTOM_PERIPHERAL_PINS"
+    },
+    "mcu": "stm32f103rct6",
+    "product_line": "STM32F103xE",
+    "variant": "STM32F1xx/F103R(C-D-E)T",
+    "arduino": {
+      "variant_h": "variant_STORM32_V1_31_RC.h"
+    }
+  },
+  "debug": {
+    "jlink_device": "STM32F103RC",
+    "openocd_target": "stm32f1x",
+    "svd_path": "STM32F103xx.svd"
+  },
+  "frameworks": [
+    "arduino",
+    "cmsis",
+    "libopencm3",
+    "stm32cube"
+  ],
+  "name": "STorM32 board from v1.x to v4.x, mini, micro, etc.",
+  "upload": {
+    "maximum_ram_size": 49152,
+    "maximum_size": 262144,
+    "protocol": "serial",
+    "protocols": [
+      "serial",
+      "stlink"
+    ],
+    "disable_flushing": false,
+    "require_upload_port": true,
+    "use_1200bps_touch": false,
+    "wait_for_upload_port": false
+  },
+  "url": "https://www.olliw.eu/storm32bgc-v2-wiki/STorM32_Boards",
+  "vendor": "STorM32"
+}
