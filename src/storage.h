@@ -11,14 +11,13 @@ extern "C" {
 }
 #include "motor.h"
 #include "i2c.h"
+#include "hw.h"
 
 #define STORAGE_CONFIG_VERSION 1
 
 extern struct obgc_storage_config_s {
     /* Hardware setup */
-    /* TODO: add this when we support anything other than PilotFly H2.
-     * Local/remote encoder types, motor types, IMU types, the deprecated IMU orientation, pinout?
-     */
+    struct obgc_hw_config_s hw;
 
     /* Calibration data */
     struct obgc_motor_calib_data_s motor_calib[3];

@@ -18,7 +18,7 @@ enum sbgc32_i2c_drv_encoder_type {
     SBGC32_I2C_DRV_ENC_TYPE_AS5600    = 7,
     SBGC32_I2C_DRV_ENC_TYPE_AS5050A   = 8,
     SBGC32_I2C_DRV_ENC_TYPE_AS5055A   = 9,
-};
+} __attribute__((packed));
 
 typedef struct sbgc32_i2c_drv_s sbgc32_i2c_drv;
 

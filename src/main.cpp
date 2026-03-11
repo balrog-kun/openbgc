@@ -2,8 +2,7 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
 
-#include "i2c.h"
-#include "imu-mpuxxxx.h"
+#include "hw.h"
 #include "sbgc32_i2c_drv.h"
 #include "encoder-as5600.h"
 #include "storage.h"
@@ -21,65 +20,6 @@ extern "C" {
 #include "main.h"
 }
 
-/*
- * SBGC_ prefix for these because most of them seem to be part of the SBGC32 reference design
- * and not user configurable.  But these defines are all based specifically on the PilotFly H2
- * controller board "GH_ENCODER_MB2_RevB".
- */
-
-#define SBGC_LED_GREEN     PB12
-/* Red LED apparently always-on, not software controllable */
-
-#define SBGC_SDA_MAIN      PA14  /* The sensors and extension boards are on this bus */
-#define SBGC_SCL_MAIN      PA15
-
-#define SBGC_SDA_AUX       PB7   /* The EEPROM chip is on this bus (something else too) */
-#define SBGC_SCL_AUX       PB6
-
-#define SBGC_VBAT          PA0   /* Through R17 (140k?) to BAT+ and R18 to GND (4.7k) */
-#define SBGC_VBAT_R_BAT    140000
-#define SBGC_VBAT_R_GND    4700
-
-/* Onboard DRV8313 for the yaw motor */
-#define SBGC_YAW_DRV8313_IN1     PA1   /* TIM2 */
-#define SBGC_YAW_DRV8313_IN2     PA2   /* TIM2 */
-#define SBGC_YAW_DRV8313_IN3     PA3   /* TIM2 */
-#define SBGC_YAW_DRV8313_EN123   PB10
-
-#if 0
-/* Onboard DRV8313 traces seen on the SimpleBGC32 "Extended" board */
-#define SBGC_PITCH_DRV8313_IN1   PE3
-#define SBGC_PITCH_DRV8313_IN2   PE4
-#define SBGC_PITCH_DRV8313_IN3   PE5
-
-#define SBGC_ROLL_DRV8313_EN123  PC1
-#endif
-
-/* It does not look like there's any Rsense connected between DRV8313's PGND{1,2,3} and GND */
-/* TODO: current and temperature sensing for yaw motor */
-
-/* These 3 signals come from the 8-wire pogo-pin base/handle connector.  On the handle side, with
- * the basic one-hand handle the MODE pin connects directly to the button.  The YAW and PITCH lines
- * come from the Renesas R5F10268 SSOP-20 MCU chip (8KB code flash, 2KB data flash, 768B RAM) which
- * probably generates the PWM signals from the analog joystick signals.  20 PWM cycles per second.
- * We only receive these signals when the handle is powered on (battery or external barrel connector).
- *
- * In the two-hand base I believe the pins are left unconnected and the actual joystick and
- * MODE button inputs come through the Bluetooth remote interface.
- *
- * TODO: on PilotFly H2 ignore the RC signals until power settles as there are sometimes flukes the
- * moment the handle is powered on while we were already powered from USB.
- */
-#define SBGC_IN_YAW        PB3  /* PilotFly H2 handle joystick horizontal axis PWM */
-#define SBGC_IN_PITCH      PB5  /* PilotFly H2 handle joystick vertical axis PWM */
-#define SBGC_IN_MODE       PC13 /* PilotFly H2 handle button, short to GND when pressed */
-                                /* No discrete pull-up so needs our internal pull-up enabled */
-
-/* The RC inputs seem to be connected to the same pins as the handle connector, TODO: confirm */
-#define SBGC_IN_RC_YAW     SBGC_IN_YAW
-#define SBGC_IN_RC_ROLL    PB4
-#define SBGC_IN_RC_PIT     SBGC_IN_PITCH
-
 /* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
 #define SBGC_MOTOR0_PAIRS  11
 static const struct obgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
@@ -93,7 +33,8 @@ static obgc_encoder *encoders[3];
 static obgc_foc_driver *motor_drivers[3], *beep_driver;
 static obgc_motor *motors[3];
 static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs */
-static HardwareSerial *serial;
+static obgc_nt_bus_t *nt;
+static ConsoleSerial *serial;
 
 #ifdef PERF
 unsigned long perf_ts[15];
@@ -187,6 +128,9 @@ static void detect_mcu() {
 }
 
 static void scan_i2c(obgc_i2c *bus) {
+    if (!bus)
+        return;
+
     serial->println("Scanning I2C bus...");
     uint8_t found = 0;
     for (uint8_t address = 1; address < 127; address++) {
@@ -338,34 +282,34 @@ static uint8_t mode_reading = 1;
 static void rc_yaw_end(void);
 static void rc_yaw_start(void) {
     rc_yaw_start_ts = micros();
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_end, FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_YAW), rc_yaw_end, FALLING);
 }
 
 static void rc_yaw_end(void) {
     control.rc_ypr_readings[0] = pwm_convert(micros() - rc_yaw_start_ts);
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_YAW), rc_yaw_start, RISING);
 }
 
 static void rc_pitch_end(void);
 static void rc_pitch_start(void) {
     rc_pitch_start_ts = micros();
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_end, FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_PITCH), rc_pitch_end, FALLING);
 }
 
 static void rc_pitch_end(void) {
     control.rc_ypr_readings[1] = pwm_convert(micros() - rc_pitch_start_ts);
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_PITCH), rc_pitch_start, RISING);
 }
 
 static void rc_roll_end(void);
 static void rc_roll_start(void) {
     rc_roll_start_ts = micros();
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_end, FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_ROLL), rc_roll_end, FALLING);
 }
 
 static void rc_roll_end(void) {
     control.rc_ypr_readings[2] = pwm_convert(micros() - rc_roll_start_ts);
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_ROLL), rc_roll_start, RISING);
 }
 
 static void imu_debug_update() {
@@ -711,8 +655,14 @@ void main_shutdown_high_level(void) {
 
     /* Things we set up explicitly (TODO: steal_ptr() syntax) */
     /* TODO: refcounting would be nice too */
-    ahrs_free(main_ahrs);
-    main_imu->cls->free(main_imu);
+    if (main_ahrs)
+        ahrs_free(main_ahrs);
+    if (main_imu)
+        main_imu->cls->free(main_imu);
+    if (frame_ahrs)
+        ahrs_free(frame_ahrs);
+    if (frame_imu)
+        frame_imu->cls->free(frame_imu);
     for (i = 0; i < 3; i++)
         if (motors[i])
             motors[i]->cls->free(motors[i]);
@@ -725,11 +675,21 @@ void main_shutdown_high_level(void) {
     for (i = 0; i < 3; i++)
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
-    i2c_main->end();
-    i2c_int->end();
+    if (i2c_main) {
+        i2c_main->end();
+        delete i2c_main;
+    }
+    if (i2c_int) {
+        i2c_int->end();
+        delete i2c_int;
+    }
+    if (nt) {
+        // TODO: nt->end();
+        delete nt;
+    }
     serial->end();
-    digitalWrite(SBGC_LED_GREEN, 0);
-    pinMode(SBGC_LED_GREEN, INPUT);
+    digitalWrite(PIN_LED0, 0);
+    pinMode(PIN_LED0, INPUT);
 }
 
 void main_shutdown_low_level(void) {
@@ -872,7 +832,7 @@ static void process_rc_input(void *) {
         }
     }
 
-    if (mode_reading != digitalRead(SBGC_IN_MODE)) {
+    if (mode_reading != digitalRead(PIN_MODE)) {
         mode_reading ^= 1;
 
         if (mode_reading) {
@@ -896,7 +856,7 @@ static void blink(void *) {
     static uint8_t led_val = 0;
 
     led_val ^= 1;
-    digitalWrite(SBGC_LED_GREEN, led_val);
+    digitalWrite(PIN_LED0, led_val);
 }
 static struct main_loop_cb_s blink_cb = { .cb = blink };
 
@@ -909,7 +869,7 @@ static void vbat_update(void *) {
     static unsigned long msg_ts = 0;
     unsigned long now = millis();
 
-    raw = analogRead(SBGC_VBAT); /* 220uS on STM32F3 */
+    raw = analogRead(PIN_VBAT); /* 220uS on STM32F3 */
 
     if (raw == 0) {
         raw_avg = -1;
@@ -929,7 +889,7 @@ static void vbat_update(void *) {
         return;
 
     if (!config.vbat.scale)
-        config.vbat.scale = (SBGC_VBAT_R_BAT + SBGC_VBAT_R_GND) * 900 / SBGC_VBAT_R_GND;
+        config.vbat.scale = (PIN_VBAT_R_BAT + PIN_VBAT_R_GND) * 900 / PIN_VBAT_R_GND;
 
     vbat = (uint64_t) raw * 3300/*mV*/ * config.vbat.scale / (4095 * 1000);
     new_vbat_ok = config.vbat.lvco > 0 && vbat > config.vbat.lvco;
@@ -982,11 +942,11 @@ static void misc_debug_update(void *) {
     // probe_out_pins_update();
     // probe_in_pins_update();
 
-    if (main_ahrs->debug_print && !(main_ahrs->debug_cnt & 1023))
+    if (main_ahrs && main_ahrs->debug_print && !(main_ahrs->debug_cnt & 1023))
         main_ahrs_from_encoders_debug();
 
     if (INFO_CYCLE) {
-        if (i2c_main_err_cnt != i2c_main->error_cnt) {
+        if (i2c_main && i2c_main_err_cnt != i2c_main->error_cnt) {
             if (!i2c_main_err_cnt)
                 error_beep();
 
@@ -995,7 +955,7 @@ static void misc_debug_update(void *) {
             serial->println(i2c_main_err_cnt);
         }
 
-        if (i2c_int_err_cnt != i2c_int->error_cnt) {
+        if (i2c_main && i2c_int_err_cnt != i2c_int->error_cnt) {
             if (!i2c_int_err_cnt)
                 error_beep();
 
@@ -1933,6 +1893,11 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
             }
 
             bus = (payload[0] & 1) ? i2c_int : i2c_main;
+            if (!bus) {
+                sbgc_api.rx_error_cnt++;
+                break;
+            }
+
             bus->beginTransmission(*payload++ >> 1);
 
             while (--payload_len)
@@ -1961,6 +1926,11 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
             }
 
             bus = (payload[0] & 1) ? i2c_int : i2c_main;
+            if (!bus) {
+                sbgc_api.rx_error_cnt++;
+                break;
+            }
+
             len = payload[payload_len - 1];
             addr = payload[1];
 
@@ -2056,9 +2026,12 @@ void setup(void) {
     int i;
     bool force_defaults = false;
 
-    error_serial = serial = new HardwareSerial(USART1);
+    /* Set pins to input for electrical safety */
+    hw_early_init();
+
+    error_serial = serial = hw_get_console_serial();
     serial->begin(115200);
-    while (!*serial); /* Wait for serial port connection */
+    // while (!*serial); /* Wait for serial port connection */
     delay(2000);
     if (serial->available()) {
         uint8_t cmd = serial->read();
@@ -2069,6 +2042,11 @@ void setup(void) {
     }
 
     serial->println("Initializing");
+
+    /* Board debug info */
+    detect_mcu();
+    // probe_out_pins_setup();
+    // probe_in_pins_setup();
 
 #if 0
     long speed = 115200;
@@ -2118,53 +2096,21 @@ void setup(void) {
     }
 #endif
 
-    /* Initialize I2C */
-    /* Cannot use hardware I2C registers for both busses because PA14/PA15 and PB7/PB6
-     * both map to the I2C1 hardware instance.  Each instance only controls one bus.
-     */
-    i2c_main = new obgc_i2c_subcls<TwoWire>(SBGC_SDA_MAIN, SBGC_SCL_MAIN);
-    i2c_main->begin();
-    // i2c_main->setClock(400000); /* 400kHz I2C */
+    /* Create only the I2C bus needed for storage backend, if any */
+    hw_early_i2c_init(&i2c_main, &i2c_int);
 
-    i2c_int = new obgc_i2c_subcls<FlexWire>(SBGC_SDA_AUX, SBGC_SCL_AUX);
-    i2c_int->begin();
-
-    /* Board debug info */
-    // scan_i2c(i2c_main);
-    // scan_i2c(i2c_int);
-    detect_mcu();
-    // probe_out_pins_setup();
-    // probe_in_pins_setup();
-
-    pinMode(SBGC_LED_GREEN, OUTPUT);
-    pinMode(SBGC_VBAT, INPUT);
-    pinMode(SBGC_IN_MODE, INPUT_PULLUP);
-
-    /* Initialize storage */
-    // storage_init_internal_flash();
-    storage_init_i2c_eeprom(MC_24FC256_BASE_ADDR + 0, i2c_int, 0x8000);
+    hw_storage_init(i2c_main, i2c_int);
 
     if (!force_defaults)
         config_read();
     else
         memset(&config, 0, sizeof(config));
 
-    /* Initialize IMUs */
-    main_imu = mpu6050_new(MPUXXXX_DEFAULT_ADDR, i2c_main);
-    if (!main_imu) {
-        serial->println("Main MPU6050 initialization failed!");
-        while (1);
-    }
+    hw_setup(&config.hw, &i2c_main, &i2c_int, &nt, &main_imu, &frame_imu, motor_drivers, encoders);
 
-    /* TODO: This needs to have an enable/disable control but once we make all
-     * peripheral models and addresses configurable we get that automatically,
-     * so do that ASAP.
-     * These will be mainly the IMUs, motors and encoders, possibly memory, VBAT
-     * pin, RC and MODE pins.
-     */
-    frame_imu = mpu6050_new(MPUXXXX_ALT_ADDR, i2c_main);
-    if (!frame_imu)
-        serial->println("Frame MPU6050 initialization failed!");
+    /* Board debug info */
+    // scan_i2c(i2c_main);
+    // scan_i2c(i2c_int);
 
     /* We control the LPF cut-off frequency and the sampling rate of the MPU6050.  We want
      * to minimize the noise, which would be achieved by setting the highest sample rate,
@@ -2317,9 +2263,9 @@ void setup(void) {
 
     control_setup();
 
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_YAW), rc_yaw_start, RISING);
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_PIT), rc_pitch_start, RISING);
-    attachInterrupt(digitalPinToInterrupt(SBGC_IN_RC_ROLL), rc_roll_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_YAW), rc_yaw_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_PITCH), rc_pitch_start, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_RC_ROLL), rc_roll_start, RISING);
 
     /* Add these low-priority callbacks at the very end after whatever the drivers may have added.
      * These are called in the order they're added.
