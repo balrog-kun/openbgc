@@ -88,6 +88,11 @@ struct obgc_hw_config_s {
     } encoder[3];
 };
 
+struct busses_s {
+    obgc_i2c *i2c_main, *i2c_int; /* External and internal in SBGC Serial API docs */
+    obgc_nt_bus_t *nt;
+};
+
 /* platformio passes: -DARDUINO_SIMPLEBGC32_REGULAR -DBOARD_NAME=\"SIMPLEBGC32_REGULAR\".
  * We can't compare strings in preprocessor so define new macros based on -DARDUINO_*
  */
@@ -227,7 +232,7 @@ static inline void hw_early_init() {
 #endif
 
 /* "External" and "internal" in SimpleBGC32 Serial API docs */
-static inline void hw_early_i2c_init(obgc_i2c **main, obgc_i2c **internal) {
+static inline void hw_early_i2c_init(struct busses_s *bus) {
 #if BOARD_SIMPLEBGC32_REGULAR
     /* Initialize the onboard I2C bus early and unconditionally because
      * we need it to load our hardware config from the I2C EEPROM.  All other
@@ -241,14 +246,13 @@ static inline void hw_early_i2c_init(obgc_i2c **main, obgc_i2c **internal) {
      * run-time traffic.  Drive the onboard, "internal", bus in software using
      * FlexWire.
      */
-    *internal = new obgc_i2c_subcls<FlexWire>(PIN_I2C_INT_SDA, PIN_I2C_INT_SCL);
-    (*internal)->begin();
+    bus->i2c_int = new obgc_i2c_subcls<FlexWire>(PIN_I2C_INT_SDA, PIN_I2C_INT_SCL);
+    bus->i2c_int->begin();
 #endif
 }
 
-void hw_storage_init(obgc_i2c *i2c_main, obgc_i2c *i2c_int);
-void hw_setup(const struct obgc_hw_config_s *config,
-        obgc_i2c **i2c_main, obgc_i2c **i2c_int, obgc_nt_bus_t **nt,
+void hw_storage_init(struct busses_s *bus);
+void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
         struct obgc_imu_s **main_imu, struct obgc_imu_s **frame_imu,
         struct obgc_foc_driver_s **motors,
         struct obgc_encoder_s **encoders);

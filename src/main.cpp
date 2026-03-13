@@ -32,8 +32,7 @@ static sbgc32_i2c_drv *drv_modules[3];
 static obgc_encoder *encoders[3];
 static obgc_foc_driver *motor_drivers[3], *beep_driver;
 static obgc_motor *motors[3];
-static obgc_i2c *i2c_main, *i2c_int; /* External and internal in Serial API docs */
-static obgc_nt_bus_t *nt;
+static struct busses_s bus;
 static ConsoleSerial *serial;
 
 #ifdef PERF
@@ -675,18 +674,18 @@ void main_shutdown_high_level(void) {
     for (i = 0; i < 3; i++)
         if (drv_modules[i])
             sbgc32_i2c_drv_free(drv_modules[i]);
-    if (i2c_main) {
-        i2c_main->end();
-        delete i2c_main;
+    if (bus.i2c_main) {
+        bus.i2c_main->end();
+        delete bus.i2c_main;
     }
-    if (i2c_int) {
-        i2c_int->end();
-        delete i2c_int;
+    if (bus.i2c_int) {
+        bus.i2c_int->end();
+        delete bus.i2c_int;
     }
-    if (nt) {
+    if (bus.nt) {
         // TODO: nt->port->end();
-        delete nt->port;
-        free(nt);
+        delete bus.nt->port;
+        free(bus.nt);
     }
     serial->end();
     digitalWrite(PIN_LED0, 0);
@@ -948,29 +947,29 @@ static void misc_debug_update(void *) {
         main_ahrs_from_encoders_debug();
 
     if (INFO_CYCLE) {
-        if (i2c_main && i2c_main_err_cnt != i2c_main->error_cnt) {
+        if (bus.i2c_main && i2c_main_err_cnt != bus.i2c_main->error_cnt) {
             if (!i2c_main_err_cnt)
                 error_beep();
 
-            i2c_main_err_cnt = i2c_main->error_cnt;
+            i2c_main_err_cnt = bus.i2c_main->error_cnt;
             serial->print("Main I2C bus err cnt at ");
             serial->println(i2c_main_err_cnt);
         }
 
-        if (i2c_main && i2c_int_err_cnt != i2c_int->error_cnt) {
+        if (bus.i2c_int && i2c_int_err_cnt != bus.i2c_int->error_cnt) {
             if (!i2c_int_err_cnt)
                 error_beep();
 
-            i2c_int_err_cnt = i2c_int->error_cnt;
+            i2c_int_err_cnt = bus.i2c_int->error_cnt;
             serial->print("Aux I2C bus err cnt at ");
             serial->println(i2c_int_err_cnt);
         }
 
-        if (nt && nt_err_cnt != nt->error_cnt) {
+        if (bus.nt && nt_err_cnt != bus.nt->error_cnt) {
             if (!nt_err_cnt)
                 error_beep();
 
-            nt_err_cnt = nt->error_cnt;
+            nt_err_cnt = bus.nt->error_cnt;
             serial->print("NT bus err cnt at ");
             serial->println(nt_err_cnt);
         }
@@ -1899,26 +1898,26 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         break;
     case CMD_I2C_WRITE_REG_BUF:
         {
-            obgc_i2c *bus;
+            obgc_i2c *i2c;
 
             if (payload_len < 2 || payload_len > 250) {
                 sbgc_api.rx_error_cnt++;
                 break;
             }
 
-            bus = (payload[0] & 1) ? i2c_int : i2c_main;
-            if (!bus) {
+            i2c = (payload[0] & 1) ? bus.i2c_int : bus.i2c_main;
+            if (!i2c) {
                 sbgc_api.rx_error_cnt++;
                 break;
             }
 
-            bus->beginTransmission(*payload++ >> 1);
+            i2c->beginTransmission(*payload++ >> 1);
 
             while (--payload_len)
-                if (bus->write(*payload++) != 1) /* TODO: leverage write(data, len)? also in imu-mpuxxxx?,storage */
+                if (i2c->write(*payload++) != 1) /* TODO: leverage write(data, len)? also in imu-mpuxxxx?,storage */
                     break;
 
-            if (bus->endTransmission() || payload_len)
+            if (i2c->endTransmission() || payload_len)
                 sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, 0);
             else
                 sbgc_api_send_confirm(cmd, 0, 1);
@@ -1926,7 +1925,7 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
         break;
     case CMD_I2C_READ_REG_BUF:
         {
-            obgc_i2c *bus;
+            obgc_i2c *i2c;
             uint8_t i, len, reply[255];
             uint16_t addr;
 
@@ -1939,8 +1938,8 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
                 break;
             }
 
-            bus = (payload[0] & 1) ? i2c_int : i2c_main;
-            if (!bus) {
+            i2c = (payload[0] & 1) ? bus.i2c_int : bus.i2c_main;
+            if (!i2c) {
                 sbgc_api.rx_error_cnt++;
                 break;
             }
@@ -1951,13 +1950,13 @@ static void sbgc_api_cmd_rx_cb(uint8_t cmd, const uint8_t *payload, uint8_t payl
             if (payload_len == 4)
                 addr = ((uint16_t) payload[1] << 8) | payload[2];
 
-            if (bus->requestFrom(payload[0] >> 1, len, addr, payload_len - 2, true) != len) {
+            if (i2c->requestFrom(payload[0] >> 1, len, addr, payload_len - 2, true) != len) {
                 sbgc_api_send_error(cmd, ERR_OPERATION_FAILED, 0);
                 break;
             }
 
             for (i = 0; i < len; i++)
-                reply[i] = bus->read();
+                reply[i] = i2c->read();
 
             serial_api_tx_cmd(&sbgc_api, cmd, reply, len);
         }
@@ -2113,20 +2112,20 @@ void setup(void) {
 #endif
 
     /* Create only the I2C bus needed for storage backend, if any */
-    hw_early_i2c_init(&i2c_main, &i2c_int);
+    hw_early_i2c_init(&bus);
 
-    hw_storage_init(i2c_main, i2c_int);
+    hw_storage_init(&bus);
 
     if (!force_defaults)
         config_read();
     else
         memset(&config, 0, sizeof(config));
 
-    hw_setup(&config.hw, &i2c_main, &i2c_int, &nt, &main_imu, &frame_imu, motor_drivers, encoders);
+    hw_setup(&config.hw, &bus, &main_imu, &frame_imu, motor_drivers, encoders);
 
     /* Board debug info */
-    // scan_i2c(i2c_main);
-    // scan_i2c(i2c_int);
+    // scan_i2c(bus.i2c_main);
+    // scan_i2c(bus.i2c_int);
 
     /* We control the LPF cut-off frequency and the sampling rate of the MPU6050.  We want
      * to minimize the noise, which would be achieved by setting the highest sample rate,
@@ -2189,9 +2188,9 @@ void setup(void) {
         serial->println("Frame AHRS initialized!");
     }
 
-    if (i2c_main) {
-        drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-        drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+    if (bus.i2c_main) {
+        drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), bus.i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+        drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), bus.i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
         if (drv_modules[0] && drv_modules[1])
             serial->println("SBGC32_I2C_Drv initialized");
         else
@@ -2200,7 +2199,7 @@ void setup(void) {
 
 #define ENCODERS
 #ifdef ENCODERS
-    encoders[0] = as5600_new(i2c_main);
+    encoders[0] = as5600_new(bus.i2c_main);
     encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
     encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
     serial->println("Encoders initialized");
