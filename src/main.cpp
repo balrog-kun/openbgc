@@ -938,6 +938,7 @@ static struct main_loop_cb_s vbat_cb = { .cb = vbat_update };
 static void misc_debug_update(void *) {
     static uint16_t i2c_main_err_cnt;
     static uint16_t i2c_int_err_cnt;
+    static uint16_t nt_err_cnt;
 
     // imu_debug_update();
     // probe_out_pins_update();
@@ -963,6 +964,15 @@ static void misc_debug_update(void *) {
             i2c_int_err_cnt = i2c_int->error_cnt;
             serial->print("Aux I2C bus err cnt at ");
             serial->println(i2c_int_err_cnt);
+        }
+
+        if (nt && nt_err_cnt != nt->error_cnt) {
+            if (!nt_err_cnt)
+                error_beep();
+
+            nt_err_cnt = nt->error_cnt;
+            serial->print("NT bus err cnt at ");
+            serial->println(nt_err_cnt);
         }
     }
 }

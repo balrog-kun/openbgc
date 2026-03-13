@@ -10,6 +10,7 @@
 typedef struct obgc_nt_bus_s {
     Stream *port;
     unsigned long trigger_ts;
+    uint16_t error_cnt;
 } obgc_nt_bus_t;
 
 /* Values from https://www.olliw.eu/storm32bgc-v2-wiki/NT_Bus_Protocol */
@@ -114,11 +115,13 @@ static inline int ntbus_req(obgc_nt_bus_t *nt, uint8_t id, uint8_t cmd,
         char msg[50];
         sprintf(msg, "NT response timeout: %i", missing);
         error_print(msg); /* TODO: ratelimit */
+        nt->error_cnt++;
         return -1;
     }
 
     if (ntbus_validate_resp(resp_out, resp_len) < 0) {
         error_print("NT response format error");
+        nt->error_cnt++;
         return -1;
     }
 
