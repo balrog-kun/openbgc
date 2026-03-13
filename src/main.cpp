@@ -684,8 +684,9 @@ void main_shutdown_high_level(void) {
         delete i2c_int;
     }
     if (nt) {
-        // TODO: nt->end();
-        delete nt;
+        // TODO: nt->port->end();
+        delete nt->port;
+        free(nt);
     }
     serial->end();
     digitalWrite(PIN_LED0, 0);
@@ -2339,9 +2340,6 @@ void loop(void) {
      * asynchronicity or queuing.
      */
 
-    if (nt)
-        ntbus_trigger(nt);
-
     /* These are the only users of the IMUs so they perform the IMU reading internally */
     if (!config.have_axes || !config.control.tripod_mode)
         ahrs_update(main_ahrs);
@@ -2389,9 +2387,6 @@ static void setup_loop(void) {
     int i;
 
     main_loop_sleep();
-
-    if (nt)
-        ntbus_trigger(nt);
 
     if (main_ahrs)
         ahrs_update(main_ahrs);

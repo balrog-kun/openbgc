@@ -125,7 +125,9 @@ void hw_setup(const struct obgc_hw_config_s *config,
     if (nt_users && PIN_NT_RX && PIN_NT_TX) {
         HardwareSerial *port = new HardwareSerial(PIN_NT_RX, PIN_NT_TX);
         port->begin(2000000);
-        *nt = port;
+        *nt = (obgc_nt_bus_t *) malloc(sizeof(obgc_nt_bus_t));
+        memset(*nt, 0, sizeof(obgc_nt_bus_t));
+        (*nt)->port = port;
     }
 
     if (!IN_SET(PIN_I2C_MAIN_SDA, PIN_NT_RX, PIN_NT_TX) || !*nt) {

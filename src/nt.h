@@ -7,7 +7,10 @@
 #include "imu.h"
 #include "util.h"
 
-typedef Stream obgc_nt_bus_t;
+typedef struct obgc_nt_bus_s {
+    Stream *port;
+    unsigned long trigger_ts;
+} obgc_nt_bus_t;
 
 /* Values from https://www.olliw.eu/storm32bgc-v2-wiki/NT_Bus_Protocol */
 
@@ -70,7 +73,7 @@ enum ntbus_cmd_e {
 };
 
 static inline void ntbus_trigger(obgc_nt_bus_t *nt) {
-    nt->write(NTBUS_STX | NTBUS_TRIGGER | NTBUS_ID_ALLMODULES);
+    nt->port->write(NTBUS_STX | NTBUS_TRIGGER | NTBUS_ID_ALLMODULES);
 }
 
 #define READ_TIMEOUT_MS 50
@@ -78,14 +81,14 @@ static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t n
     unsigned long end_ts = millis() + READ_TIMEOUT_MS;
 
     do {
-        while (nt->available()) {
-            *buf_out++ = nt->read();
+        while (nt->port->available()) {
+            *buf_out++ = nt->port->read();
             if (!--num)
-                return 0;
+                break;
         }
     } while ((long) (end_ts - millis()) > 0);
 
-    return -1;
+    return -num;
 }
 
 static inline int ntbus_validate_resp(uint8_t *resp, uint8_t num) {
@@ -99,14 +102,18 @@ static inline int ntbus_validate_resp(uint8_t *resp, uint8_t num) {
 
 static inline int ntbus_req(obgc_nt_bus_t *nt, uint8_t id, uint8_t cmd,
         uint8_t subcmd, uint8_t *resp_out, uint8_t resp_len) {
-    nt->write(NTBUS_STX | cmd | id);
+    int missing;
+
+    nt->port->write(NTBUS_STX | cmd | id);
     if (cmd == NTBUS_CMD) {
-        nt->write(subcmd);
-        nt->write(subcmd); /* XOR over the data bytes, ie. the ones without NTBUS_STX */
+        nt->port->write(subcmd);
+        nt->port->write(subcmd); /* XOR over the data bytes, ie. the ones without NTBUS_STX */
     }
 
-    if (ntbus_read_resp(nt, resp_out, resp_len) < 0) {
-        error_print("NT response timeout"); /* TODO: ratelimit, increment bus error count */
+    if ((missing = ntbus_read_resp(nt, resp_out, resp_len)) < 0) {
+        char msg[50];
+        sprintf(msg, "NT response timeout: %i", missing);
+        error_print(msg); /* TODO: ratelimit */
         return -1;
     }
 
@@ -118,15 +125,34 @@ static inline int ntbus_req(obgc_nt_bus_t *nt, uint8_t id, uint8_t cmd,
     return 0;
 }
 
+static inline void ntbus_check_trigger(obgc_nt_bus_t *nt, unsigned long *access_ts) {
+    /* FIXME: the trigger semantics are not exactly documented.
+     * Ensure that each new sensor measurement has a separate trigger instance
+     * and that the trigger wasn't more than 50ms ago, assume this is enough.
+     */
+    unsigned long now = micros();
+
+    if ((unsigned long) (now - nt->trigger_ts) > 50000 ||
+            (signed long) (*access_ts - nt->trigger_ts) >= 0) {
+        ntbus_trigger(nt);
+        nt->trigger_ts = now;
+    }
+
+    *access_ts = now;
+}
+
 struct nt_imu_s {
     obgc_imu obj;
     obgc_nt_bus_t *nt;
     enum ntbus_id_e id;
+    unsigned long access_ts;
     int16_t temp;
 };
 
 static void nt_imu_read_main(struct nt_imu_s *dev, int32_t *accel_out, int32_t *gyro_out) {
     uint8_t resp[16];
+
+    ntbus_check_trigger(dev->nt, &dev->access_ts);
 
     /* Note: Maybe should wait for rx buffer to be empty because at this bit rate (2Mb/s) if
      * we hit any delay we'll lose some rx bytes */
