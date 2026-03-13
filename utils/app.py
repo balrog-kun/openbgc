@@ -1661,6 +1661,9 @@ class StatusTab(QWidget):
 
         # Read main AHRS orientation
         def callback_q(value):
+            if value is None:
+                return
+
             # value is a list of 4 floats (w, x, y, z)
             self.current_main_ahrs_q = tuple(value)
             self.view_3d.update_pose(self.current_encoder_angles, self.current_main_ahrs_q)
@@ -1700,6 +1703,8 @@ class StatusTab(QWidget):
 
         def callback(values):
             if values is None or len(values) != len(req_params):
+                # Retry just the attitude info if grouped request failed
+                self.connection.read_param("main-ahrs.q", callback_q)
                 return
 
             callback_encoders(values[:3])
