@@ -1081,6 +1081,9 @@ handle_set_param:
         if (set_param < __BLDC_PARAM_MAX)
             goto handle_set_param;
 
+        if (!main_imu)
+            break;
+
         motors_on_off(false);
         serial->println("Setting new MPU6050 sample rate");
         /* Sample rate becomes (dlpf ? 1k : 8k) / (param + 1) */
@@ -2022,6 +2025,8 @@ static void ahrs_defaults(struct obgc_ahrs_config_s *ahrs_cfg) {
     ahrs_cfg->gyro_sensitivity[2][2] = 1.0f;
 }
 
+static void setup_loop(void);
+
 void setup(void) {
     int i;
     bool force_defaults = false;
@@ -2130,33 +2135,34 @@ void setup(void) {
      * rate) and clock settings don't seem to affect the orientation precision anywhere
      * close to what the chip axis alignment errors do.
      */
-    // mpuxxxx_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
-    mpuxxxx_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
+    if (main_imu)
+        // mpuxxxx_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
+        mpuxxxx_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
     if (frame_imu)
-        mpuxxxx_set_srate(main_imu, 0, 1);
-
-    serial->println("IMUs initialized!");
+        mpuxxxx_set_srate(frame_imu, 0, 1);
 
     if (!have_config) {
         ahrs_defaults(&config.main_ahrs);
         ahrs_defaults(&config.frame_ahrs);
     }
 
-    main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z, &config.main_ahrs,
-            M_PIf / 0x800 /*encoder[0]->cls->resolution * D2R*/);
-    ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
-    delay(100);
+    if (main_imu) {
+        main_ahrs = ahrs_new(main_imu, SBGC_IMU_X, SBGC_IMU_MINUS_Z, &config.main_ahrs,
+                M_PIf / 0x800 /*encoder[0]->cls->resolution * D2R*/);
+        ahrs_set_debug(main_ahrs, main_ahrs_debug_print);
+        delay(100);
 
-    if (config.main_ahrs.calibrate_on_start)
-        ahrs_calibrate(main_ahrs);
-    else
-        ahrs_reset_orientation(main_ahrs);
+        if (config.main_ahrs.calibrate_on_start)
+            ahrs_calibrate(main_ahrs);
+        else
+            ahrs_reset_orientation(main_ahrs);
 
-    serial->println("Main AHRS initialized!");
-    /* TODO: make AHRS an abstract class, then convert the current AHRS to its subclass and add another that exposes the mpu6050
-     * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions
-     * from encoders?? */
+        serial->println("Main AHRS initialized!");
+        /* TODO: make AHRS an abstract class, then convert the current AHRS to its subclass and add another that exposes the mpu6050
+         * directly as an AHRS with DMP enabled? would only need to keep an adjustment quaternion that corrects for yaw and positions
+         * from encoders?? */
+    }
 
     if (frame_imu) {
         frame_ahrs = ahrs_new(frame_imu, SBGC_IMU_MINUS_Z, SBGC_IMU_X, &config.frame_ahrs,
@@ -2172,12 +2178,14 @@ void setup(void) {
         serial->println("Frame AHRS initialized!");
     }
 
-    drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-    drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-    if (drv_modules[0] && drv_modules[1])
-        serial->println("SBGC32_I2C_Drv initialized");
-    else
-        serial->println("SBGC32_I2C_Drv init failed");
+    if (i2c_main) {
+        drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+        drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
+        if (drv_modules[0] && drv_modules[1])
+            serial->println("SBGC32_I2C_Drv initialized");
+        else
+            serial->println("SBGC32_I2C_Drv init failed");
+    }
 
 #define ENCODERS
 #ifdef ENCODERS
@@ -2215,11 +2223,16 @@ void setup(void) {
     if (!motor_drivers[0])
         serial->println("Motor 0 driver init failed!");
 
-    motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
-    motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
+    if (drv_modules[0])
+        motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
+    if (drv_modules[1])
+        motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
 
     /* 'm' to autocalibrate and print new values */
     for (i = 0; i < 3; i++) {
+        if (!motor_drivers[i])
+            continue;
+
 #ifdef ENCODERS
         motors[i] = motor_bldc_with_encoder_new(encoders[i], motor_drivers[i]);
 #else
@@ -2279,6 +2292,13 @@ void setup(void) {
     serial_api_reset(&sbgc_api);
     sbgc_api.cmd_rx_cb = sbgc_api_cmd_rx_cb;
     sbgc_api.bytes_tx_cb = sbgc_api_bytes_tx_cb;
+
+    if (!main_ahrs || !motors[0] || !motors[1] || !motors[2])
+        /* If any of the critical HW peripherals missing run a simplified main loop version
+         * without any control logic, only UI and API server for poking HW configuration.
+         */
+        while (1)
+            setup_loop();
 
     /* Set have_config now that everyone should have filled in their defaults */
     have_config = true;
@@ -2361,6 +2381,32 @@ void loop(void) {
     }
 }
 void loop_end(void) {}
+
+static void setup_loop(void) {
+    int i;
+
+    main_loop_sleep();
+
+    if (main_ahrs)
+        ahrs_update(main_ahrs);
+
+    PERF_SAVE_TS;
+
+    if (frame_ahrs)
+        ahrs_update(frame_ahrs);
+
+    PERF_SAVE_TS;
+
+    for (i = 0; i < 3; i++)
+        encoder_update(encoders[i]);
+
+    PERF_SAVE_TS;
+
+    for (struct main_loop_cb_s *entry = cbs; entry; entry = cb_next) {
+        cb_next = entry->next;
+        entry->cb(entry->data);
+    }
+}
 
 void main_loop_cb_add(struct main_loop_cb_s *cb) {
     struct main_loop_cb_s **ptr;
