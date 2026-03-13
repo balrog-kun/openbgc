@@ -16,6 +16,7 @@ typedef struct obgc_imu_class_s {
     void (*free)(obgc_imu *imu);
     uint32_t accel_scale;
     uint32_t gyro_scale;
+    bool is_mpuxxxx;
 } obgc_imu_class;
 
 #endif /* IMU_H */

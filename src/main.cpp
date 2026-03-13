@@ -1081,7 +1081,7 @@ handle_set_param:
         if (set_param < __BLDC_PARAM_MAX)
             goto handle_set_param;
 
-        if (!main_imu)
+        if (!main_imu || !main_imu->cls->is_mpuxxxx)
             break;
 
         motors_on_off(false);
@@ -2135,11 +2135,11 @@ void setup(void) {
      * rate) and clock settings don't seem to affect the orientation precision anywhere
      * close to what the chip axis alignment errors do.
      */
-    if (main_imu)
+    if (main_imu && main_imu->cls->is_mpuxxxx)
         // mpuxxxx_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
         mpuxxxx_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
-    if (frame_imu)
+    if (frame_imu && main_imu->cls->is_mpuxxxx)
         mpuxxxx_set_srate(frame_imu, 0, 1);
 
     if (!have_config) {
@@ -2339,6 +2339,9 @@ void loop(void) {
      * asynchronicity or queuing.
      */
 
+    if (nt)
+        ntbus_trigger(nt);
+
     /* These are the only users of the IMUs so they perform the IMU reading internally */
     if (!config.have_axes || !config.control.tripod_mode)
         ahrs_update(main_ahrs);
@@ -2386,6 +2389,9 @@ static void setup_loop(void) {
     int i;
 
     main_loop_sleep();
+
+    if (nt)
+        ntbus_trigger(nt);
 
     if (main_ahrs)
         ahrs_update(main_ahrs);

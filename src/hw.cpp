@@ -60,9 +60,15 @@ static obgc_imu *hw_setup_imu(const char *name,
 
     case obgc_imu_hw_config::OBGC_IMU_NT:
         if (!nt)
-            return (obgc_imu *) hw_setup_error(name, "NT not available");
+            return (obgc_imu *) hw_setup_error(name, "NT bus not available");
 
-        return (obgc_imu *) hw_setup_error(name, "Unimplemented");
+        {
+            struct obgc_imu_s *imu = nt_imu_new(nt, config->params.nt_id);
+
+            if (imu)
+                return (obgc_imu *) hw_setup_ok(name, imu);
+        }
+        return (obgc_imu *) hw_setup_error(name, "initialization failed");
 
     default:
         return (obgc_imu *) hw_setup_error(name, "Unknown type");
@@ -80,6 +86,21 @@ void hw_storage_init(obgc_i2c *i2c_main, obgc_i2c *i2c_int) {
     storage_init_internal_flash();
 #endif
 }
+
+#if BOARD_STORM32_STM32F1
+/* Override USART3 pins in framework-arduinoststm32/variants/STM32F1xx/F103R\(C-D-E\)T/PeripheralPins_STORM32_V1_31_RC.c */
+const PinMap PinMap_UART_TX[] = {
+  {PA_9,  USART1, STM_PIN_DATA(STM_MODE_AF_PP, GPIO_PULLUP, AFIO_USART1_DISABLE)},
+  {PB_10, USART3, STM_PIN_DATA(STM_MODE_AF_PP, GPIO_PULLUP, AFIO_NONE)}, /* PIN_NT_TX */
+  {NC,    NP,     0}
+};
+
+const PinMap PinMap_UART_RX[] = {
+  {PA_10, USART1, STM_PIN_DATA(STM_MODE_INPUT, GPIO_PULLUP, AFIO_USART1_DISABLE)},
+  {PB_11, USART3, STM_PIN_DATA(STM_MODE_INPUT, GPIO_PULLUP, AFIO_NONE)}, /* PIN_NT_RX */
+  {NC,    NP,     0}
+};
+#endif
 
 void hw_setup(const struct obgc_hw_config_s *config,
         obgc_i2c **i2c_main, obgc_i2c **i2c_int, obgc_nt_bus_t **nt,

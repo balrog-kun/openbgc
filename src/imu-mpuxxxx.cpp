@@ -239,6 +239,7 @@ static obgc_imu_class mpuxxxx_imu_class = {
     .free        = (void (*)(obgc_imu *imu)) mpuxxxx_free,
     .accel_scale = 65536, /* LSBs per 1g */
     .gyro_scale  = 131,   /* LSBs per 1deg/s */
+    .is_mpuxxxx  = true,
 };
 
 static obgc_imu *mpuxxxx_new(uint8_t i2c_addr, obgc_i2c *i2c, uint16_t model, uint8_t whoami) {
