@@ -5,7 +5,7 @@ import re
 QUALIFIER_RE = re.compile(r"\b(const|volatile|restrict)\b\s*")
 ARRAY_RE = re.compile(r"(.*?)(\[[0-9]+\])+$")
 ARRAY_DIM_RE = re.compile(r"\[([0-9]+)\]")
-ENUM_RE = re.compile(r"enum\s*(?::\s*([^{]+))?\s*\{([^}]+)\}")
+ENUM_RE = re.compile(r"enum(?:\s+([a-zA-Z_]\w*))?\s*(?::\s*([^{]+))?\s*\{([^}]+)\}")
 
 def strip_qualifiers(s: str) -> str:
     return QUALIFIER_RE.sub("", s).strip()
@@ -20,8 +20,8 @@ def parse_enum(enum_str, size, endian):
     if not m:
         raise ValueError(f"Invalid enum: {enum_str}")
 
-    underlying = m.group(1) or "int"
-    body = m.group(2)
+    underlying = m.group(2) or "int"
+    body = m.group(3)
 
     signed = "unsigned" not in underlying.split()
     base = BytesInteger(size, signed=signed, swapped=endian == "little")
