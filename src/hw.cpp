@@ -153,6 +153,48 @@ static struct obgc_foc_driver_s *hw_setup_motor(const char *name, int num,
     }
 }
 
+static obgc_encoder *hw_setup_encoder(const char *name, int num,
+        const struct obgc_hw_config_s *config_all, struct drivers_s *drivers, struct busses_s *bus) {
+    const obgc_encoder_hw_config *config = &config_all->encoder[num];
+    const obgc_motor_hw_config *config_motor = &config_all->motor[num];
+    struct obgc_encoder_s *enc;
+
+    switch (config->type) {
+    case obgc_encoder_hw_config::OBGC_ENCODER_NONE:
+        return NULL;
+
+    case obgc_encoder_hw_config::OBGC_ENCODER_I2C_AS5600:
+        {
+            obgc_i2c *i2c = hw_get_i2c(name, &config->i2c, bus);
+
+            if (!i2c)
+                return NULL;
+
+            enc = as5600_new(i2c);
+        }
+        if (enc)
+            return (obgc_encoder *) hw_setup_ok(name, enc);
+        else
+            return (obgc_encoder *) hw_setup_error(name, "initialization failed");
+
+    case obgc_encoder_hw_config::OBGC_ENCODER_SBGC32_I2C_DRV:
+        /* Is there a use case for having a different motor driver with this encoder type? */
+        /* Check if corresponding motor is the right type, in the future also include CAN here? */
+        if (config_motor->type != obgc_motor_hw_config::OBGC_MOTOR_DRV_SBGC32_I2C)
+            return (obgc_encoder *) hw_setup_error(name, "Motor driver type doesn't match");
+
+        if (!drivers->drv_module[num])
+            return NULL; /* We must have already printed an error */
+
+        return (obgc_encoder *) hw_setup_ok(name,
+                sbgc32_i2c_drv_get_encoder(drivers->drv_module[num]));
+
+    case obgc_encoder_hw_config::OBGC_ENCODER_NT_MOTOR_DRV:
+    default:
+        return (obgc_encoder *) hw_setup_error(name, "Unknown type");
+    }
+}
+
 void hw_storage_init(struct busses_s *bus) {
     /* TODO: maybe just scan the bus, if the EEPROM is there use it, if not then
      * use on-chip flash.
@@ -227,9 +269,7 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
     drivers->motor[1] = hw_setup_motor("Motor 1", 1, config, drivers, bus);
     drivers->motor[2] = hw_setup_motor("Motor 2", 2, config, drivers, bus);
 
-#if 0
     drivers->encoder[0] = hw_setup_encoder("Encoder 0", 0, config, drivers, bus);
     drivers->encoder[1] = hw_setup_encoder("Encoder 1", 1, config, drivers, bus);
     drivers->encoder[2] = hw_setup_encoder("Encoder 2", 2, config, drivers, bus);
-#endif
 }

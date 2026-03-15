@@ -2189,30 +2189,23 @@ void setup(void) {
         serial->println("Frame AHRS initialized!");
     }
 
-#define ENCODERS
-#ifdef ENCODERS
-    drivers.encoder[0] = as5600_new(bus.i2c_main);
-    if (drivers.drv_module[1])
-        drivers.encoder[1] = sbgc32_i2c_drv_get_encoder(drivers.drv_module[1]);
-    if (drivers.drv_module[2])
-        drivers.encoder[2] = sbgc32_i2c_drv_get_encoder(drivers.drv_module[2]);
-    serial->println("Encoders initialized");
-#endif
-
     /* 'm' to autocalibrate and print new values */
     for (i = 0; i < 3; i++) {
+        obgc_encoder *encoder = drivers.encoder[i];
+
         if (!drivers.motor[i])
             continue;
 
         if (!beep_driver && drivers.motor[i]->cls->beep)
             beep_driver = drivers.motor[0];
 
-#ifdef ENCODERS
-        motors[i] = motor_bldc_with_encoder_new(drivers.encoder[i], drivers.motor[i]);
-#else
-        motors[i] = motor_bldc_new(main_ahrs, drivers.motor[i]);
-        drivers.encoder[i] = motor_bldc_get_synthetic_encoder(motors[i]);
-#endif
+        if (encoder)
+            motors[i] = motor_bldc_with_encoder_new(encoder, drivers.motor[i]);
+        else {
+            motors[i] = motor_bldc_new(main_ahrs, drivers.motor[i]);
+            drivers.encoder[i] = motor_bldc_get_synthetic_encoder(motors[i]);
+        }
+
         motors[i]->pid_params = &config.motor_pid[i];
 
         if (motors[i]->cls->set_calibration)
@@ -2227,23 +2220,23 @@ void setup(void) {
             continue;
 
         /* Set defaults */
-#ifdef ENCODERS
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.05f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.01f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Limit to 0.2 x VBAT */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
-#else
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.5f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.03f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.0f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
-        motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Constant drain at 0.2 x VBAT */
-        motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
-#endif
+        if (encoder) {
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.05f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.01f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.001f); /* Look 0.001s ahead */
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.005f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Limit to 0.2 x VBAT */
+            motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
+        } else {
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KP, 0.5f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KI, 0.03f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KD, 0.0f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KP_TRUST, 0.0f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_KI_FALLOFF, 0.01f);
+            motor_bldc_set_param(motors[i], BLDC_PARAM_V_MAX, 0.2f); /* Constant drain at 0.2 x VBAT */
+            motor_bldc_set_param(motors[i], BLDC_PARAM_K_DRAG, 0.001f);
+        }
     }
 
     serial->println("Motors early init done");

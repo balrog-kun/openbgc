@@ -212,3 +212,15 @@ PARAM_DEF(config.hw.motor[2].pins.in)
 PARAM_DEF(config.hw.motor[2].pins.en)
 PARAM_DEF(config.hw.motor[2].sbgc32_id)
 PARAM_DEF(config.hw.motor[2].nt_id)
+PARAM_DEF(config.hw.encoder[0].type)
+PARAM_DEF(config.hw.encoder[0].i2c.bus)
+PARAM_DEF(config.hw.encoder[0].i2c.addr) /* For future drivers... */
+PARAM_DEF(config.hw.encoder[0].sbgc32_type)
+PARAM_DEF(config.hw.encoder[1].type)
+PARAM_DEF(config.hw.encoder[1].i2c.bus)
+PARAM_DEF(config.hw.encoder[1].i2c.addr) /* For future drivers... */
+PARAM_DEF(config.hw.encoder[1].sbgc32_type)
+PARAM_DEF(config.hw.encoder[2].type)
+PARAM_DEF(config.hw.encoder[2].i2c.bus)
+PARAM_DEF(config.hw.encoder[2].i2c.addr) /* For future drivers... */
+PARAM_DEF(config.hw.encoder[2].sbgc32_type)
