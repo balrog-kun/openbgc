@@ -123,11 +123,22 @@ struct busses_s {
 # define SBGC_VBAT_R_BAT    140000
 # define SBGC_VBAT_R_GND    4700
 
-/* Onboard DRV8313 for the yaw motor */
+/* Onboard DRV8313 for the yaw motor (both SimpleBGC32 "Regular" and PilotFly H2 */
 # define SBGC_YAW_DRV8313_IN1     PA1   /* TIM2 */
 # define SBGC_YAW_DRV8313_IN2     PA2   /* TIM2 */
 # define SBGC_YAW_DRV8313_IN3     PA3   /* TIM2 */
 # define SBGC_YAW_DRV8313_EN123   PB10
+
+/* Onboard DRV8313s on the SimpleBGC32 "Regular" board without IMU */
+# define SBGC_PITCH_DRV8313_IN1   PA4
+# define SBGC_PITCH_DRV8313_IN2   PB0
+# define SBGC_PITCH_DRV8313_IN3   PB1
+# define SBGC_PITCH_DRV8313_EN123 PB10
+
+# define SBGC_ROLL_DRV8313_IN1    PB13
+# define SBGC_ROLL_DRV8313_IN2    PB14
+# define SBGC_ROLL_DRV8313_IN3    PB15
+# define SBGC_ROLL_DRV8313_EN123  PB10
 
 #if 0
 /* Onboard DRV8313 traces seen on the SimpleBGC32 "Extended" board */
@@ -161,6 +172,8 @@ struct busses_s {
 # define SBGC_IN_RC_YAW     SBGC_IN_YAW
 # define SBGC_IN_RC_ROLL    PB4
 # define SBGC_IN_RC_PIT     SBGC_IN_PITCH
+
+/* Define common macros based on all of the above SBGC_* macros */
 
 # define PIN_VBAT           SBGC_VBAT
 # define PIN_VBAT_R_BAT     SBGC_VBAT_R_BAT
