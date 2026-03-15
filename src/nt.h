@@ -79,7 +79,34 @@ static inline void ntbus_trigger(obgc_nt_bus_t *nt) {
     nt->port->write(NTBUS_STX | NTBUS_TRIGGER | NTBUS_ID_ALLMODULES);
 }
 
-#define READ_TIMEOUT_MS 50
+#define READ_TIMEOUT_MS 5
+
+class HardwareNT : public HardwareSerial {
+public:
+    HardwareNT(uint32_t _rx, uint32_t _tx) : HardwareSerial(_rx, _tx) {}
+#ifdef NT_USE_INTERRUPTS
+    void begin(void) { HardwareSerial::begin(2000000); }
+#else
+    void begin(void) {
+        HardwareSerial::begin(2000000);
+        /* Undo what begin() --> HAL_UART_Receive_IT() just did to reset
+         * RxState to READY so we can use HAL_UART_Receive().
+         */
+        HAL_NVIC_DisableIRQ(_serial.irq);
+        HAL_UART_AbortReceive_IT(&_serial.handle);
+    }
+    int read_buf(uint8_t *buf, uint8_t len) {
+        /* Skip two abstraction layers to use the
+         * framework-arduinoststm32/system/Drivers/STM32Fxxx_HAL_Driver/Src/stm32fxxx_hal_uart.c
+         * API not exposed by higher layers.
+         * TODO: should reset the 1-byte HW buffer?
+         */
+        return HAL_UART_Receive(&_serial.handle, buf, len, READ_TIMEOUT_MS * (2000000 / 1000)) == HAL_OK ? 0 : -1;
+    }
+#endif
+};
+
+#ifdef NT_USE_INTERRUPTS
 static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t num) {
     unsigned long end_ts = millis() + READ_TIMEOUT_MS;
 
@@ -93,6 +120,11 @@ static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t n
 
     return -num;
 }
+#else
+static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t num) {
+    return ((HardwareNT *) nt->port)->read_buf(buf_out, num);
+}
+#endif
 
 static inline int ntbus_validate_resp(uint8_t *resp, uint8_t num) {
     uint8_t crc = 0;

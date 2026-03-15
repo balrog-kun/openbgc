@@ -241,8 +241,8 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
 
     /* The NT Bus and "main" I2C use the same pins so chose one or the other */
     if (nt_users && PIN_NT_RX && PIN_NT_TX) {
-        HardwareSerial *port = new HardwareSerial(PIN_NT_RX, PIN_NT_TX);
-        port->begin(2000000);
+        HardwareNT *port = new HardwareNT(PIN_NT_RX, PIN_NT_TX);
+        port->begin();
         bus->nt = (obgc_nt_bus_t *) malloc(sizeof(obgc_nt_bus_t));
         memset(bus->nt, 0, sizeof(obgc_nt_bus_t));
         bus->nt->port = port;
