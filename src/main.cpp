@@ -623,24 +623,7 @@ static void motors_on_off(bool on) {
 }
 
 void main_emergency_stop_low_level(void) {
-    /* Cut power to the local DRV8313 / motor
-     *
-     * Don't go fancy because we may be in the crash handler with interrupts disabled.
-     * Will digitalWrite() to SBGC_DRV8313_IN1/2/3 override the timer driven PWM signal in
-     * SimpleFOC?  In theory writing SBGC_DRV8313_EN123 should suffice.
-     */
-    digitalWrite(PIN_M0_EN, 0);
-    digitalWrite(PIN_M1_EN, 0);
-    digitalWrite(PIN_M2_EN, 0);
-    digitalWrite(PIN_M0_A, 0);
-    digitalWrite(PIN_M0_B, 0);
-    digitalWrite(PIN_M0_C, 0);
-    digitalWrite(PIN_M1_A, 0);
-    digitalWrite(PIN_M1_B, 0);
-    digitalWrite(PIN_M1_C, 0);
-    digitalWrite(PIN_M2_A, 0);
-    digitalWrite(PIN_M2_B, 0);
-    digitalWrite(PIN_M2_C, 0);
+    hw_motor_low_level_poweroff(&config.hw);
 
     /* TODO: use low-level I2C register accesses to reset the bus state and send
      * I2C_DRV_REG_SET_ENABLE = 0 to the remote drivers.  We may want to do this in a

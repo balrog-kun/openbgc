@@ -256,6 +256,44 @@ struct drivers_s {
 
 #endif
 
+extern const obgc_hw_config_s::obgc_motor_hw_config_s::obgc_motor_drv_hw_pins_s hw_onboard_motor_pins[3];
+
+static inline void hw_motor_low_level_poweroff(const struct obgc_hw_config_s *config) {
+    /* Cut power to the local DRV8313 or other motor drivers.
+     *
+     * Especially important if board uses gate drivers (TC4452V0A) as motor
+     * half-bridges, like STorM32 v1.3 does, or otherwise has no EN pins or
+     * EN pins are always on, because that means that we can never set the
+     * outputs to floating / high-impedance state.  The motor is always being
+     * driven or is braking, no free-wheeling state.
+     *
+     * Set all driver inputs to the same level to ensure no current through
+     * windings.
+     *
+     * Don't go fancy because we may be in the crash handler with interrupts
+     * disabled.
+     * Will digitalWrite() to SBGC_DRV8313_IN1/2/3 override the timer driven
+     * PWM signal in SimpleFOC?  In theory writing SBGC_DRV8313_EN123 should
+     * suffice.
+     */
+    for (int i = 0; i < 6; i++) {
+        const typeof(*hw_onboard_motor_pins) *pins;
+
+        if (i < 3)
+            pins = &hw_onboard_motor_pins[i];
+        else if (config && config->motor[i - 3].type ==
+                obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_3IN_1EN)
+            pins = &config->motor[i - 3].pins;
+        else
+            continue;
+
+        pinMode(pins->en, OUTPUT); digitalWrite(pins->en, LOW);
+        pinMode(pins->in[0], OUTPUT); digitalWrite(pins->in[0], LOW);
+        pinMode(pins->in[1], OUTPUT); digitalWrite(pins->in[1], LOW);
+        pinMode(pins->in[2], OUTPUT); digitalWrite(pins->in[2], LOW);
+    }
+}
+
 static inline void hw_early_init() {
     pinMode(PIN_VBAT, INPUT);
     pinMode(PIN_MODE, INPUT_PULLUP);
@@ -263,6 +301,8 @@ static inline void hw_early_init() {
     pinMode(PIN_RC_PITCH, INPUT);
     pinMode(PIN_RC_ROLL, INPUT);
     pinMode(PIN_LED0, OUTPUT);
+
+    hw_motor_low_level_poweroff(NULL);
 
     /* On STorM32 initialize the port used by the crash handler separately
      * because we're not using it as the console.

@@ -76,7 +76,7 @@ static obgc_imu *hw_setup_imu(const char *name,
     }
 }
 
-static const obgc_motor_hw_config::obgc_motor_drv_hw_pins_s hw_onboard_motor_pins[3] = {
+const obgc_motor_hw_config::obgc_motor_drv_hw_pins_s hw_onboard_motor_pins[3] = {
     { PIN_M0_A, PIN_M0_B, PIN_M0_C, PIN_M0_EN },
     { PIN_M1_A, PIN_M1_B, PIN_M1_C, PIN_M1_EN },
     { PIN_M2_A, PIN_M2_B, PIN_M2_C, PIN_M2_EN },
@@ -211,6 +211,8 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
 
     *main_imu = hw_setup_imu("Main IMU", &config->main_imu, bus);
     *frame_imu = hw_setup_imu("Frame IMU", &config->frame_imu, bus);
+
+    hw_motor_low_level_poweroff(config);
 
     drivers->motor[0] = hw_setup_motor("Motor 0", 0, config, drivers, bus);
     drivers->motor[1] = hw_setup_motor("Motor 1", 1, config, drivers, bus);
