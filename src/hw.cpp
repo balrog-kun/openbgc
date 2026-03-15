@@ -2,6 +2,9 @@
 #include <stdint.h>
 
 #include "storage.h"
+extern "C" {
+#include "motor-pwm.h"
+}
 
 #include "hw.h"
 
@@ -25,7 +28,7 @@ static void *hw_setup_ok(const char *name, void *dev) {
     return dev;
 }
 
-static obgc_i2c *hw_get_i2c(const char *name, const struct obgc_hw_i2c_addr_s *config,
+static obgc_i2c *hw_get_i2c(const char *name, const struct obgc_hw_config_s::obgc_hw_i2c_addr_s *config,
         struct busses_s *bus) {
     obgc_i2c *i2c_bus = (config->bus == 0 ? bus->i2c_main : (config->bus == 1 ? bus->i2c_int : NULL));
 
@@ -34,6 +37,8 @@ static obgc_i2c *hw_get_i2c(const char *name, const struct obgc_hw_i2c_addr_s *c
 
 static obgc_imu *hw_setup_imu(const char *name,
         const obgc_imu_hw_config *config, struct busses_s *bus) {
+    struct obgc_imu_s *imu;
+
     switch (config->type) {
     case obgc_imu_hw_config::OBGC_IMU_NONE:
         return NULL;
@@ -41,16 +46,15 @@ static obgc_imu *hw_setup_imu(const char *name,
     case obgc_imu_hw_config::OBGC_IMU_I2C_MPU6050:
     case obgc_imu_hw_config::OBGC_IMU_I2C_MPU9250:
         {
-            obgc_i2c *i2c = hw_get_i2c(name, &config->params.i2c, bus);
-            struct obgc_imu_s *imu;
+            obgc_i2c *i2c = hw_get_i2c(name, &config->i2c, bus);
 
             if (!i2c)
                 return NULL;
 
             if (config->type == obgc_imu_hw_config::OBGC_IMU_I2C_MPU6050)
-                imu = mpu6050_new(config->params.i2c.addr, i2c);
+                imu = mpu6050_new(config->i2c.addr, i2c);
             else
-                imu = mpu9250_new(config->params.i2c.addr, i2c);
+                imu = mpu9250_new(config->i2c.addr, i2c);
 
             if (imu)
                 return (obgc_imu *) hw_setup_ok(name, imu);
@@ -61,16 +65,82 @@ static obgc_imu *hw_setup_imu(const char *name,
         if (!bus->nt)
             return (obgc_imu *) hw_setup_error(name, "NT bus not available");
 
-        {
-            struct obgc_imu_s *imu = nt_imu_new(bus->nt, config->params.nt_id);
+        imu = nt_imu_new(bus->nt, config->nt_id);
+        if (imu)
+            return (obgc_imu *) hw_setup_ok(name, imu);
 
-            if (imu)
-                return (obgc_imu *) hw_setup_ok(name, imu);
-        }
         return (obgc_imu *) hw_setup_error(name, "initialization failed");
 
     default:
         return (obgc_imu *) hw_setup_error(name, "Unknown type");
+    }
+}
+
+static const obgc_motor_hw_config::obgc_motor_drv_hw_pins_s hw_onboard_motor_pins[3] = {
+    { PIN_M0_A, PIN_M0_B, PIN_M0_C, PIN_M0_EN },
+    { PIN_M1_A, PIN_M1_B, PIN_M1_C, PIN_M1_EN },
+    { PIN_M2_A, PIN_M2_B, PIN_M2_C, PIN_M2_EN },
+};
+
+static struct obgc_foc_driver_s *hw_setup_motor(const char *name, int num,
+        const struct obgc_hw_config_s *config_all, struct drivers_s *drivers, struct busses_s *bus) {
+    const obgc_motor_hw_config *config = &config_all->motor[num];
+    struct obgc_foc_driver_s *drv;
+
+    switch (config->type) {
+    case obgc_motor_hw_config::OBGC_MOTOR_NONE:
+        return NULL;
+
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_ONBOARD0:
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_ONBOARD1:
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_ONBOARD2:
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_3IN_1EN:
+        {
+            const obgc_motor_hw_config::obgc_motor_drv_hw_pins_s *pins;
+
+            if (config->type == obgc_motor_hw_config::OBGC_MOTOR_DRV_3IN_1EN)
+                pins = &config->pins;
+            else
+                pins = &hw_onboard_motor_pins[config->type - obgc_motor_hw_config::OBGC_MOTOR_DRV_ONBOARD0];
+
+            drv = motor_drv_3pwm_new(pins->in[0], pins->in[1], pins->in[2], pins->en);
+            if (!drv)
+                return (struct obgc_foc_driver_s *) hw_setup_error(name, "initialization failed");
+
+            return (struct obgc_foc_driver_s *) hw_setup_ok(name, drv);
+        }
+
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_SBGC32_I2C:
+        {
+            const obgc_encoder_hw_config *config_enc = &config_all->encoder[num];
+            enum sbgc32_i2c_drv_encoder_type enc_type = {};
+            static const obgc_hw_config_s::obgc_hw_i2c_addr_s addr = { 0, 0 };
+            obgc_i2c *i2c = hw_get_i2c(name, &addr, bus);
+
+            if (!i2c)
+                return NULL;
+
+            if (config->sbgc32_id < obgc_motor_hw_config::OBGC_SBGC32_I2C_DRV_ID_1 ||
+                    config->sbgc32_id > obgc_motor_hw_config::OBGC_SBGC32_I2C_DRV_ID_4)
+                return (struct obgc_foc_driver_s *) hw_setup_error(name, "bad module ID");
+
+            if (config_enc->type == obgc_encoder_hw_config::OBGC_ENCODER_SBGC32_I2C_DRV)
+                enc_type = config_enc->sbgc32_type;
+
+            drivers->drv_module[num] = sbgc32_i2c_drv_new(
+                    SBGC32_I2C_DRV_ADDR(1 + config->sbgc32_id), i2c, enc_type);
+        }
+        if (drivers->drv_module[num])
+            error_print("SBGC32_I2C_Drv initialized");
+        else
+            return (struct obgc_foc_driver_s *) hw_setup_error(name, "SBGC32_I2C_Drv init failed");
+
+        return (struct obgc_foc_driver_s *) hw_setup_ok(name,
+                sbgc32_i2c_drv_get_motor_drv(drivers->drv_module[num]));
+
+    case obgc_motor_hw_config::OBGC_MOTOR_DRV_NT:
+    default:
+        return (struct obgc_foc_driver_s *) hw_setup_error(name, "Unknown type");
     }
 }
 
@@ -103,8 +173,7 @@ const PinMap PinMap_UART_RX[] = {
 
 void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
         struct obgc_imu_s **main_imu, struct obgc_imu_s **frame_imu,
-        struct obgc_foc_driver_s **motors,
-        struct obgc_encoder_s **encoders) {
+        struct drivers_s *drivers) {
     int i;
     int nt_users = 0;
 
@@ -143,13 +212,13 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
     *main_imu = hw_setup_imu("Main IMU", &config->main_imu, bus);
     *frame_imu = hw_setup_imu("Frame IMU", &config->frame_imu, bus);
 
-#if 0
-    motors[0] = hw_setup_motor("Motor 0", &config->motor[0], bus);
-    motors[1] = hw_setup_motor("Motor 1", &config->motor[1], bus);
-    motors[2] = hw_setup_motor("Motor 2", &config->motor[2], bus);
+    drivers->motor[0] = hw_setup_motor("Motor 0", 0, config, drivers, bus);
+    drivers->motor[1] = hw_setup_motor("Motor 1", 1, config, drivers, bus);
+    drivers->motor[2] = hw_setup_motor("Motor 2", 2, config, drivers, bus);
 
-    encoders[0] = hw_setup_encoder("Encoder 0", &config->encoder[0], motors[0], bus);
-    encoders[1] = hw_setup_encoder("Encoder 1", &config->encoder[1], motors[1], bus);
-    encoders[2] = hw_setup_encoder("Encoder 2", &config->encoder[2], motors[2], bus);
+#if 0
+    drivers->encoder[0] = hw_setup_encoder("Encoder 0", 0, config, drivers, bus);
+    drivers->encoder[1] = hw_setup_encoder("Encoder 1", 1, config, drivers, bus);
+    drivers->encoder[2] = hw_setup_encoder("Encoder 2", 2, config, drivers, bus);
 #endif
 }

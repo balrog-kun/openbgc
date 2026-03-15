@@ -20,16 +20,16 @@ extern "C" {
 #include "util.h"
 }
 
-struct obgc_hw_i2c_addr_s {
-    uint8_t bus;
-    uint8_t addr;
-} __attribute__((packed));
-
 /* Note: changes here may need a STORAGE_CONFIG_VERSION bump in storage.h */
 /* We have no space for a more generic Device-Tree like setup,
  * expose exactly the supported combinations and nothing more.
  */
 struct obgc_hw_config_s {
+    struct obgc_hw_i2c_addr_s {
+        uint8_t bus;
+        uint8_t addr;
+    } __attribute__((packed));
+
     struct obgc_imu_hw_config_s {
         enum {
             OBGC_IMU_NONE,
@@ -37,14 +37,17 @@ struct obgc_hw_config_s {
             OBGC_IMU_I2C_MPU9250, /* TODO: maybe MPUXXXX_AUTO */
             OBGC_IMU_NT,
         } __attribute__((packed)) type;
+
+        enum obgc_nt_imu_id_e {
+            OBGC_NT_IMU_ID_IMU1,
+            OBGC_NT_IMU_ID_IMU2,
+            OBGC_NT_IMU_ID_IMU3,
+        } __attribute__((packed));
+
         union {
             struct obgc_hw_i2c_addr_s i2c;
-            enum obgc_nt_imu_id_e {
-                OBGC_NT_IMU_ID_IMU1,
-                OBGC_NT_IMU_ID_IMU2,
-                OBGC_NT_IMU_ID_IMU3,
-            } __attribute__((packed)) nt_id;
-        } params; /* Can't define enums inline if this is anonymous */
+            enum obgc_nt_imu_id_e nt_id;
+        };
     } main_imu, frame_imu;
     struct obgc_motor_hw_config_s {
         enum {
@@ -56,23 +59,28 @@ struct obgc_hw_config_s {
             OBGC_MOTOR_DRV_SBGC32_I2C,
             OBGC_MOTOR_DRV_NT,
         } __attribute__((packed)) type;
+
+        struct obgc_motor_drv_hw_pins_s {
+            uint8_t in[3];
+            uint8_t en;
+        } __attribute__((packed));
+        enum obgc_sbgc32_i2c_drv_id_e {
+            OBGC_SBGC32_I2C_DRV_ID_1,
+            OBGC_SBGC32_I2C_DRV_ID_2,
+            OBGC_SBGC32_I2C_DRV_ID_3,
+            OBGC_SBGC32_I2C_DRV_ID_4,
+        } __attribute__((packed));
+        enum obgc_nt_motor_id_e {
+            OBGC_NT_MOTOR_ID_PITCH,
+            OBGC_NT_MOTOR_ID_ROLL,
+            OBGC_NT_MOTOR_ID_YAW,
+        } __attribute__((packed));
+
         union {
-            struct obgc_motor_drv_hw_pins_s {
-                uint8_t in[3];
-                uint8_t en;
-            } pins;
-            enum obgc_sbgc32_i2c_drv_id_e {
-                OBGC_SBGC32_I2C_DRV_ID_1,
-                OBGC_SBGC32_I2C_DRV_ID_2,
-                OBGC_SBGC32_I2C_DRV_ID_3,
-                OBGC_SBGC32_I2C_DRV_ID_4,
-            } __attribute__((packed)) sbgc32_id; /* TODO: accept bus num? */
-            enum obgc_nt_motor_id_e {
-                OBGC_NT_MOTOR_ID_PITCH,
-                OBGC_NT_MOTOR_ID_ROLL,
-                OBGC_NT_MOTOR_ID_YAW,
-            } __attribute__((packed)) nt_id;
-        } params;
+            struct obgc_motor_drv_hw_pins_s pins;
+            enum obgc_sbgc32_i2c_drv_id_e sbgc32_id;
+            enum obgc_nt_motor_id_e nt_id;
+        };
     } motor[3];
     struct obgc_encoder_hw_config_s {
         enum {
@@ -84,13 +92,19 @@ struct obgc_hw_config_s {
         union {
             struct obgc_hw_i2c_addr_s i2c; /* .addr ignored for AS5600 */
             enum sbgc32_i2c_drv_encoder_type sbgc32_type;
-        } params;
+        };
     } encoder[3];
 };
 
 struct busses_s {
     obgc_i2c *i2c_main, *i2c_int; /* External and internal in SBGC Serial API docs */
     obgc_nt_bus_t *nt;
+};
+
+struct drivers_s {
+    sbgc32_i2c_drv *drv_module[3];
+    obgc_encoder *encoder[3];
+    obgc_foc_driver *motor[3];
 };
 
 /* platformio passes: -DARDUINO_SIMPLEBGC32_REGULAR -DBOARD_NAME=\"SIMPLEBGC32_REGULAR\".
@@ -193,6 +207,20 @@ struct busses_s {
 # define PIN_RC_ROLL        SBGC_IN_RC_ROLL
 # define PIN_MODE           SBGC_IN_MODE
 
+/* Mirror framework-arduinoststm32/variants/STM32F1xx/F103R\(C-D-E\)T/variant_STORM32_V1_31_RC.h motor macros */
+# define PIN_M0_A           SBGC_YAW_DRV8313_IN1
+# define PIN_M0_B           SBGC_YAW_DRV8313_IN2
+# define PIN_M0_C           SBGC_YAW_DRV8313_IN3
+# define PIN_M0_EN          SBGC_YAW_DRV8313_EN123
+# define PIN_M1_A           SBGC_PITCH_DRV8313_IN1
+# define PIN_M1_B           SBGC_PITCH_DRV8313_IN2
+# define PIN_M1_C           SBGC_PITCH_DRV8313_IN3
+# define PIN_M1_EN          SBGC_PITCH_DRV8313_EN123
+# define PIN_M2_A           SBGC_ROLL_DRV8313_IN1
+# define PIN_M2_B           SBGC_ROLL_DRV8313_IN2
+# define PIN_M2_C           SBGC_ROLL_DRV8313_IN3
+# define PIN_M2_EN          SBGC_ROLL_DRV8313_EN123
+
 #elif BOARD_STORM32_STM32F1
 
 # define PIN_VBAT           LIPO
@@ -213,10 +241,18 @@ struct busses_s {
 # define PIN_RC_ROLL        RC2_2
 # define PIN_MODE           USER_BTN
 
-# define SBGC_YAW_DRV8313_IN1   M0_A
-# define SBGC_YAW_DRV8313_IN2   M0_B
-# define SBGC_YAW_DRV8313_IN3   M0_C
-# define SBGC_YAW_DRV8313_EN123 0
+# define PIN_M0_A           M0_A
+# define PIN_M0_B           M0_B
+# define PIN_M0_C           M0_C
+# define PIN_M0_EN          0 /* No EN pin, i.e. motors always driven or braking */
+# define PIN_M1_A           M1_A
+# define PIN_M1_B           M1_B
+# define PIN_M1_C           M1_C
+# define PIN_M1_EN          0
+# define PIN_M2_A           M2_A
+# define PIN_M2_B           M2_B
+# define PIN_M2_C           M2_C
+# define PIN_M2_EN          0
 
 #endif
 
@@ -267,7 +303,6 @@ static inline void hw_early_i2c_init(struct busses_s *bus) {
 void hw_storage_init(struct busses_s *bus);
 void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
         struct obgc_imu_s **main_imu, struct obgc_imu_s **frame_imu,
-        struct obgc_foc_driver_s **motors,
-        struct obgc_encoder_s **encoders);
+        struct drivers_s *drivers);
 
 #endif /* HW_H */

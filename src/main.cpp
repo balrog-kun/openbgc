@@ -20,18 +20,13 @@ extern "C" {
 #include "main.h"
 }
 
-/* Keep SimpleFOC support as a backup.  SimpleFOC doesn't autodetect .pole_pairs so they come from the user */
-#define SBGC_MOTOR0_PAIRS  11
-static const struct obgc_motor_calib_data_s sfoc_motor0_calib = { .bldc_with_encoder = { SBGC_MOTOR0_PAIRS, 3.7, 1 } };
-
 static obgc_imu *main_imu;
 static obgc_ahrs *main_ahrs;
 static obgc_imu *frame_imu;
 static obgc_ahrs *frame_ahrs;
-static sbgc32_i2c_drv *drv_modules[3];
-static obgc_encoder *encoders[3];
-static obgc_foc_driver *motor_drivers[3], *beep_driver;
+static obgc_foc_driver *beep_driver;
 static obgc_motor *motors[3];
+static struct drivers_s drivers;
 static struct busses_s bus;
 static ConsoleSerial *serial;
 
@@ -471,7 +466,7 @@ static void control_update_aux_values(void) {
 static void control_setup(void) {
     control.main_ahrs = main_ahrs;
     control.frame_ahrs = frame_ahrs;
-    control.encoders = encoders;
+    control.encoders = drivers.encoder;
     control.motors = motors;
     control.axes = &config.axes;
 
@@ -541,10 +536,10 @@ static void control_setup(void) {
             int i;
 
             for (i = 0; i < 3; i++)
-                encoder_update(encoders[i]);
+                encoder_update(drivers.encoder[i]);
 
             /* Can't leave frame_q uninitialized */
-            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q, frame_q, false);
+            axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, frame_ahrs, rel_q, frame_q, false);
         }
     }
 }
@@ -600,7 +595,8 @@ static void motors_on_off(bool on) {
     else
         serial->println("Motors off");
 
-    if (on && (encoders[0]->cls->motor_based || encoders[1]->cls->motor_based || encoders[2]->cls->motor_based)) {
+    if (on && (drivers.encoder[0]->cls->motor_based || drivers.encoder[1]->cls->motor_based ||
+                drivers.encoder[2]->cls->motor_based)) {
 #if 0
         /* Give the motors a moment to snap to the initial electrical angle and
          * stabilize before we set any target veloocity.
@@ -615,7 +611,7 @@ static void motors_on_off(bool on) {
             /* Encoder readings only start to be valid now so update everything
              * that depends on them.
              */
-            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q,
+            axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, frame_ahrs, rel_q,
                     frame_q, config.control.tripod_mode);
 
             if (config.control.tripod_mode)
@@ -633,10 +629,18 @@ void main_emergency_stop_low_level(void) {
      * Will digitalWrite() to SBGC_DRV8313_IN1/2/3 override the timer driven PWM signal in
      * SimpleFOC?  In theory writing SBGC_DRV8313_EN123 should suffice.
      */
-    digitalWrite(SBGC_YAW_DRV8313_EN123, 0);
-    digitalWrite(SBGC_YAW_DRV8313_IN1, 0);
-    digitalWrite(SBGC_YAW_DRV8313_IN2, 0);
-    digitalWrite(SBGC_YAW_DRV8313_IN3, 0);
+    digitalWrite(PIN_M0_EN, 0);
+    digitalWrite(PIN_M1_EN, 0);
+    digitalWrite(PIN_M2_EN, 0);
+    digitalWrite(PIN_M0_A, 0);
+    digitalWrite(PIN_M0_B, 0);
+    digitalWrite(PIN_M0_C, 0);
+    digitalWrite(PIN_M1_A, 0);
+    digitalWrite(PIN_M1_B, 0);
+    digitalWrite(PIN_M1_C, 0);
+    digitalWrite(PIN_M2_A, 0);
+    digitalWrite(PIN_M2_B, 0);
+    digitalWrite(PIN_M2_C, 0);
 
     /* TODO: use low-level I2C register accesses to reset the bus state and send
      * I2C_DRV_REG_SET_ENABLE = 0 to the remote drivers.  We may want to do this in a
@@ -666,14 +670,14 @@ void main_shutdown_high_level(void) {
         if (motors[i])
             motors[i]->cls->free(motors[i]);
     for (i = 0; i < 3; i++)
-        if (encoders[i])
-            encoders[i]->cls->free(encoders[i]);
+        if (drivers.encoder[i])
+            drivers.encoder[i]->cls->free(drivers.encoder[i]);
     for (i = 0; i < 3; i++)
-        if (motor_drivers[i])
-            motor_drivers[i]->cls->free(motor_drivers[i]);
+        if (drivers.motor[i])
+            drivers.motor[i]->cls->free(drivers.motor[i]);
     for (i = 0; i < 3; i++)
-        if (drv_modules[i])
-            sbgc32_i2c_drv_free(drv_modules[i]);
+        if (drivers.drv_module[i])
+            sbgc32_i2c_drv_free(drivers.drv_module[i]);
     if (bus.i2c_main) {
         bus.i2c_main->end();
         delete bus.i2c_main;
@@ -1114,11 +1118,11 @@ handle_set_param:
             for (i = 0; i < 3; i++) {
                 float scale;
 
-                if (!encoders[i])
+                if (!drivers.encoder[i])
                     continue;
 
                 scale = config.have_axes ? config.axes.encoder_scale[i] : 1.0f;
-                angles[i] = encoders[i]->reading * scale + (scale < 0 ? 360 : 0);
+                angles[i] = drivers.encoder[i]->reading * scale + (scale < 0 ? 360 : 0);
 
                 serial->print("Encoder ");
                 serial->print(i);
@@ -1190,7 +1194,7 @@ handle_set_param:
              */
 
             for (i = 0; i < 3; i++)
-                cs.encoders[i] = encoders[i]->cls->motor_based ? NULL : encoders[i];
+                cs.encoders[i] = drivers.encoder[i]->cls->motor_based ? NULL : drivers.encoder[i];
 
             /* axes_calibrate() runs its own main loop, quiet our ahrs debug info */
             quiet = 1;
@@ -1257,9 +1261,9 @@ handle_set_param:
         memcpy(control.settings->home_q, main_ahrs->q, sizeof(control.settings->home_q));
         memcpy(control.settings->home_frame_q, frame_q, sizeof(control.settings->home_frame_q));
         for (i = 0; i < 3; i++) {
-            float home_angle = encoders[i]->reading_rad;
+            float home_angle = drivers.encoder[i]->reading_rad;
 
-            if (encoders[i]->cls->motor_based && motors_on) {
+            if (drivers.encoder[i]->cls->motor_based && motors_on) {
                 obgc_motor_calib_data *data = &config.motor_calib[i];
 
                 /* Shift the mechanical 0 angle to the home angle so that whenever motor
@@ -1422,7 +1426,7 @@ handle_set_param:
                 /* If no encoder, try to update config.axes.axis_to_encoder since
                  * axes_calibrate() didn't have the data we have now.
                  */
-                if (encoders[i]->cls->motor_based && config.have_axes) {
+                if (drivers.encoder[i]->cls->motor_based && config.have_axes) {
                     float max_cos_align = 0;
                     int best = -1;
 
@@ -2121,7 +2125,21 @@ void setup(void) {
     else
         memset(&config, 0, sizeof(config));
 
-    hw_setup(&config.hw, &bus, &main_imu, &frame_imu, motor_drivers, encoders);
+    /*
+     * We stopped using the SimpleFOC high-level motor abstraction so that we can use common code for
+     * both the on-board motor drivers (which SimpleFOC can handle), if any, and the motors connected to
+     * SBGC32_I2C_Drv extension boards (which SimpleFOC cannot handle out of the box), again, if any.
+     *
+     * For the on-board driver we still use SimpleFOC's low-level abstraction to give us the following:
+     *   * STM32 PWM output timer setup,
+     *   * the PWM output sine modulation, or one of the other 3 modes available.
+     */
+#define MOTOR_DEBUG
+#ifdef MOTOR_DEBUG
+    SimpleFOCDebug::enable(serial);
+#endif
+
+    hw_setup(&config.hw, &bus, &main_imu, &frame_imu, &drivers);
 
     /* Board debug info */
     // scan_i2c(bus.i2c_main);
@@ -2188,66 +2206,29 @@ void setup(void) {
         serial->println("Frame AHRS initialized!");
     }
 
-    if (bus.i2c_main) {
-        drv_modules[0] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(1), bus.i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-        drv_modules[1] = sbgc32_i2c_drv_new(SBGC32_I2C_DRV_ADDR(4), bus.i2c_main, SBGC32_I2C_DRV_ENC_TYPE_AS5600);
-        if (drv_modules[0] && drv_modules[1])
-            serial->println("SBGC32_I2C_Drv initialized");
-        else
-            serial->println("SBGC32_I2C_Drv init failed");
-    }
-
 #define ENCODERS
 #ifdef ENCODERS
-    encoders[0] = as5600_new(bus.i2c_main);
-    encoders[1] = sbgc32_i2c_drv_get_encoder(drv_modules[0]);
-    encoders[2] = sbgc32_i2c_drv_get_encoder(drv_modules[1]);
+    drivers.encoder[0] = as5600_new(bus.i2c_main);
+    if (drivers.drv_module[1])
+        drivers.encoder[1] = sbgc32_i2c_drv_get_encoder(drivers.drv_module[1]);
+    if (drivers.drv_module[2])
+        drivers.encoder[2] = sbgc32_i2c_drv_get_encoder(drivers.drv_module[2]);
     serial->println("Encoders initialized");
 #endif
 
-    /*
-     * We stopped using the SimpleFOC high-level motor abstraction so that we can use common code for
-     * both the on-board motor driver (which SimpleFOC can handle), if any, and the motors connected to
-     * SBGC32_I2C_Drv extension boards (which SimpleFOC cannot handle out of the box), again, if any.
-     *
-     * For the on-board driver we still use SimpleFOC's low-level abstraction to give us the following:
-     *   * STM32 PWM output timer setup,
-     *   * the PWM output sine modulation, or one of the other 3 modes available.
-     *
-     * Keep the code below in case we need to cross check something against SimpleFOC.
-     */
-#define MOTOR_DEBUG
-#ifdef MOTOR_DEBUG
-    SimpleFOCDebug::enable(serial);
-#endif
-#if 0
-    /* SimpleFOC as a full motor object */
-    motors[0] = motor_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2, SBGC_YAW_DRV8313_IN3,
-            SBGC_YAW_DRV8313_EN123, encoders[0], &sfoc_motor0_calib);
-#endif
-
-    /* SimpleFOC as a PWM output driver only */
-    motor_drivers[0] = motor_drv_3pwm_new(SBGC_YAW_DRV8313_IN1, SBGC_YAW_DRV8313_IN2,
-            SBGC_YAW_DRV8313_IN3, SBGC_YAW_DRV8313_EN123);
-    beep_driver = motor_drivers[0];
-    if (!motor_drivers[0])
-        serial->println("Motor 0 driver init failed!");
-
-    if (drv_modules[0])
-        motor_drivers[1] = sbgc32_i2c_drv_get_motor_drv(drv_modules[0]);
-    if (drv_modules[1])
-        motor_drivers[2] = sbgc32_i2c_drv_get_motor_drv(drv_modules[1]);
-
     /* 'm' to autocalibrate and print new values */
     for (i = 0; i < 3; i++) {
-        if (!motor_drivers[i])
+        if (!drivers.motor[i])
             continue;
 
+        if (!beep_driver && drivers.motor[i]->cls->beep)
+            beep_driver = drivers.motor[0];
+
 #ifdef ENCODERS
-        motors[i] = motor_bldc_with_encoder_new(encoders[i], motor_drivers[i]);
+        motors[i] = motor_bldc_with_encoder_new(drivers.encoder[i], drivers.motor[i]);
 #else
-        motors[i] = motor_bldc_new(main_ahrs, motor_drivers[i]);
-        encoders[i] = motor_bldc_get_synthetic_encoder(motors[i]);
+        motors[i] = motor_bldc_new(main_ahrs, drivers.motor[i]);
+        drivers.encoder[i] = motor_bldc_get_synthetic_encoder(motors[i]);
 #endif
         motors[i]->pid_params = &config.motor_pid[i];
 
@@ -2358,14 +2339,14 @@ void loop(void) {
     if (ENCODERS_CYCLE) {
         /* Read the encoders for everyone, there are multiple users */
         for (i = 0; i < 3; i++)
-            encoder_update(encoders[i]);
+            encoder_update(drivers.encoder[i]);
     }
 
     PERF_SAVE_TS;
 
     if (config.have_axes) {
         if (AXES_JACOBIAN_CYCLE)
-            axes_precalc_rel_q(&config.axes, encoders, main_ahrs, frame_ahrs, rel_q,
+            axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, frame_ahrs, rel_q,
                     frame_q, config.control.tripod_mode);
 
         PERF_SAVE_TS;
@@ -2408,7 +2389,7 @@ static void setup_loop(void) {
     PERF_SAVE_TS;
 
     for (i = 0; i < 3; i++)
-        encoder_update(encoders[i]);
+        encoder_update(drivers.encoder[i]);
 
     PERF_SAVE_TS;
 
