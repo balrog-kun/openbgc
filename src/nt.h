@@ -5,12 +5,14 @@
 #include <Arduino.h>
 
 #include "imu.h"
+#include "motor.h"
 #include "util.h"
 
 typedef struct obgc_nt_bus_s {
     Stream *port;
     unsigned long trigger_ts;
     uint16_t error_cnt;
+    uint8_t motor_set_cmd[12];
 } obgc_nt_bus_t;
 
 /* Values from https://www.olliw.eu/storm32bgc-v2-wiki/NT_Bus_Protocol */
@@ -144,6 +146,19 @@ static inline void ntbus_check_trigger(obgc_nt_bus_t *nt, unsigned long *access_
     *access_ts = now;
 }
 
+static inline void ntbus_send_motor_set(obgc_nt_bus_t *nt, enum ntbus_id_e target_id) {
+    uint8_t *buf = nt->motor_set_cmd;
+    int i;
+
+    /* Send to just this motor but include all motors' data just in case */
+    buf[0] = NTBUS_STX | NTBUS_SET | target_id;
+    buf[11] = buf[1];
+    for (i = 2; i < 11; i++)
+        buf[11] ^= buf[i];
+
+    nt->port->write(buf, 12);
+}
+
 struct nt_imu_s {
     obgc_imu obj;
     obgc_nt_bus_t *nt;
@@ -181,7 +196,7 @@ static void nt_imu_free(struct nt_imu_s *dev) {
     free(dev);
 }
 
-static inline obgc_imu *nt_imu_new(obgc_nt_bus_t *bus, uint8_t id) {
+static inline obgc_imu *nt_imu_new(obgc_nt_bus_t *bus, uint8_t id /*enum obgc_nt_imu_id_e*/) {
     struct nt_imu_s *imu;
     static enum ntbus_id_e nt_ids[] = { NTBUS_ID_IMU1, NTBUS_ID_IMU2, NTBUS_ID_IMU3 };
     static obgc_imu_class nt_imu_class = {
@@ -216,6 +231,111 @@ static inline obgc_imu *nt_imu_new(obgc_nt_bus_t *bus, uint8_t id) {
     imu->nt = bus;
     imu->id = nt_ids[id];
     return &imu->obj;
+}
+
+struct nt_motor_drv_s {
+    obgc_foc_driver motor_drv_obj;
+    obgc_nt_bus_t *nt;
+    enum ntbus_id_e id;
+    unsigned long access_ts;
+    bool has_encoder;
+};
+
+static void nt_motor_drv_set_phase_voltage(obgc_foc_driver *motor_drv, float v_q, float v_d, float theta) {
+    struct nt_motor_drv_s *dev = container_of(motor_drv, struct nt_motor_drv_s, motor_drv_obj);
+
+    ntbus_check_trigger(dev->nt, &dev->access_ts);
+
+    uint8_t power;
+    uint16_t angle;
+
+    /* Only handle v_q or v_d but not both at once, for now, since there are no users and it will involve complex trig */
+    if (v_d != 0.0f) {
+        if (v_d < 0.0f)
+            theta += 180.0f;
+    } else {
+        v_d = v_q;
+        theta += v_q > 0.0f ? 90.0f : -90.0f;
+    }
+
+    power = fabsf(v_d) * 0x7f;
+    angle = (uint16_t) (uint32_t) lroundf(theta * (0x4000 / 360.0f));
+
+    uint8_t idx = dev->id - NTBUS_ID_MOTORPITCH;
+    uint8_t *buf = dev->nt->motor_set_cmd;
+
+    buf[2 + idx * 3 + 0] = power;
+    buf[2 + idx * 3 + 1] = (angle >> 0) & 0x7f;
+    buf[2 + idx * 3 + 2] = (angle >> 7) & 0x7f;
+
+    ntbus_send_motor_set(dev->nt, dev->id);
+}
+
+static int nt_motor_drv_on(obgc_foc_driver *motor_drv) {
+    struct nt_motor_drv_s *dev = container_of(motor_drv, struct nt_motor_drv_s, motor_drv_obj);
+
+    uint8_t idx = dev->id - NTBUS_ID_MOTORPITCH;
+    uint8_t *buf = dev->nt->motor_set_cmd;
+
+    /* TODO: Not clear if the global flag is the OR or AND of the other flags, assume OR */
+    buf[1] |= (1 << idx) | 0x10;
+
+    /* Don't send, wait for the new phasor command */
+    return 0;
+}
+
+static void nt_motor_drv_off(obgc_foc_driver *motor_drv) {
+    struct nt_motor_drv_s *dev = container_of(motor_drv, struct nt_motor_drv_s, motor_drv_obj);
+
+    uint8_t idx = dev->id - NTBUS_ID_MOTORPITCH;
+    uint8_t *buf = dev->nt->motor_set_cmd;
+
+    buf[1] &= ~(1 << idx);
+    if (!(buf[1] & 7))
+        buf[1] &= ~0x10;
+
+    ntbus_send_motor_set(dev->nt, dev->id);
+}
+
+static void nt_motor_drv_free(obgc_foc_driver *motor_drv) {
+    nt_motor_drv_off(motor_drv);
+    free(motor_drv);
+}
+
+static inline obgc_foc_driver *nt_motor_drv_new(obgc_nt_bus_t *bus, uint8_t id /*enum obgc_nt_motor_id_e*/) {
+    struct nt_motor_drv_s *drv;
+    enum ntbus_id_e nt_id = (enum ntbus_id_e) (NTBUS_ID_MOTORPITCH + id);
+    static obgc_foc_driver_class nt_motor_drv_class = {
+        .set_phase_voltage = nt_motor_drv_set_phase_voltage,
+        .on                = nt_motor_drv_on,
+        .off               = nt_motor_drv_off,
+        .free              = nt_motor_drv_free,
+        /* TODO: .beep */
+    };
+    static const char *model[] =
+        { "unknown", "TLE5012B", "AS5048A", "pot", "MA7325", "hall" };
+    uint8_t version[17], config[3], status[2];
+    char msg[50];
+
+    if (ntbus_req(bus, nt_id, NTBUS_CMD, NTBUS_CMD_GETVERSIONSTR, version, 17) < 0 ||
+            ntbus_req(bus, nt_id, NTBUS_CMD, NTBUS_CMD_GETCONFIGURATION, config, 3) < 0 ||
+            ntbus_req(bus, nt_id, NTBUS_CMD, NTBUS_CMD_GETSTATUS, status, 2) < 0)
+        return NULL;
+
+    version[17] = '\0';
+    config[0] &= 7;
+    if (config[0] > ARRAY_SIZE(model))
+        config[0] = 0;
+    sprintf(msg, "NT Motor Module fw %s, encoder type %s", (const char *) version, model[config[0]]);
+    error_print(msg);
+
+    drv = (struct nt_motor_drv_s *) malloc(sizeof(*drv));
+    memset(drv, 0, sizeof(*drv));
+    drv->motor_drv_obj.cls = &nt_motor_drv_class;
+    drv->nt = bus;
+    drv->id = nt_id;
+    drv->has_encoder = status[0] >> 7;
+    return &drv->motor_drv_obj;
 }
 
 #endif /* NT_H */

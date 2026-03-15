@@ -139,6 +139,15 @@ static struct obgc_foc_driver_s *hw_setup_motor(const char *name, int num,
                 sbgc32_i2c_drv_get_motor_drv(drivers->drv_module[num]));
 
     case obgc_motor_hw_config::OBGC_MOTOR_DRV_NT:
+        if (!bus->nt)
+            return (struct obgc_foc_driver_s *) hw_setup_error(name, "NT bus not available");
+
+        drv = nt_motor_drv_new(bus->nt, config->nt_id);
+        if (drv)
+            return (struct obgc_foc_driver_s *) hw_setup_ok(name, drv);
+
+        return (struct obgc_foc_driver_s *) hw_setup_error(name, "initialization failed");
+
     default:
         return (struct obgc_foc_driver_s *) hw_setup_error(name, "Unknown type");
     }
