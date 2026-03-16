@@ -8,6 +8,10 @@
 #include <TwoWire.h>
 #include <FlexWire.h>
 
+extern "C" {
+#include "main.h"
+}
+
 /* Common base class for TwoWire and other I2C imlpementations (software or hardware) since
  * none of the common libraries declare a usable base class.  We could maybe have the template
  * inherit from the library classes but composition is supposedly preferred anyway.  Or we
@@ -33,6 +37,30 @@ public:
     virtual int read() = 0;
 
     uint16_t error_cnt;
+
+    void scan(void) {
+        char msg[100];
+
+        error_print("Scanning I2C bus...");
+        uint8_t found = 0;
+        for (uint8_t address = 1; address < 127; address++) {
+            beginTransmission(address);
+            uint8_t error = endTransmission();
+
+            if (error == 0) {
+                found++;
+                sprintf(msg, "Device found at 0x%02x", address);
+                error_print(msg);
+            }
+        }
+
+        if (found == 0)
+            error_print("No I2C devices found!");
+        else {
+            sprintf(msg, "%i device(s) found", found);
+            error_print(msg);
+        }
+    }
 };
 
 template<typename wire_type>

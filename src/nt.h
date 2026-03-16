@@ -370,4 +370,39 @@ static inline obgc_foc_driver *nt_motor_drv_new(obgc_nt_bus_t *bus, uint8_t id /
     return &drv->motor_drv_obj;
 }
 
+static inline void ntbus_scan(obgc_nt_bus_t *nt) {
+    char msg[100];
+
+    error_print("Scanning NT bus...");
+    uint8_t found = 0;
+    for (uint8_t id = 0; id < 16; id++) {
+        uint8_t resp[17];
+        int r;
+
+        if (IN_SET(id, NTBUS_ID_ALLMODULES, NTBUS_ID_MOTORALL))
+            continue;
+
+        nt->port->write(NTBUS_STX | NTBUS_CMD | id);
+        nt->port->write(NTBUS_CMD_GETBOARDSTR);
+        nt->port->write(NTBUS_CMD_GETBOARDSTR); /* XOR over the data bytes, ie. the ones without NTBUS_STX */
+
+        if (ntbus_read_resp(nt, resp, 17) < 0)
+            continue;
+
+        found++;
+        r = ntbus_validate_resp(resp, 17);
+        resp[16] = '\0';
+
+        sprintf(msg, "Device found at %i: %s", id, r == 0 ? (const char *) resp : "NT response format error");
+        error_print(msg);
+    }
+
+    if (found == 0) {
+        error_print("No NT devices found!");
+    } else {
+        sprintf(msg, "%i device(s) found", found);
+        error_print(msg);
+    }
+}
+
 #endif /* NT_H */
