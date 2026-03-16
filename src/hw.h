@@ -200,7 +200,21 @@ struct drivers_s {
 # define PIN_I2C_MAIN_SDA   SBGC_SDA_MAIN
 # define PIN_I2C_MAIN_SCL   SBGC_SCL_MAIN
 # define PIN_I2C_INT_SDA    SBGC_SDA_AUX
-# define PIN_I2C_INT_SCL    SBGC_SCL_MAIN
+# define PIN_I2C_INT_SCL    SBGC_SCL_AUX
+
+/* PilotFly H2 I2C scan output:
+ * main:
+ * Device found at 0x19 -- SBGC32_I2C_DRV_ADDR(1)
+ * Device found at 0x1c -- SBGC32_I2C_DRV_ADDR(4)
+ * Device found at 0x36 -- AS5600 encoder
+ * Device found at 0x68 -- MPUXXXX_DEFAULT_ADDR
+ * Device found at 0x69 -- MPUXXXX_ALT_ADDR
+ * 5 device(s) found
+ * aux:
+ * Device found at 0x50 -- MC_24FC256_BASE_ADDR
+ * Device found at 0x64 -- unmarked 8-pin chip, no register reads by address, reads 0x04 0x11 0x33 0x43 once a second.
+ * 2 device(s) found
+ */
 
 # define PIN_RC_YAW         SBGC_IN_RC_YAW
 # define PIN_RC_PITCH       SBGC_IN_RC_PIT
