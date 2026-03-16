@@ -5,7 +5,7 @@ import re
 QUALIFIER_RE = re.compile(r"\b(const|volatile|restrict)\b\s*")
 ARRAY_RE = re.compile(r"(.*?)(\[[0-9]+\])+$")
 ARRAY_DIM_RE = re.compile(r"\[([0-9]+)\]")
-ENUM_RE = re.compile(r"enum(?:\s+([a-zA-Z_]\w*))?\s*(?::\s*([^{]+))?\s*\{([^}]+)\}")
+ENUM_RE = re.compile(r"enum(?:\s+([a-zA-Z_]\w*))?\s*(?::\s*([^{]+)\s*)?\{([^}]+)\}")
 
 def strip_qualifiers(s: str) -> str:
     return QUALIFIER_RE.sub("", s).strip()

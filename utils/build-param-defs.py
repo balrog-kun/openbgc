@@ -11,14 +11,14 @@ params = {}
 
 for param in param_map:
     # TODO: use gdb.parse_and_eval(), lookup_type()
-    _id = int(gdb.execute(f'print (int) {param.enum_id}', to_string=True).split('=')[1].strip())
+    _id = int(gdb.execute(f'print (int) {param.enum_id}', to_string=True).split('=', 1)[1].strip())
     if ParamFlag.const in param.flags:
         size = 4
         typ = 'uint32_t'
     else:
         # Print size as known to gdb, avoid complex lookup in the params array
-        size = int(gdb.execute(f'print sizeof({param.name})', to_string=True).split('=')[1].strip())
-        typ = strip_qualifiers(gdb.execute(f'ptype {param.name}', to_string=True).split('=')[1].strip())
+        size = int(gdb.execute(f'print sizeof({param.name})', to_string=True).split('=', 1)[1].strip())
+        typ = strip_qualifiers(gdb.execute(f'ptype {param.name}', to_string=True).split('=', 1)[1].strip())
     name = c_expr_to_param_name(param.name)
     params[_id] = ParamDef(_id, name, size, typ, int(param.flags))
     print(f' {_id}: ParamDef({_id}, \'{name}\', {size}, \'{typ}\', ParamFlag({param.flags})),')
