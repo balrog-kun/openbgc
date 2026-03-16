@@ -121,48 +121,6 @@ static void detect_mcu() {
     serial->println(SCB->CPUID, HEX);
 }
 
-static void scan_i2c(obgc_i2c *bus) {
-    if (!bus)
-        return;
-
-    serial->println("Scanning I2C bus...");
-    uint8_t found = 0;
-    for (uint8_t address = 1; address < 127; address++) {
-        bus->beginTransmission(address);
-        uint8_t error = bus->endTransmission();
-
-        if (error == 0) {
-            serial->print("Device found at 0x");
-            if (address < 16)
-                serial->print("0");
-            serial->println(address, HEX);
-            found++;
-        }
-    }
-
-    if (found == 0) {
-        serial->println("No I2C devices found!");
-    } else {
-        serial->print(found);
-        serial->println(" device(s) found");
-    }
-
-    /*
-     * PilotFly H2 output:
-     * main:
-     * Device found at 0x19 -- SBGC32_I2C_DRV_ADDR(1)
-     * Device found at 0x1c -- SBGC32_I2C_DRV_ADDR(4)
-     * Device found at 0x36 -- AS5600 encoder
-     * Device found at 0x68 -- MPUXXXX_DEFAULT_ADDR
-     * Device found at 0x69 -- MPUXXXX_ALT_ADDR
-     * 5 device(s) found
-     * aux:
-     * Device found at 0x50 -- MC_24FC256_BASE_ADDR
-     * Device found at 0x64 -- unmarked 8-pin chip, no register reads by address, reads 0x04 0x11 0x33 0x43 once a second.
-     * 2 device(s) found
-     */
-}
-
 static const uint8_t probe_out_pins[] = {
     PA4, PA5, PA6, PA7, PB0, PB1, PB2, PB10, PB11
 };
@@ -1499,6 +1457,14 @@ handle_set_param:
         }
         break;
 #endif
+    case '/':
+        if (bus.i2c_main)
+            bus.i2c_main->scan();
+        if (bus.i2c_int)
+            bus.i2c_int->scan();
+        if (bus.nt && PIN_NT_RX != 0)
+            ntbus_scan(bus.nt);
+        break;
     case 27:
         if (!serial->available())
             delay(5);
@@ -2123,10 +2089,6 @@ void setup(void) {
 #endif
 
     hw_setup(&config.hw, &bus, &main_imu, &frame_imu, &drivers);
-
-    /* Board debug info */
-    // scan_i2c(bus.i2c_main);
-    // scan_i2c(bus.i2c_int);
 
     /* We control the LPF cut-off frequency and the sampling rate of the MPU6050.  We want
      * to minimize the noise, which would be achieved by setting the highest sample rate,
