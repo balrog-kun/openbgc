@@ -971,6 +971,7 @@ start:
         goto start;
     }
 
+    /* Note: a lot of this to be hidden behind #ifdef DEBUG for space saving */
     switch (cmd) {
     case 'q':
         serial->println("Shutting down and jumping to bootloader");

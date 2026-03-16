@@ -38,7 +38,7 @@ static void mpuxxxx_free(struct mpuxxxx_s *dev) {
 // #define USE_FIFO
 // #define BLOCK_UNTIL_NEW_DATA
 
-static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gyro) {
+static int mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gyro) {
 #ifdef USE_FIFO
     uint16_t byte_cnt = 0;
     uint8_t sample_cnt;
@@ -61,8 +61,10 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
 # endif
         if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPUXXXX_REG_FIFO_COUNT, 1, true) != 2) {
             dev->i2c->error_cnt++;
-            /* TODO: report error */
-            return;
+# ifdef DEBUG
+            error_print("fifo_count req err");
+# endif
+            return -1;
         }
 
         byte_cnt = (uint16_t) dev->i2c->read() << 8;
@@ -122,8 +124,10 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
             if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt_chunk, MPUXXXX_REG_FIFO_R_W, 1, true) !=
                     byte_cnt_chunk) {
                 dev->i2c->error_cnt++;
-                /* TODO: report error */
-                return;
+# ifdef DEBUG
+                error_print("recovery chunk req err");
+# endif
+                return -1;
             }
 
             if (byte_cnt)
@@ -137,8 +141,10 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
              */
             if (dev->i2c->requestFrom(dev->i2c_addr, (uint8_t) 2, MPUXXXX_REG_FIFO_COUNT, 1, true) != 2) {
                 dev->i2c->error_cnt++;
-                /* TODO: report error */
-                return;
+# ifdef DEBUG
+                error_print("recovery fifo_count rereq err");
+# endif
+                return -1;
             }
 
             byte_cnt = (uint16_t) dev->i2c->read() << 8;
@@ -149,8 +155,10 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
 
     if (dev->i2c->requestFrom(dev->i2c_addr, reg_data_size, MPUXXXX_REG_DATA_START, 1, true) != reg_data_size) {
         dev->i2c->error_cnt++;
-        /* TODO: report error */
-        return;
+#ifdef DEBUG
+        error_print("acc req err");
+#endif
+        return -1;
     }
 
     for (uint8_t i = 0; i < reg_data_size; i++)
@@ -167,7 +175,7 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
     dev->last_temp = (int16_t) (buffer[6] << 8 | buffer[7]);
 
     if (!gyro)
-        return;
+        return 0;
 
     /* Gyroscope data */
 #ifdef USE_FIFO
@@ -183,8 +191,10 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
 
         if (dev->i2c->requestFrom(dev->i2c_addr, byte_cnt, MPUXXXX_REG_FIFO_R_W, 1, true) != byte_cnt) {
             dev->i2c->error_cnt++;
-            /* TODO: report error */
-            return;
+#ifdef DEBUG
+            error_print("chunk read err");
+#endif
+            return -1;
         }
 
         while (sample_cnt_chunk--) {
@@ -220,22 +230,24 @@ static void mpuxxxx_read_main(struct mpuxxxx_s *dev, int32_t *accel, int32_t *gy
     gyro[0] = gyro_total[0] / sample_cnt;
     gyro[1] = gyro_total[1] / sample_cnt;
     gyro[2] = gyro_total[2] / sample_cnt;
-    return;
+    return 0;
 
 failsafe:
 #endif
     gyro[0] = (int16_t) (buffer[8] << 8 | buffer[9]);
     gyro[1] = (int16_t) (buffer[10] << 8 | buffer[11]);
     gyro[2] = (int16_t) (buffer[12] << 8 | buffer[13]);
+    return 0;
 }
 
-static void mpuxxxx_read_temp(struct mpuxxxx_s *dev, int32_t *temp) {
+static int mpuxxxx_read_temp(struct mpuxxxx_s *dev, int32_t *temp) {
     *temp = ((int32_t) dev->last_temp << 16) / 340 + (int32_t) (36.53f * 65536);
+    return 0;
 }
 
 static obgc_imu_class mpuxxxx_imu_class = {
-    .read_main   = (void (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpuxxxx_read_main,
-    .read_temp   = (void (*)(obgc_imu *imu, int32_t *temp_out)) mpuxxxx_read_temp,
+    .read_main   = (int (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) mpuxxxx_read_main,
+    .read_temp   = (int (*)(obgc_imu *imu, int32_t *temp_out)) mpuxxxx_read_temp,
     .free        = (void (*)(obgc_imu *imu)) mpuxxxx_free,
     .accel_scale = 65536, /* LSBs per 1g */
     .gyro_scale  = 131,   /* LSBs per 1deg/s */

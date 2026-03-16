@@ -11,8 +11,8 @@ typedef struct obgc_imu_s {
 } obgc_imu;
 
 typedef struct obgc_imu_class_s {
-    void (*read_main)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out);
-    void (*read_temp)(obgc_imu *imu, int32_t *temp_out);
+    int (*read_main)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out);
+    int (*read_temp)(obgc_imu *imu, int32_t *temp_out);
     void (*free)(obgc_imu *imu);
     uint32_t accel_scale;
     uint32_t gyro_scale;

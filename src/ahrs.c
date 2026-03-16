@@ -353,10 +353,14 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
     float acc[3];
     unsigned int i;
     float factor = M_PIf / (180.0f * ahrs->imu->cls->gyro_scale);
+    int errcnt = 0;
 
     for (i = 0; i < SAMPLES_NUM; i++) {
         /* Read sensor data */
-        ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw[i]);
+        if (ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw[i]) < 0) {
+            errcnt++;
+            continue; /* Retry? */
+        }
 
         /* Sum integers for accuracy */
         sum[0] += gyr_raw[i][0];
@@ -411,6 +415,9 @@ void ahrs_calibrate(obgc_ahrs *ahrs) {
 
     ahrs->last_update = micros();
 
+    if (errcnt)
+        error_print("Some missing samples, bad calibration");
+
     if (ahrs->debug_print) {
         char output[256];
         float ypr[3];
@@ -431,7 +438,8 @@ void ahrs_reset_orientation(obgc_ahrs *ahrs) {
     float factor = M_PIf / (180.0f * ahrs->imu->cls->gyro_scale);
 
     /* Read sensor data */
-    ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
+    if (ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw) < 0)
+        return;
 
     /* Convert to physical units */
     acc[0] = (float) acc_raw[0] / ahrs->imu->cls->accel_scale;
@@ -477,7 +485,6 @@ void ahrs_update(obgc_ahrs *ahrs) {
 
     /* Calculate time delta */
     dt = (now - ahrs->last_update) * 1e-6f;
-    ahrs->last_update = now;
 
     /* TODO: wait for movement to stop when forcing reset based on accelerometer? maybe move to main loop */
     if (dt > 0.1f) {
@@ -486,8 +493,11 @@ void ahrs_update(obgc_ahrs *ahrs) {
     }
 
     /* Read sensor data */
-    ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw);
+    if (ahrs->imu->cls->read_main(ahrs->imu, acc_raw, gyr_raw) < 0)
+        return;
     PERF_SAVE_TS;
+
+    ahrs->last_update = now;
 
     if (ahrs->debug_print) {
         if (abs(gyr_raw[0]) > 0x7f00)

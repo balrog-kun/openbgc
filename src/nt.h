@@ -199,7 +199,7 @@ struct nt_imu_s {
     int16_t temp;
 };
 
-static void nt_imu_read_main(struct nt_imu_s *dev, int32_t *accel_out, int32_t *gyro_out) {
+static int nt_imu_read_main(struct nt_imu_s *dev, int32_t *accel_out, int32_t *gyro_out) {
     uint8_t resp[16];
 
     ntbus_check_trigger(dev->nt, &dev->access_ts);
@@ -208,7 +208,7 @@ static void nt_imu_read_main(struct nt_imu_s *dev, int32_t *accel_out, int32_t *
      * we hit any delay we'll lose some rx bytes */
 
     if (ntbus_req(dev->nt, dev->id, NTBUS_GET, 0, resp, 16) < 0)
-        return; /* TODO: report error */
+        return -1;
 
     /* GET: 3xi16 acc + 3xi16 gyro + 1xi16 temp + 1xu8 imu status */
     accel_out[0] = (int16_t)  ((uint16_t) resp[ 1] << 8) | resp[ 0];
@@ -218,10 +218,12 @@ static void nt_imu_read_main(struct nt_imu_s *dev, int32_t *accel_out, int32_t *
     gyro_out[1]  = (int16_t) (((uint16_t) resp[ 9] << 8) | resp[ 8]) << 2;
     gyro_out[2]  = (int16_t) (((uint16_t) resp[11] << 8) | resp[10]) << 2;
     dev->temp    = (int16_t)  ((uint16_t) resp[13] << 8) | resp[12];
+    return 0;
 }
 
-static void nt_imu_read_temp(struct nt_imu_s *dev, int32_t *temp_out) {
+static int nt_imu_read_temp(struct nt_imu_s *dev, int32_t *temp_out) {
     *temp_out = dev->temp / 100;
+    return 0;
 }
 
 static void nt_imu_free(struct nt_imu_s *dev) {
@@ -232,8 +234,8 @@ static inline obgc_imu *nt_imu_new(obgc_nt_bus_t *bus, uint8_t id /*enum obgc_nt
     struct nt_imu_s *imu;
     static enum ntbus_id_e nt_ids[] = { NTBUS_ID_IMU1, NTBUS_ID_IMU2, NTBUS_ID_IMU3 };
     static obgc_imu_class nt_imu_class = {
-        .read_main   = (void (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) nt_imu_read_main,
-        .read_temp   = (void (*)(obgc_imu *imu, int32_t *temp_out)) nt_imu_read_temp,
+        .read_main   = (int (*)(obgc_imu *imu, int32_t *accel_out, int32_t *gyro_out)) nt_imu_read_main,
+        .read_temp   = (int (*)(obgc_imu *imu, int32_t *temp_out)) nt_imu_read_temp,
         .free        = (void (*)(obgc_imu *imu)) nt_imu_free,
         .accel_scale = 8192, /* LSBs per 1g */
         .gyro_scale  = 131,  /* LSBs per 1deg/s (65536 / 1000 * 4 = 131.072)  */
