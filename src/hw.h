@@ -311,9 +311,9 @@ static inline void hw_motor_low_level_poweroff(const struct obgc_hw_config_s *co
 static inline void hw_early_init() {
     pinMode(PIN_VBAT, INPUT);
     pinMode(PIN_MODE, INPUT_PULLUP);
-    pinMode(PIN_RC_YAW, INPUT);
-    pinMode(PIN_RC_PITCH, INPUT);
-    pinMode(PIN_RC_ROLL, INPUT);
+    pinMode(PIN_RC_YAW, INPUT_PULLDOWN);
+    pinMode(PIN_RC_PITCH, INPUT_PULLDOWN);
+    pinMode(PIN_RC_ROLL, INPUT_PULLDOWN);
     pinMode(PIN_LED0, OUTPUT);
 
     hw_motor_low_level_poweroff(NULL);
