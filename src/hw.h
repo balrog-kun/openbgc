@@ -354,6 +354,39 @@ static inline void hw_early_i2c_init(struct busses_s *bus) {
 #endif
 }
 
+#define OBGC_NT_BUS_PRIO 13
+
+static inline void hw_setup_irq_priorities(void) {
+    /* This is to make NT bus reliable.  At 2Mbps the Rx handling is quite
+     * susceptible to being interrupted by a slow IRQ handler and missing a
+     * byte so set priorities below (actually higher number) than
+     * OBGC_NT_BUS_PRIO.  Our NT Rx routine will temporarily block anything
+     * below OBGC_NT_BUS_PRIO.
+     */
+#ifdef STM32F1
+    /* Block this during NT transfer, handled by USBSerial */
+    NVIC_SetPriority(USB_LP_CAN1_RX0_IRQn, 15);
+    NVIC_SetPriority(USB_HP_CAN1_TX_IRQn, 15);
+    NVIC_SetPriority(USBWakeUp_IRQn, 15);
+#endif
+    /* Block these, they have complicated handlers in HardwareSerial */
+    NVIC_SetPriority(USART1_IRQn, 15);
+    NVIC_SetPriority(USART2_IRQn, 15);
+    NVIC_SetPriority(USART3_IRQn, 15);
+    /* Also block the GPIO edge interrupts used by RC inputs just in case
+     * but these are time sensitive (should use a HW-based mechanism.)
+     */
+    NVIC_SetPriority(EXTI0_IRQn, 14);
+    NVIC_SetPriority(EXTI1_IRQn, 14);
+    NVIC_SetPriority(EXTI2_IRQn, 14);
+    NVIC_SetPriority(EXTI3_IRQn, 14);
+    NVIC_SetPriority(EXTI4_IRQn, 14);
+    NVIC_SetPriority(EXTI9_5_IRQn, 14);
+    NVIC_SetPriority(EXTI15_10_IRQn, 14);
+    /* Don't block this one, even NT needs it for timeouts (although we could use DWT) */
+    NVIC_SetPriority(SysTick_IRQn, 1);
+}
+
 void hw_storage_init(struct busses_s *bus);
 void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
         struct obgc_imu_s **main_imu, struct obgc_imu_s **frame_imu,

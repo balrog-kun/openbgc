@@ -75,56 +75,78 @@ enum ntbus_cmd_e {
     NTBUS_CMD_DEBUGDATA             = 127,
 };
 
+#define READ_TIMEOUT_MS 2
+
+#include <LL/stm32yyxx_ll_usart.h>
+
+class HardwareNT : public HardwareSerial {
+    uint8_t nt_prio;
+    uint8_t orig_prio;
+
+public:
+    HardwareNT(uint32_t _rx, uint32_t _tx, uint8_t prio) : HardwareSerial(_rx, _tx) {
+        nt_prio = prio << (8 - __NVIC_PRIO_BITS);
+    }
+
+    void begin(void) {
+        HardwareSerial::begin(2000000);
+
+        /* With unmodified HardwareSerial we're losing a byte or two every
+         * second on the 72MHz STM32F1 probably due to the complicated
+         * interrupt-driven logic with 4 or 5 layers of indirection (at byte
+         * level.)  So don't use interrupts.
+         *
+         * Undo what begin() --> HAL_UART_Receive_IT() just did to reset
+         * RxState to READY so we can use HAL_UART_Receive().
+         */
+        NVIC_DisableIRQ(_serial.irq);
+        HAL_UART_AbortReceive_IT(&_serial.handle);
+    }
+
+    void enter_req_resp_section(void) {
+        /* Briefly disable interrupts because even without us using interrupts,
+         * traffic on the other serial ports and/or USB port and possibly RC
+         * inputs (unconfirmed) makes us miss a byte sometimes.
+         */
+        orig_prio = __get_BASEPRI();
+        __set_BASEPRI(nt_prio);
+
+        if (LL_USART_IsActiveFlag_RXNE(_serial.handle.Instance))
+            (void) LL_USART_ReceiveData8(_serial.handle.Instance); /* Flush stale data if any */
+        LL_USART_ClearFlag_ORE(_serial.handle.Instance); /* Clear overrun if any */
+    }
+
+    int read_resp(uint8_t *buf, uint8_t len) {
+        /* Skip two abstraction layers to use the
+         * framework-arduinoststm32/system/Drivers/STM32Fxxx_HAL_Driver/Src/stm32fxxx_hal_uart.c
+         * API not exposed by higher layers.
+         *
+         * Maybe we'd be even better off using LL_USART_* macros all the way
+         * for even less overhead.
+         */
+        int ret = HAL_UART_Receive(&_serial.handle, buf, len, READ_TIMEOUT_MS) == HAL_OK ? 0 : -1;
+        __set_BASEPRI(orig_prio); /* Restore interrupts */
+        return ret;
+    }
+
+    size_t write(uint8_t c) {
+        /* Use sync writes for simplicity, we have all the time until the response arrives
+         * available to us so no hurry to return.
+         * Note ntbus_send_motor_set() uses an async write though.
+         */
+        while (!LL_USART_IsActiveFlag_TXE(_serial.handle.Instance)); /* Wait until TX buffer empty */
+        LL_USART_TransmitData8(_serial.handle.Instance, c);
+        return 0;
+    }
+};
+
 static inline void ntbus_trigger(obgc_nt_bus_t *nt) {
     nt->port->write(NTBUS_STX | NTBUS_TRIGGER | NTBUS_ID_ALLMODULES);
 }
 
-#define READ_TIMEOUT_MS 5
-
-class HardwareNT : public HardwareSerial {
-public:
-    HardwareNT(uint32_t _rx, uint32_t _tx) : HardwareSerial(_rx, _tx) {}
-#ifdef NT_USE_INTERRUPTS
-    void begin(void) { HardwareSerial::begin(2000000); }
-#else
-    void begin(void) {
-        HardwareSerial::begin(2000000);
-        /* Undo what begin() --> HAL_UART_Receive_IT() just did to reset
-         * RxState to READY so we can use HAL_UART_Receive().
-         */
-        HAL_NVIC_DisableIRQ(_serial.irq);
-        HAL_UART_AbortReceive_IT(&_serial.handle);
-    }
-    int read_buf(uint8_t *buf, uint8_t len) {
-        /* Skip two abstraction layers to use the
-         * framework-arduinoststm32/system/Drivers/STM32Fxxx_HAL_Driver/Src/stm32fxxx_hal_uart.c
-         * API not exposed by higher layers.
-         * TODO: should reset the 1-byte HW buffer?
-         */
-        return HAL_UART_Receive(&_serial.handle, buf, len, READ_TIMEOUT_MS * (2000000 / 1000)) == HAL_OK ? 0 : -1;
-    }
-#endif
-};
-
-#ifdef NT_USE_INTERRUPTS
 static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t num) {
-    unsigned long end_ts = millis() + READ_TIMEOUT_MS;
-
-    do {
-        while (nt->port->available()) {
-            *buf_out++ = nt->port->read();
-            if (!--num)
-                break;
-        }
-    } while ((long) (end_ts - millis()) > 0);
-
-    return -num;
+    return ((HardwareNT *) nt->port)->read_resp(buf_out, num);
 }
-#else
-static inline int ntbus_read_resp(obgc_nt_bus_t *nt, uint8_t *buf_out, uint8_t num) {
-    return ((HardwareNT *) nt->port)->read_buf(buf_out, num);
-}
-#endif
 
 static inline int ntbus_validate_resp(uint8_t *resp, uint8_t num) {
     uint8_t crc = 0;
@@ -139,11 +161,21 @@ static inline int ntbus_req(obgc_nt_bus_t *nt, uint8_t id, uint8_t cmd,
         uint8_t subcmd, uint8_t *resp_out, uint8_t resp_len) {
     int missing;
 
+    /* Enter the critical section immediately after the last byte of the
+     * request because we need to be sure it starts before the remote module
+     * starts sending the response.  But we also want to block interrupts for
+     * the minimum necessary period only.  Actually enter it before the last
+     * (CRC) byte because apparently the modules don't care about the CRC
+     * byte.  We still do send it.
+     */
+
     nt->port->write(NTBUS_STX | cmd | id);
     if (cmd == NTBUS_CMD) {
         nt->port->write(subcmd);
+        ((HardwareNT *) nt->port)->enter_req_resp_section();
         nt->port->write(subcmd); /* XOR over the data bytes, ie. the ones without NTBUS_STX */
-    }
+    } else
+        ((HardwareNT *) nt->port)->enter_req_resp_section();
 
     if ((missing = ntbus_read_resp(nt, resp_out, resp_len)) < 0) {
         char msg[50];
@@ -188,6 +220,7 @@ static inline void ntbus_send_motor_set(obgc_nt_bus_t *nt, enum ntbus_id_e targe
     for (i = 2; i < 11; i++)
         buf[11] ^= buf[i];
 
+    /* Async write is good here because we're not waiting for a response */
     nt->port->write(buf, 12);
 }
 
@@ -386,6 +419,7 @@ static inline void ntbus_scan(obgc_nt_bus_t *nt) {
 
         nt->port->write(NTBUS_STX | NTBUS_CMD | id);
         nt->port->write(NTBUS_CMD_GETBOARDSTR);
+        ((HardwareNT *) nt->port)->enter_req_resp_section();
         nt->port->write(NTBUS_CMD_GETBOARDSTR); /* XOR over the data bytes, ie. the ones without NTBUS_STX */
 
         if (ntbus_read_resp(nt, resp, 17) < 0)

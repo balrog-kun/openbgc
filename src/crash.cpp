@@ -64,11 +64,8 @@ extern "C" void UsageFault_Handler(void) {
 
 /* TODO: use the usart number from error_serial */
 
-#ifdef STM32F1
-# include <stm32f1xx_ll_usart.h>
-#else
-# include <stm32f3xx_ll_usart.h>
-#endif
+/* Use LL_* wrappers for compatibility between STM32 series */
+#include <LL/stm32yyxx_ll_usart.h>
 
 static void crash_usart_write(USART_TypeDef *USARTx, uint8_t ch) {
     while (!LL_USART_IsActiveFlag_TXE(USARTx));  /* Wait until TX buffer empty */

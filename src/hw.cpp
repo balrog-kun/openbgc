@@ -183,6 +183,9 @@ static obgc_encoder *hw_setup_encoder(const char *name, int num,
         if (config_motor->type != obgc_motor_hw_config::OBGC_MOTOR_DRV_SBGC32_I2C)
             return (obgc_encoder *) hw_setup_error(name, "Motor driver type doesn't match");
 
+        if (config->sbgc32_type < 1)
+            return (obgc_encoder *) hw_setup_error(name, "sbgc32_type not set");
+
         if (!drivers->drv_module[num])
             return NULL; /* We must have already printed an error */
 
@@ -241,7 +244,7 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
 
     /* The NT Bus and "main" I2C use the same pins so chose one or the other */
     if (nt_users && PIN_NT_RX && PIN_NT_TX) {
-        HardwareNT *port = new HardwareNT(PIN_NT_RX, PIN_NT_TX);
+        HardwareNT *port = new HardwareNT(PIN_NT_RX, PIN_NT_TX, OBGC_NT_BUS_PRIO);
         port->begin();
         bus->nt = (obgc_nt_bus_t *) malloc(sizeof(obgc_nt_bus_t));
         memset(bus->nt, 0, sizeof(obgc_nt_bus_t));
@@ -272,4 +275,9 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
     drivers->encoder[0] = hw_setup_encoder("Encoder 0", 0, config, drivers, bus);
     drivers->encoder[1] = hw_setup_encoder("Encoder 1", 1, config, drivers, bus);
     drivers->encoder[2] = hw_setup_encoder("Encoder 2", 2, config, drivers, bus);
+
+    /* Now that most drivers are intialized hopefully they're not touching IRQ
+     * priorities anymore so we can set our own priorities.
+     */
+    hw_setup_irq_priorities();
 }
