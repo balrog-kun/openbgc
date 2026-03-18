@@ -1657,7 +1657,7 @@ class StatusTab(QWidget):
                 self.encoder_labels[display_idx].setText(f"{angle:.2f}°")
                 self.angle_bars[display_idx].set_angle(angle)
 
-        req_params += [f"encoders.{i}.reading" for i in range(3)]
+        req_params += [f"drivers.encoder.{i}.reading" for i in range(3)]
 
         # Read main AHRS orientation
         def callback_q(value):

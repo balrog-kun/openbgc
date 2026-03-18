@@ -312,7 +312,7 @@ class CalibrationTab(QWidget):
             self.geometry.update()
             logger.info(f"New parking angles set")
 
-        self.connection.read_param([f"encoders.{i}.reading" for i in range(3)], encoders_read_cb)
+        self.connection.read_param([f"drivers.encoder.{i}.reading" for i in range(3)], encoders_read_cb)
 
     def on_go_to_vbat_tab(self):
         self.main_window.switch_to_tab('calib-vbat')
@@ -1288,7 +1288,7 @@ class JointLimitsTab(QWidget):
                 spinboxes = self.min_inputs if is_min else self.max_inputs
                 spinboxes[axis_num].setValue(joint_angle)
 
-        self.connection.read_param(f'encoders.{enc_num}.reading', callback)
+        self.connection.read_param(f'drivers.encoder.{enc_num}.reading', callback)
 
     def on_swap_limits(self, axis_num):
         """Swap min and max limit values."""
