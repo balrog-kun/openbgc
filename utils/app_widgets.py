@@ -595,9 +595,11 @@ class Gimbal3DWidget(QOpenGLWidget):
         q = self.main_ahrs_q
 
         if self.geometry.have_home:
-            # Multiply by conjugate of home-q
-            home_q_conj = self.geometry.quaternion_conjugate(self.geometry.home_q)
-            q = self.geometry.quaternion_multiply(home_q_conj, q)
+            conj_home_q = self.geometry.conj_aligned_home_q if self.geometry.have_forward \
+                    else self.geometry.quaternion_conjugate(self.geometry.home_q)
+            yaw_rotate = self.geometry.quaternion_from_axis_angle((0, 0, 1), -math.pi / 2)
+            conj_home_q = self.geometry.quaternion_multiply(conj_home_q, yaw_rotate)
+            q = self.geometry.quaternion_multiply(q, conj_home_q)
 
         return q
 
