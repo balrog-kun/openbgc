@@ -237,9 +237,9 @@ struct drivers_s {
 
 #elif BOARD_STORM32_STM32F1
 
-# define PIN_VBAT           LIPO
-# define PIN_VBAT_R_BAT     10000
-# define PIN_VBAT_R_GND     1500
+# define PIN_VBAT           LIPO  /* PA5 in v1.3, v2.4, PC4 on STorM32 v3.3, v4.0 (TODO) */
+# define PIN_VBAT_R_BAT     10000 /* From variant_STORM32_V1_31_RC.h.  This is just the default, */
+# define PIN_VBAT_R_GND     1500  /* use config.vbat.scale for actual calibration.  */
 
 # define PIN_LED0           LED_GREEN
 
@@ -385,6 +385,24 @@ static inline void hw_setup_irq_priorities(void) {
     NVIC_SetPriority(EXTI15_10_IRQn, 14);
     /* Don't block this one, even NT needs it for timeouts (although we could use DWT) */
     NVIC_SetPriority(SysTick_IRQn, 1);
+}
+
+static inline void hw_shutdown_to_bl(void) __attribute__((noreturn));
+static inline void hw_shutdown_to_bl(void) {
+    /*
+     * STM32F303xB bootloader System Memory start address according to Section 23 in ST Application Note AN2606, Table 28.
+     * Same for all F3 series but not most other STM32s.  For other models, look at the same doc, all models summarized in
+     * Section 92, Table 209.
+     */
+#ifdef STM32F3
+# define SYSMEM_BASE 0x1fffd800
+#elif STM32F1
+# define SYSMEM_BASE 0x1ffff000
+#endif
+    __set_MSP(*(uint32_t *) SYSMEM_BASE);
+    __set_PSP(*(uint32_t *) SYSMEM_BASE);
+    ((void (*)(void)) *(uint32_t *) (SYSMEM_BASE | 4))();
+    while (1); /* Silence warning */
 }
 
 void hw_storage_init(struct busses_s *bus);

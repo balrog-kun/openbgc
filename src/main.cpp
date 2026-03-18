@@ -659,15 +659,7 @@ static void shutdown_to_bl(bool clean) {
         main_shutdown_high_level();
     main_shutdown_low_level();
 
-    /*
-     * STM32F303xB bootloader System Memory start address according to Section 23 in ST Application Note AN2606, Table 28.
-     * Same for all F3 series but not most other STM32s.  For other models, look at the same doc, all models summarized in
-     * Section 92, Table 209.
-     */
-    __set_MSP(*(uint32_t *) 0x1fffd800);
-    __set_PSP(*(uint32_t *) 0x1fffd800);
-    ((void (*)(void)) *(uint32_t *) 0x1fffd804)();
-    while (1); /* Silence warning */
+    hw_shutdown_to_bl();
 }
 
 static void powered_init(void) {
