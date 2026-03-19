@@ -642,17 +642,17 @@ class Gimbal3DWidget(QOpenGLWidget):
         camera_pos_dist = 0.5 * self.geometry.vector_dot(camera_size, [abs(v) for v in axis_body])
         # Leave a 1cm space between camera box and the top of the inner joint motor
         # maybe should just use self.arm_radius - self.motor_height * 2
-        motor_top = self.geometry.vector_sum(camera_pos, self.geometry.vector_mult_scalar(axes_world[2], -(camera_pos_dist + 0.01)))
-        motor_base = self.geometry.vector_sum(motor_top, self.geometry.vector_mult_scalar(axes_world[2], -self.motor_height))
+        motor_top = self.geometry.vector_sum(camera_pos, self.geometry.vector_mult_scalar(axes_world[-1], -(camera_pos_dist + 0.01)))
+        motor_base = self.geometry.vector_sum(motor_top, self.geometry.vector_mult_scalar(axes_world[-1], -self.motor_height))
 
-        for num in [2, 1]:
+        for num in [-1, -2]:
             motor_x = self.geometry.vector_cross(axes_world[num], axes_world[num - 1]) # Normal to the plane containing the axes
             motor_y = self.geometry.vector_cross(axes_world[num], motor_x)             # Perpendicular to current axis towards previous joint
             motor_z = axes_world[num]
             motors.append((motor_top, motor_base, self.geometry.matrix_t((motor_x, motor_y, motor_z))))
 
             sin_angle = self.geometry.vector_norm(motor_x)
-            arm_length = (self.arm_radius - self.motor_height * (num - 1)) * sin_angle
+            arm_length = (self.arm_radius - self.motor_height * (3 + num - 1)) * sin_angle
             arm_elbow_pos = self.geometry.vector_sum(motor_base, self.geometry.vector_mult_scalar(motor_y, arm_length))
             segments.append((motor_base, arm_elbow_pos, arm_length, self.geometry.matrix_t((motor_x, motor_y, motor_z))))
 
@@ -754,7 +754,7 @@ class Gimbal3DWidget(QOpenGLWidget):
 
         glTranslatef(0, 0, 0.30)
 
-        if not self.geometry.have_axes:
+        if not self.geometry.have_axes or None in self.joint_angles:
             # Just show camera model
             self.gl_rotate_q(self.calculate_camera_orientation())
             self._draw_camera()

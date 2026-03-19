@@ -318,10 +318,13 @@ class GimbalGeometry(QObject):
         #
         # Note: this assumes yaw-following (which is the default but optional) so the
         # yaw 0 angle is in reference to frame
-        conj_rel_q = self.quaternion_conjugate(self.get_rel_q(joint_angles))
-        frame_q = self.quaternion_multiply(main_imu_q, conj_rel_q)
-        frame_pose_q = self.quaternion_multiply(frame_q, self.quaternion_conjugate(self.home_frame_q))
-        rel_yaw = self.quaternion_to_euler(frame_pose_q)[0]
+        if None not in joint_angles:
+            conj_rel_q = self.quaternion_conjugate(self.get_rel_q(joint_angles))
+            frame_q = self.quaternion_multiply(main_imu_q, conj_rel_q)
+            frame_pose_q = self.quaternion_multiply(frame_q, self.quaternion_conjugate(self.home_frame_q))
+            rel_yaw = self.quaternion_to_euler(frame_pose_q)[0]
+        else:
+            rel_yaw = 0
 
         return (
             self.angle_normalize_180(math.degrees(yaw - rel_yaw - self.forward_az)),
@@ -1395,6 +1398,7 @@ class StatusTab(QWidget):
         self.angle_bars = []
         self.force_bars = []
         self.joint_map = [0, 1, 2]  # Default mapping without axes calibration
+        self.have_encoders = [False, False, False]
 
         # Camera angles and speeds
         self.camera_angle_labels = []
@@ -1613,7 +1617,17 @@ class StatusTab(QWidget):
             self.new_motors_status() # Calls update_buttons
             self.new_vbat()
             if not self.connection.calibrating:
-                self.connection.read_param("config.control.max-vel", self.update_max_vel)
+                req_params = [ 'config.control.max-vel',
+                        'config.hw.encoder.0.type', 'config.hw.encoder.1.type', 'config.hw.encoder.2.type' ]
+
+                def callback(values):
+                    if values is None or len(values) != len(req_params):
+                        return
+
+                    self.update_max_vel(values[0])
+                    self.have_encoders = [int(v) != 0 for v in values[1:]]
+
+                self.connection.read_param(req_params, callback)
 
     def stop_updates(self):
         """Stop update timers."""
@@ -1632,7 +1646,7 @@ class StatusTab(QWidget):
             return
 
         if not hasattr(self, 'current_encoder_angles'):
-            self.current_encoder_angles = [0.0, 0.0, 0.0]
+            self.current_encoder_angles = [None, None, None]
 
         req_params = []
 
@@ -1645,6 +1659,10 @@ class StatusTab(QWidget):
 
             for axis_idx in range(3):
                 encoder_idx = self.geometry.axis_to_encoder[axis_idx]
+                if not self.have_encoders[encoder_idx] and not self.motors.is_on:
+                    self.current_encoder_angles[axis_idx] = None
+                    continue
+
                 angle = float(values[encoder_idx]) * self.geometry.encoder_scale[encoder_idx]
                 angle = self.geometry.angle_normalize_360(angle)
                 self.current_encoder_angles[axis_idx] = angle
