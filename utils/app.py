@@ -77,6 +77,7 @@ import param_utils
 import app_widgets
 import app_iio
 import app_calib_tabs as calib
+import app_hw_tab
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -2824,8 +2825,9 @@ class MainWindow(QMainWindow):
             'calib-pid': (5, 'Motor PID editor', calib.MotorPidEditorTab(self.connection, self.motors), QTreeWidgetItem(), is_enabled_calib, True),
             'calib-limit': (6, 'Joint limits', calib.JointLimitsTab(self.connection, self.geometry, self.motors), QTreeWidgetItem(), is_enabled_calib_with_axes, True),
             'calib-vbat': (6, 'Battery voltage', calib.VbatSenseTab(self.connection, self.vbat), QTreeWidgetItem(), is_enabled_normal, True),
-            'params': (7, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
-            'connection': (8, 'Connection & config', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
+            'hw-setup': (7, 'Controller HW setup', app_hw_tab.HwSetupTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
+            'params': (8, 'Parameter Editor', ParameterEditorTab(self.connection), QTreeWidgetItem(), is_enabled_normal, True),
+            'connection': (9, 'Connection & config', ConnectionTab(self.connection), QTreeWidgetItem(), lambda: True, False),
         }
 
         self.popped_out_tabs = {}
