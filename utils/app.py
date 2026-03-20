@@ -1234,6 +1234,7 @@ class ConnectionTab(QWidget):
         self.status_label.setText(f"Connecting to {port_path}...")
 
         if self.connection.connect(port_path):
+            self.update_buttons()
             self.request_firmware_info()
         else:
             self.status_label.setText("Connection failed")
@@ -3037,8 +3038,17 @@ class MainWindow(QMainWindow):
 
         # Enable/disable tabs based on connection
         if connected:
-            # Switch to status tab
-            self.switch_to_tab('status')
+            if not self.connection.calibrating:
+                # This is called only after we connected and successfully read
+                # a parameter verifying that communication works.  Try reading
+                # main-ahrs.q, if it's available the main AHRS and main IMU will
+                # have been configured and we have something to show in the Status
+                # Tab to switch to that tab.  If not then the user very early in
+                # the configuration so switch to the HW Setup tab.
+                def callback(value):
+                    self.switch_to_tab('status' if value is not None else 'hw-setup')
+
+                self.connection.read_param('main-ahrs.q', callback)
 
             self.port_status.setText(self.connection.port_path)
         else:
