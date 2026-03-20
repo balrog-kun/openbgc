@@ -57,7 +57,7 @@ def ctype_to_construct(
         base = m.group(1).strip()
         dims = [int(x, 0) for x in ARRAY_DIM_RE.findall(ctype)]
         words = base.split()
-        if words and words[-1] == "char":
+        if words and words[-1] == "char" and "unsigned" not in words and "signed" not in words:
             if len(dims) == 1:
                 if sizeof != dims[0]:
                     raise Exception("String size mismatch")
