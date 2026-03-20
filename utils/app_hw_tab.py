@@ -147,10 +147,9 @@ class HwSetupTab(QWidget):
         self.load_preset_btn.clicked.connect(self.on_load_preset)
         preset_layout.addWidget(self.preset_combo)
         preset_layout.addWidget(self.load_preset_btn)
+        preset_layout.addStretch(1)
         header_layout.addLayout(preset_layout)
         layout.addLayout(header_layout)
-
-        layout.addStretch(1)
 
         grid = QGridLayout()
         grid.setColumnStretch(1, 1)
@@ -243,6 +242,10 @@ class HwSetupTab(QWidget):
         self.send_btn.setEnabled(False)
         self.send_btn.clicked.connect(self.on_send_to_gimbal)
         self.send_btn.setMinimumWidth(250);
+        try:
+            self.send_btn.setIcon(QIcon.fromTheme('go-next'))
+        except:
+            pass
         layout.addWidget(self.send_btn, 0, Qt.AlignmentFlag.AlignLeft)
 
         layout.addStretch(1)
@@ -618,6 +621,7 @@ class HwSetupTab(QWidget):
             return
         error = self.validate_devices()
         if error:
+            # TODO: popup info window
             logger.error(error)
             return
         for param_name in sorted(self.unsaved_params):
