@@ -1065,7 +1065,8 @@ class ConnectionTab(QWidget):
         port_layout.addLayout(port_input_layout)
 
         self.port_list = QListWidget()
-        self.port_list.itemDoubleClicked.connect(self.on_port_selected)
+        self.port_list.itemClicked.connect(self.on_port_selected)
+        self.port_list.itemDoubleClicked.connect(self.on_port_double_click)
         # Set height for approximately 6 lines
         font_metrics = self.port_list.fontMetrics()
         line_height = font_metrics.lineSpacing()
@@ -1218,6 +1219,10 @@ class ConnectionTab(QWidget):
         port_text = item.text()
         port_path = port_text.split(" - ")[0]
         self.port_input.setText(port_path)
+
+    def on_port_double_click(self, item):
+        self.on_port_selected(item)
+        self.on_connect()
 
     def on_connect(self):
         """Handle connect button click."""
