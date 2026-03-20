@@ -1,6 +1,6 @@
 # vim: set ts=4 sw=4 sts=4 et :
 from construct import *
-import re
+import re, math
 
 QUALIFIER_RE = re.compile(r"\b(const|volatile|restrict)\b\s*")
 ARRAY_RE = re.compile(r"(.*?)(\[[0-9]+\])+$")
@@ -64,7 +64,10 @@ def ctype_to_construct(
                 return PaddedString(dims[0], 'utf8')
             base = base + '[' + str(dims[0]) + ']'
             dims = dims[1:]
-        subcon = ctype_to_construct(base, sizeof, endian=endian)
+        count = math.prod(dims)
+        if sizeof % count:
+            raise Exception("Size not divisble by element count")
+        subcon = ctype_to_construct(base, int(sizeof / count), endian=endian)
         for d in reversed(dims):
             subcon = Array(d, subcon)
         return subcon
