@@ -1109,7 +1109,7 @@ class TabItemWidget(QWidget):
 
         if self.button is not None:
             bsize = self.button.sizeHint()
-            width -= bsize.width()# + self.layout.spacing()
+            width -= bsize.width() + int(self.layout.spacing() / 2)
 
         metrics = self.label.fontMetrics()
         text_rect = metrics.boundingRect(0, 0, width, 10000, Qt.TextFlag.TextWordWrap, self.text)
