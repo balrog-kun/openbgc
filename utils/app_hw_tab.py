@@ -1,5 +1,6 @@
 # vim: set ts=4 sw=4 sts=4 et :
 import logging
+import construct
 
 try:
     from PyQt6.QtWidgets import (
@@ -20,6 +21,9 @@ except ImportError:
     from PyQt5.QtCore import Qt
     PYQT_VERSION = 5
 
+import param_defs
+import param_utils
+
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -31,40 +35,40 @@ class HwSetupTab(QWidget):
     presets = {
         'SimpleBGC32 \"Regular\"': {
             # TODO: use enum strings for the enums
-            "config.hw.main-imu.type": 1,
+            "config.hw.main-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050',
             "config.hw.main-imu.i2c.bus": 0,
             "config.hw.main-imu.i2c.addr": 0x68,
-            "config.hw.frame-imu.type": 1,
+            "config.hw.frame-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050', # There are 3.0 versions with no IMU?
             "config.hw.frame-imu.i2c.bus": 0,
             "config.hw.frame-imu.i2c.addr": 0x69,
-            "config.hw.motor.0.type": 1,
-            "config.hw.motor.1.type": 2,
-            "config.hw.motor.2.type": 3,
-            "config.hw.encoder.0.type": 0,
-            "config.hw.encoder.1.type": 0,
-            "config.hw.encoder.2.type": 0,
+            "config.hw.motor.0.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD0',
+            "config.hw.motor.1.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD1',
+            "config.hw.motor.2.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD2',
+            "config.hw.encoder.0.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.1.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.2.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
             "config.vbat.scale": 32030, # TODO
             "config.vbat.lvco": 9900,
         },
         'PilotFly H2': {
-            "config.hw.main-imu.type": 1,
+            "config.hw.main-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050',
             "config.hw.main-imu.i2c.bus": 0,
             "config.hw.main-imu.i2c.addr": 0x68,
-            "config.hw.frame-imu.type": 1,
+            "config.hw.frame-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050',
             "config.hw.frame-imu.i2c.bus": 0,
             "config.hw.frame-imu.i2c.addr": 0x69,
-            "config.hw.motor.0.type": 1,
-            "config.hw.motor.1.type": 5,
-            "config.hw.motor.1.sbgc32-id": 0,
-            "config.hw.motor.2.type": 5,
-            "config.hw.motor.2.sbgc32-id": 3,
-            "config.hw.encoder.0.type": 1,
+            "config.hw.motor.0.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD0',
+            "config.hw.motor.1.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_SBGC32_I2C',
+            "config.hw.motor.1.sbgc32-id": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_SBGC32_I2C_DRV_ID_1',
+            "config.hw.motor.2.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_SBGC32_I2C',
+            "config.hw.motor.2.sbgc32-id": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_SBGC32_I2C_DRV_ID_4',
+            "config.hw.encoder.0.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_I2C_AS5600',
             "config.hw.encoder.0.i2c.bus": 0,
             "config.hw.encoder.0.i2c.addr": 0x36,
-            "config.hw.encoder.1.type": 2,
-            "config.hw.encoder.1.sbgc32-type": 7,
-            "config.hw.encoder.2.type": 2,
-            "config.hw.encoder.2.sbgc32-type": 7,
+            "config.hw.encoder.1.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_SBGC32_I2C_DRV',
+            "config.hw.encoder.1.sbgc32-type": 'SBGC32_I2C_DRV_ENC_TYPE_AS5600',
+            "config.hw.encoder.2.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_SBGC32_I2C_DRV',
+            "config.hw.encoder.2.sbgc32-type": 'SBGC32_I2C_DRV_ENC_TYPE_AS5600',
             "config.vbat.scale": 27708,
             "config.vbat.lvco": 13200,
         },
@@ -78,18 +82,24 @@ class HwSetupTab(QWidget):
             'config.hw.motor.0.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD0',
             'config.hw.motor.1.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD1',
             'config.hw.motor.2.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD2',
+            "config.hw.encoder.0.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.1.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.2.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
             'config.vbat.scale': 32030,
             'config.vbat.lvco': 9900,
         },
         'STorM32-NT BGC v1.3': {
             'config.hw.main-imu.type': 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_NT',
-            'config.hw.main-imu.nt_id': 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_NT_IMU_ID_IMU1',
+            'config.hw.main-imu.nt-id': 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_NT_IMU_ID_IMU1',
             'config.hw.frame-imu.type': 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050',
             'config.hw.frame-imu.i2c.bus': 1,
             'config.hw.frame-imu.i2c.addr': 0x69,
             'config.hw.motor.0.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD0',
             'config.hw.motor.1.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD1',
             'config.hw.motor.2.type': 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD2',
+            "config.hw.encoder.0.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.1.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
+            "config.hw.encoder.2.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
             'config.vbat.scale': 32030,
             'config.vbat.lvco': 9900,
         },
@@ -240,8 +250,7 @@ class HwSetupTab(QWidget):
 
         self.connection.connection_changed.connect(self.on_connection_changed)
 
-        # TODO: only read the address/ID params valid for the currently selected .type
-        self.all_params = [
+        all_params = [
             "config.hw.main-imu.type",
             "config.hw.main-imu.i2c.bus",
             "config.hw.main-imu.i2c.addr",
@@ -280,6 +289,13 @@ class HwSetupTab(QWidget):
             "config.vbat.scale",
             "config.vbat.lvco",
         ]
+        by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
+        self.all_params = {}
+        for param_name in all_params:
+            pdef = by_name[param_name]
+            self.all_params[param_name] = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+        # TODO: only read the address/ID params valid for the currently selected .type
+        self.loaded_params = all_params[:-2]
 
     def add_row_label(self, grid, row, text):
         label = QLabel(text)
@@ -575,13 +591,18 @@ class HwSetupTab(QWidget):
             return
 
         values = self.presets[self.preset_combo.currentText()]
-        by_name = {pdef.name: pdef for pdef in param_defs.params.values()}
 
         self.loading = True
         for param_name, value in values.items():
-            pdef = by_name[param_name]
-            param_type_cls = param_utils.ctype_to_construct(pdef.typ, pdef.size)
-            self.param_values[param_name] = param_type_cls(value)
+            type_cls = self.all_params[param_name]
+            if isinstance(value, list):
+                pass
+            else:
+                if isinstance(type_cls, construct.core.Enum) and isinstance(value, str):
+                    value = getattr(type_cls, value)
+                value = int(value)
+
+            self.param_values[param_name] = value
             ctrl = self.param_controls.get(param_name)
             if ctrl:
                 ctrl["setter"](value)
@@ -723,7 +744,7 @@ class HwSetupTab(QWidget):
         if not self.connection.is_connected():
             return
         self.loading = True
-        self.connection.read_param(self.all_params, self.on_params_loaded)
+        self.connection.read_param(self.loaded_params, self.on_params_loaded)
 
     def on_params_loaded(self, values):
         self.loading = False
@@ -731,10 +752,10 @@ class HwSetupTab(QWidget):
             return
         if not isinstance(values, list):
             values = [values]
-        if len(values) != len(self.all_params):
+        if len(values) != len(self.loaded_params):
             return
         self.loading = True
-        for param_name, value in zip(self.all_params, values):
+        for param_name, value in zip(self.loaded_params, values):
             if isinstance(value, list):
                 self.param_values[param_name] = value
             else:
@@ -742,6 +763,7 @@ class HwSetupTab(QWidget):
                     self.param_values[param_name] = int(value)
                 except Exception:
                     self.param_values[param_name] = value
+                    logger.error(f'Can\'t cast value {value} to int')
             ctrl = self.param_controls.get(param_name)
             if ctrl:
                 ctrl["setter"](value)
