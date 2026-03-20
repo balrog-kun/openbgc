@@ -33,21 +33,19 @@ class HwSetupTab(QWidget):
     """Tab for configuring controller hardware setup."""
 
     presets = {
-        'SimpleBGC32 \"Regular\"': {
+        'SimpleBGC32 \"Regular\"': { # v3.0
             # TODO: use enum strings for the enums
             "config.hw.main-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050',
             "config.hw.main-imu.i2c.bus": 0,
             "config.hw.main-imu.i2c.addr": 0x68,
-            "config.hw.frame-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_I2C_MPU6050', # There are 3.0 versions with no IMU?
-            "config.hw.frame-imu.i2c.bus": 0,
-            "config.hw.frame-imu.i2c.addr": 0x69,
+            "config.hw.frame-imu.type": 'obgc_hw_config_s::obgc_imu_hw_config_s::OBGC_IMU_NONE',
             "config.hw.motor.0.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD0',
             "config.hw.motor.1.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD1',
             "config.hw.motor.2.type": 'obgc_hw_config_s::obgc_motor_hw_config_s::OBGC_MOTOR_DRV_ONBOARD2',
             "config.hw.encoder.0.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
             "config.hw.encoder.1.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
             "config.hw.encoder.2.type": 'obgc_hw_config_s::obgc_encoder_hw_config_s::OBGC_ENCODER_NONE',
-            "config.vbat.scale": 32030, # TODO
+            "config.vbat.scale": 27708,
             "config.vbat.lvco": 9900,
         },
         'PilotFly H2': {
