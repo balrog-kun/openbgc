@@ -1361,8 +1361,15 @@ handle_set_param:
                  * axes_calibrate() didn't have the data we have now.
                  */
                 if (drivers.encoder[i]->cls->motor_based && config.have_axes) {
+                    float conj_frame_q[4];
                     float max_cos_align = 0;
                     int best = -1;
+
+                    /* Assuming joints were roughly in home position same as during axes_calibrate */
+                    axes_precalc_rel_q(&config.axes, NULL, main_ahrs, NULL, rel_q, conj_frame_q, false);
+                    /* axis is global, config.axes.axes is frame-local so rotate axis */
+                    conj_frame_q[0] = -conj_frame_q[0];
+                    vector_rotate_by_quaternion(axis, conj_frame_q);
 
                     for (int j = 0; j < 3; j++) {
                         float cos_align = vector_dot(axis, config.axes.axes[j]);
@@ -1385,6 +1392,7 @@ handle_set_param:
                             if (config.axes.axis_to_encoder[prev] == i)
                                 break;
 
+                        /* Doesn't matter if best == prev */
                         config.axes.axis_to_encoder[prev] = config.axes.axis_to_encoder[best];
                         config.axes.axis_to_encoder[best] = i;
                         config.axes.encoder_scale[i] = copysignf(1.0f, max_cos_align);

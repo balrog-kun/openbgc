@@ -89,6 +89,8 @@ static int motor_bldc_on(struct motor_bldc_s *motor) {
 
     motor->on = true;
     motor_bldc_update_theta(motor);
+    if (!motor->enc)
+        motor->prev_theta = 0;
     motor->prev_omega = 0;
     motor->obj.pid_stats.i = 0;
     motor->prev_target = 0;

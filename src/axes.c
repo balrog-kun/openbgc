@@ -380,7 +380,7 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
     for (int i = 0; i < 3; i++) {
         int num = data->axis_to_encoder[i];
 
-        if (encoders[num])
+        if (encoders && encoders[num])
             angles[i] = encoders[num]->reading_rad * data->encoder_scale[num];
         else
             angles[i] = 0.0f;
