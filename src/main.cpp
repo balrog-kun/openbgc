@@ -46,7 +46,8 @@ static bool control_enable;
 static bool have_config;
 
 static float rel_q[4];   /* aux: true or estimated (from encoders) expression of main_ahrs->q in frame_ahrs->q frame of ref */
-static float frame_q[4]; /* aux: frame_ahrs->q or its estimation from main_ahrs->q x rel_q^-1 */
+static float frame_q[4]; /* aux: estimation of frame_ahrs->q from main_ahrs->q x rel_q^-1 */
+static float tmp_home_frame_q[4]; /* aux: true frame_ahrs->q saved for calibration (temporary) */
 
 static int vbat;
 static int vbat_ok;
@@ -1220,6 +1221,9 @@ handle_set_param:
             control.settings->home_angles[i] = home_angle;
         }
 
+        if (frame_ahrs)
+            memcpy(tmp_home_frame_q, frame_ahrs->q, sizeof(tmp_home_frame_q));
+
         control.settings->have_home = 1;
         /* TODO: if have_forward, perhaps recalculate .forward_* and .aligned_* */
         control.settings->have_forward = 0;
@@ -1280,6 +1284,118 @@ handle_set_param:
         control.settings->forward_vec[2] = 0.0f;
         vector_normalize(control.settings->forward_vec);
         control.settings->have_forward = 1;
+        control_update_aux_values();
+        break;
+    case 'H':
+        if (!frame_ahrs)
+            return;
+
+        if (control_enable) {
+            serial->println("Control must be disabled (' ')");
+            break;
+        }
+
+        if (!control.settings->have_home) {
+            serial->println("Set home orientation first ('k')");
+            break;
+        }
+
+        /*
+         * Now the user is asked to roll (actually rotate around any roughly horizontal axis)
+         * the whole device including the base and the camera so that we can compare the rotation
+         * axes reported by the frame IMU and main IMU and get a reliable yaw alignment.
+         *
+         * If this is done after the camera forward calibration ('K') the camera needs to be first
+         * rolled back to the home position (how do we relax this requirement? maybe we should ask
+         * the user to make the rotation directly from the attitude at the time of 'K'?), and then
+         * the whole device rotated slowly enough that the joint friction prevent the joints
+         * rotating.  If this is difficult or camera balance isn't perfect the joints probably
+         * need to be locked or motors enabled to maintain angles (with encoders), or motor braking
+         * enabled.
+         *
+         * TODO: make this idempotent and then merge with 'K'
+         */
+
+        {
+            float angle, angle0, angle1, axis0[3], axis1[3];
+            float frame_conj_q0[4] = INIT_CONJ_Q(tmp_home_frame_q);
+            float main_conj_q0[4] = INIT_CONJ_Q(control.settings->home_q);
+            float frame_diff_q[4];
+            float main_diff_q[4];
+            float diff_q[4];
+            float true_frame_q[4];
+            float conj_calib_time_frame_q[4];
+
+            quaternion_mult_to(frame_ahrs->q, frame_conj_q0, frame_diff_q);
+            quaternion_mult_to(main_ahrs->q, main_conj_q0, main_diff_q);
+            quaternion_to_axis_angle(frame_diff_q, axis0, &angle0);
+            quaternion_to_axis_angle(main_diff_q, axis1, &angle1);
+
+            if (angle0 < M_PIf / 6 || angle0 > M_PIf * (2.0f / 3)) {
+                serial->println("No rotation within 30-120 deg detected");
+                break;
+            }
+
+            serial->print(angle0 * R2D);
+            serial->print(" deg (frame) vs ");
+            serial->print(angle1 * R2D);
+            serial->println(" deg (main)");
+
+            if (angle0 / angle1 < 0.9f || angle1 / angle0 < 0.9f) {
+                serial->println("Rotation angles differ by more than 10%");
+                break;
+            }
+            /* XXX: We're expecting both rotation vectors to be close to horizontal,
+             * maybe check/print their Z component (or the 2D norms in XY).
+             */
+
+            /* Now find the rotation from one of the rotation axes to the other.
+             * Generally there are many solutions for a rotation that converts one unit vector to
+             * another (one of them is the smallest) and only one that converts one quaternion
+             * to another but the rotation from frame_diff_q to main_diff_q will not give us
+             * what we want.  So find specifically the rotation around Z axis that takes axis0 to
+             * axis1, or the closest thing to it.  The remaining rotation (not around Z) would
+             * only be useful to tell us the AHRS filter's relative error in the other axes.
+             */
+            angle = atan2f(
+                    axis0[0] * axis1[1] - axis0[1] * axis1[0],
+                    axis0[0] * axis1[0] + axis0[1] * axis1[1]);
+
+            serial->print("Yaw misalignment ");
+            serial->print(angle * R2D);
+            serial->println(" deg, saving new frame IMU mount attitude");
+
+            /* Align frame_ahrs yaw/heading to main_ahrs */
+            angle *= 0.5f;
+            quaternion_rotate_z_to(frame_ahrs->q, cosf(angle), sinf(angle), true_frame_q);
+            memcpy(frame_ahrs->q, true_frame_q, sizeof(true_frame_q));
+
+            /* During axes calibration ('C') we used the null / identity quaternion as frame
+             * attitude, on which all the axes and main_imu_mount_q are based, because we
+             * couldn't use the frame IMU.  Now that the frame IMU is aligned with the main
+             * IMU, we need to update the axes and main_imu_mount_q to be based on the true
+             * frame attitude.  To do that we need to find what the frame attitude was at
+             * calibration time.  true_frame_q represents current true frame attitude while
+             * frame_q represents the hypothetical current frame attitude implied by NULL
+             * quaternion frame attitude at calibration time.  So frame_q simply reflects
+             * the frame's rotation since calibration.
+             *
+             * Thus calibration-time true_frame_q is conj(frame_q) x current true_frame_q
+             * and conj(calibration true_frame_q) is conj(current true_frame_q) x frame_q
+             */
+            true_frame_q[0] = -true_frame_q[0];
+            quaternion_mult_to(true_frame_q, frame_q, conj_calib_time_frame_q);
+
+            vector_rotate_by_quaternion(config.axes.axes[0], conj_calib_time_frame_q);
+            vector_rotate_by_quaternion(config.axes.axes[1], conj_calib_time_frame_q);
+            vector_rotate_by_quaternion(config.axes.axes[2], conj_calib_time_frame_q);
+            quaternion_mult_to(conj_calib_time_frame_q, config.axes.main_imu_mount_q, diff_q);
+            memcpy(config.axes.main_imu_mount_q, diff_q, sizeof(config.axes.main_imu_mount_q));
+
+            /* Also update home_frame_q to what true_frame_q would have been at 'k' time */
+            quaternion_rotate_z_to(tmp_home_frame_q, cosf(angle), sinf(angle), control.settings->home_frame_q);
+        }
+
         control_update_aux_values();
         break;
     case 't':
