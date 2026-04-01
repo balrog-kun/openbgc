@@ -5,20 +5,22 @@ import construct
 try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-        QGridLayout, QSpinBox, QComboBox,
+        QGridLayout, QSpinBox, QComboBox, QDialog, QTableWidget, QHeaderView,
+        QTableWidgetItem, QMessageBox,
         # Qt 6 only
         QAbstractSpinBox
     )
     from PyQt6.QtGui import QIcon
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import Qt, QTimer
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-        QGridLayout, QSpinBox, QComboBox,
+        QGridLayout, QSpinBox, QComboBox, QDialog, QTableWidget, QHeaderView,
+        QTableWidgetItem, QMessageBox
     )
     from PyQt5.QtGui import QIcon
-    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import Qt, QTimer
     PYQT_VERSION = 5
 
 import param_defs
@@ -131,7 +133,7 @@ class HwSetupTab(QWidget):
             "outer-middle-inner), the motor to joint corresponence is autodetected "
             "later during calibration.  But the encoder numbers need to match the "
             "motor driver numbers.\n\n"
-            "Complete this setup before starting calibration.\n\n"
+            "Complete this setup before starting calibration.\n"
         )
         info_label.setWordWrap(True)
         header_layout.addWidget(info_label, 1)
@@ -141,11 +143,17 @@ class HwSetupTab(QWidget):
         self.preset_combo.addItems(["No preset"] + list(self.presets.keys()))
         self.preset_combo.currentIndexChanged.connect(self.on_preset_changed)
         self.load_preset_btn = QPushButton("Load Preset")
-        self.load_preset_btn.setEnabled(False)
         self.load_preset_btn.clicked.connect(self.on_load_preset)
+        self.scan_btn = QPushButton("Scan busses")
+        self.scan_btn.clicked.connect(self.on_scan)
+        try:
+            self.scan_btn.setIcon(QIcon.fromTheme('edit-find'))
+        except:
+            pass
         preset_layout.addWidget(self.preset_combo)
         preset_layout.addWidget(self.load_preset_btn)
         preset_layout.addStretch(1)
+        preset_layout.addWidget(self.scan_btn)
         header_layout.addLayout(preset_layout)
         layout.addLayout(header_layout)
 
@@ -614,13 +622,195 @@ class HwSetupTab(QWidget):
         self.unsaved_params.update(values.keys())
         self.update_unsaved_ui()
 
+    def scan_cleanup(self):
+        if hasattr(self, 'scan_timer') and self.scan_timer.isActive():
+            self.scan_timer.stop()
+        if hasattr(self, 'scan_text_cb'):
+            try:
+                self.connection.text_logged.disconnect(self.scan_text_cb)
+            except Exception:
+                pass
+            del self.scan_text_cb
+
+    def on_scan(self):
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        def cb(value):
+            self.connection.send_raw(b'/')
+
+            self.scan_cleanup()
+            self.scan_have_i2c_main = value is not None
+            self.scan_buffer = ""
+            self.scan_current_bus = None
+            self.scan_results = {}
+            self.scan_timer = QTimer()
+            self.scan_timer.setSingleShot(True)
+            self.scan_timer.timeout.connect(self.on_scan_done)
+
+            def on_text(text):
+                self.scan_buffer += text
+                lines = self.scan_buffer.splitlines(True)
+                if lines and not lines[-1].endswith('\n'):
+                    self.scan_buffer = lines[-1]
+                    lines = lines[:-1]
+                else:
+                    self.scan_buffer = ""
+
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if ': ' in stripped:
+                        prefix, rest = stripped.split(': ', 1)
+                        if prefix and ' ' not in prefix:
+                            stripped = rest
+
+                    if stripped.startswith('Scanning '):
+                        bus_name = stripped[len('Scanning '):]
+                        if bus_name.endswith('...'):
+                            bus_name = bus_name[:-3].strip()
+                        self.scan_current_bus = bus_name
+                        self.scan_results.setdefault(bus_name, {})
+                        self.scan_results[bus_name]["_order"] = len(self.scan_results)
+                        self.scan_timer.start(500)
+                        continue
+
+                    if stripped.endswith('device(s) found'):
+                        self.scan_current_bus = None
+                        continue
+
+                    if stripped.startswith('Device found at ') and self.scan_current_bus:
+                        rest = stripped[len('Device found at '):]
+                        if ':' in rest:
+                            addr_part, meta = rest.split(':', 1)
+                            meta = meta.strip()
+                        else:
+                            addr_part = rest
+                            meta = ''
+                        addr = addr_part.strip()
+                        version = None
+                        board = None
+                        if meta:
+                            parts = meta.split(' ', 1)
+                            version = parts[0].strip()
+                            if len(parts) > 1:
+                                board = parts[1].strip()
+                        self.scan_results[self.scan_current_bus][addr] = {
+                            "name": addr,
+                            "version": version,
+                            "board": board,
+                        }
+
+            self.scan_text_cb = on_text
+            self.connection.text_logged.connect(self.scan_text_cb)
+
+        self.connection.read_param('bus.i2c-main.error-cnt', cb)
+
+    def on_scan_done(self):
+        self.scan_cleanup()
+
+        nt_name_map = {
+            0: "ALLMODULES",
+            1: "IMU1",
+            2: "IMU2",
+            3: "MOTORALL",
+            4: "MOTORPITCH",
+            5: "MOTORROLL",
+            6: "MOTORYAW",
+            7: "CAMERA",
+            11: "LOGGER",
+            12: "IMU3",
+        }
+
+        i2c_guess_map = {
+            0x19: 'SBGC I2C Drv #1 (motor)',
+            0x1a: 'SBGC I2C Drv #2 (motor)',
+            0x1b: 'SBGC I2C Drv #3 (motor)',
+            0x1c: 'SBGC I2C Drv #4 (motor)',
+            0x36: 'AS5600 encoder',
+            0x50: 'MicroChip 24FC256 EEPROM',
+            0x68: 'InvenSense MPU-6xxx IMU',
+            0x69: 'InvenSense MPU-6xxx IMU (alt)',
+        }
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Scan results")
+        dialog.setModal(False)
+        dialog_layout = QHBoxLayout()
+
+        bus_items = list(self.scan_results.items())
+        bus_items.sort(key=lambda item: item[1].get("_order", 0))
+        i2c_bus_count = sum(1 for name, _ in bus_items if name.lower().startswith("i2c"))
+        i2c_bus_seen = 0
+        i2c_busses = ['Main (0) I2C bus', 'Internal (1) I2C bus']
+        if i2c_bus_count == 1 and not self.scan_have_i2c_main:
+            i2c_busses.pop(0)
+        while i2c_bus_count > len(i2c_busses):
+            i2c_busses.append(f'I2C bus ({len(i2c_busses)})')
+
+        for bus_name, devices in bus_items:
+            if bus_name.lower().startswith("i2c"):
+                display_name = i2c_busses[i2c_bus_seen]
+                i2c_bus_seen += 1
+            else:
+                display_name = bus_name
+
+            bus_layout = QVBoxLayout()
+            bus_layout.addWidget(QLabel(display_name))
+            table = QTableWidget()
+            is_nt_bus = bus_name.lower().startswith("nt")
+            is_i2c_bus = bus_name.lower().startswith("i2c")
+            if is_nt_bus:
+                headers = ["Device", "Version", "Board"]
+            elif is_i2c_bus:
+                headers = ["Address", "Possible device"]
+            else:
+                headers = ["Address", "Version", "Board"]
+            table.setColumnCount(len(headers))
+            table.setHorizontalHeaderLabels(headers)
+
+            device_items = [(k, v) for k, v in devices.items() if k != "_order"]
+            table.setRowCount(len(device_items))
+            for row_index, (addr, attrs) in enumerate(device_items):
+                name = attrs.get("name", addr)
+                if is_nt_bus:
+                    try:
+                        name = nt_name_map[int(name, 0)]
+                    except Exception:
+                        pass
+                table.setItem(row_index, 0, QTableWidgetItem(str(name)))
+                if is_i2c_bus:
+                    try:
+                        addr_int = int(str(name), 0)
+                    except Exception:
+                        addr_int = None
+                    guess = i2c_guess_map.get(addr_int, "") if addr_int is not None else ""
+                    table.setItem(row_index, 1, QTableWidgetItem(guess))
+                elif len(headers) > 1:
+                    table.setItem(row_index, 1, QTableWidgetItem(str(attrs.get("version") or "")))
+                if len(headers) > 2:
+                    table.setItem(row_index, 2, QTableWidgetItem(str(attrs.get("board") or "")))
+            header = table.horizontalHeader()
+            if PYQT_VERSION == 6:
+                header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            else:
+                header.setSectionResizeMode(QHeaderView.ResizeToContents)
+            header.setStretchLastSection(False)
+            bus_layout.addWidget(table)
+            dialog_layout.addLayout(bus_layout)
+
+        dialog.setLayout(dialog_layout)
+        dialog.show()
+        self.scan_dialog = dialog
+
     def on_send_to_gimbal(self):
         if not self.connection.is_connected():
             return
         error = self.validate_devices()
         if error:
-            # TODO: popup info window
             logger.error(error)
+            QMessageBox.critical(self, "Bad config", error)
             return
         for param_name in sorted(self.unsaved_params):
             value = self.param_values.get(param_name)
@@ -739,6 +929,9 @@ class HwSetupTab(QWidget):
 
     def on_connection_changed(self, connected):
         self.send_btn.setEnabled(connected and len(self.unsaved_params) > 0)
+        self.scan_btn.setEnabled(connected)
+        if not connected:
+            self.scan_cleanup()
         if connected:
             self.refresh_from_gimbal()
 
