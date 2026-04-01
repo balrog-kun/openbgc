@@ -33,7 +33,11 @@ extern uint32_t now;
 
 extern uint32_t perf_ts[];
 extern uint8_t perf_cnt;
+#ifdef DEBUG
 #define PERF
-#define PERF_SAVE_TS perf_ts[perf_cnt++] = micros() - now;
+#define PERF_SAVE_TS perf_ts[perf_cnt++] = micros() - now
+#else
+#define PERF_SAVE_TS
+#endif
 
 #endif /* MAIN_H */

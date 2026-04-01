@@ -132,9 +132,13 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor, float *out_axis) {
         return -1;
     }
 
-    motor->calib_data.pole_pairs = -1;
-    motor->calib_data.zero_electric_offset = -1;
-    motor->calib_data.sensor_direction = 0;
+#define only_axis_match 0
+    if (!only_axis_match) {
+        motor->calib_data.pole_pairs = -1;
+        motor->calib_data.zero_electric_offset = -1;
+        motor->calib_data.sensor_direction = 0;
+        motor->obj.ready = false;
+    }
 
     if ((ret = motor->driver->cls->on(motor->driver)) != 0)
         return ret;
@@ -206,6 +210,9 @@ static int motor_bldc_recalibrate(struct motor_bldc_s *motor, float *out_axis) {
         error_print("Less than 0.5deg motion seen by encoder/AHRS");
         return -2; /* Too little motion seen by encoder (assuming pole pairs < ~720) */
     }
+
+    if (only_axis_match)
+        return 0;
 
     pairs = 360.0f / diff;
     if (fabsf(pairs - roundf(pairs)) > 0.01f * (motor->calib_data.pp_max_error ?: 10)) {
@@ -367,7 +374,7 @@ static void motor_bldc_loop(struct motor_bldc_s *motor) {
         /* Without encoders don't attempt FOC, do direct (blind) sinusoidal drive.
          *
          * Use a hybrid of direct and FOC actually, to create torque, but with
-         * lead angle limited roughly to the linear sin() region to retain tracking.
+         * lead angle limited roughly to the linear sin() area to retain tracking.
          */
         float lead = clamp(torque * (motor->calib_data.sensor_direction * 10), -45, +45);
         vq = 0.0f;

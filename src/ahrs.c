@@ -592,7 +592,7 @@ void ahrs_update(obgc_ahrs *ahrs) {
     mahony_update(ahrs, gyr, acc, dt);
     PERF_SAVE_TS;
 
-    if (ahrs->debug_print && !(ahrs->debug_cnt++ & 1023)) {
+    if (ahrs->debug_print && !((ahrs->debug_cnt++ + ((unsigned long) ahrs >> 4)) & 1023)) {
         char output[256];
         float ypr[3];
 

@@ -97,7 +97,8 @@ struct obgc_hw_config_s {
 };
 
 struct busses_s {
-    obgc_i2c *i2c_main, *i2c_int; /* External and internal in SBGC Serial API docs */
+    /* "External" and "internal" in SimpleBGC32 Serial API docs */
+    obgc_i2c *i2c_main, *i2c_int;
     obgc_nt_bus_t *nt;
 };
 
@@ -334,7 +335,6 @@ static inline void hw_early_init() {
 # define hw_get_console_serial() new USBSerial()
 #endif
 
-/* "External" and "internal" in SimpleBGC32 Serial API docs */
 static inline void hw_early_i2c_init(struct busses_s *bus) {
 #if BOARD_SIMPLEBGC32_REGULAR
     /* Initialize the onboard I2C bus early and unconditionally because
@@ -363,7 +363,7 @@ static inline void hw_setup_irq_priorities(void) {
      * OBGC_NT_BUS_PRIO.  Our NT Rx routine will temporarily block anything
      * below OBGC_NT_BUS_PRIO.
      */
-#ifdef STM32F1
+#if STM32F1
     /* Block this during NT transfer, handled by USBSerial */
     NVIC_SetPriority(USB_LP_CAN1_RX0_IRQn, 15);
     NVIC_SetPriority(USB_HP_CAN1_TX_IRQn, 15);
@@ -394,7 +394,7 @@ static inline void hw_shutdown_to_bl(void) {
      * Same for all F3 series but not most other STM32s.  For other models, look at the same doc, all models summarized in
      * Section 92, Table 209.
      */
-#ifdef STM32F3
+#if STM32F3
 # define SYSMEM_BASE 0x1fffd800
 #elif STM32F1
 # define SYSMEM_BASE 0x1ffff000

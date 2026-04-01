@@ -880,8 +880,8 @@ static void misc_debug_update(void *) {
     // probe_out_pins_update();
     // probe_in_pins_update();
 
-    if (main_ahrs && main_ahrs->debug_print && !(main_ahrs->debug_cnt & 1023))
-        main_ahrs_from_encoders_debug();
+    // if (main_ahrs && main_ahrs->debug_print && !(main_ahrs->debug_cnt & 1023))
+    //    main_ahrs_from_encoders_debug();
 
     if (INFO_CYCLE) {
         if (bus.i2c_main && i2c_main_err_cnt != bus.i2c_main->error_cnt) {

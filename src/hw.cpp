@@ -268,6 +268,7 @@ void hw_setup(const struct obgc_hw_config_s *config, struct busses_s *bus,
 
     hw_motor_low_level_poweroff(config);
 
+    /* TODO: pass a big bitmap of MCU pins already used, error out if re-using a pin within hw_setup() */
     drivers->motor[0] = hw_setup_motor("Motor 0", 0, config, drivers, bus);
     drivers->motor[1] = hw_setup_motor("Motor 1", 1, config, drivers, bus);
     drivers->motor[2] = hw_setup_motor("Motor 2", 2, config, drivers, bus);
