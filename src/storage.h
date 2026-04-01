@@ -34,6 +34,7 @@ extern struct obgc_storage_config_s {
 
     /* User settings -- if we ever want profiles, they'd encapsualte these */
     struct control_settings_s control;
+    bool auto_on;
 } config;
 
 #define MC_24FC256_BASE_ADDR 0x50

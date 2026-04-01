@@ -1696,6 +1696,16 @@ handle_set_param:
 }
 static struct main_loop_cb_s serial_ui_cb = { .cb = serial_ui_run };
 
+static void auto_on_check(void *);
+static struct main_loop_cb_s auto_on_cb = { .cb = auto_on_check };
+static void auto_on_check(void *) {
+    if (cycle_cnt < TARGET_LOOP_RATE)
+        return;
+
+    main_loop_cb_remove(&auto_on_cb);
+    user_motors_on();
+}
+
 static void sbgc_api_send_confirm(uint8_t cmd_id, uint16_t data, uint8_t data_len) {
     uint8_t payload[3] = { cmd_id, (uint8_t) data, (uint8_t) (data >> 8) };
 
@@ -2354,6 +2364,9 @@ void setup(void) {
     main_loop_cb_add(&vbat_cb);
     main_loop_cb_add(&misc_debug_cb);
     main_loop_cb_add(&serial_ui_cb);
+
+    if (config.auto_on)
+        main_loop_cb_add(&auto_on_cb);
 
     serial_api_reset(&sbgc_api);
     sbgc_api.cmd_rx_cb = sbgc_api_cmd_rx_cb;
