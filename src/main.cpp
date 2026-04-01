@@ -1020,6 +1020,9 @@ handle_set_param:
             break;
         }
 
+        if (!main_imu || !main_imu->cls->is_mpuxxxx)
+            break;
+
         motors_on_off(false);
         serial->println("Setting new MPU6050 clksource");
         mpuxxxx_set_clksrc(main_imu, cmd - '0');
@@ -1113,7 +1116,7 @@ handle_set_param:
         serial->println("Recalibrating arm/joint setup: motor/encoder order, axes, neutral angles, direction and scale");
 
         {
-            struct axes_calibrate_data_s cs;
+            struct axes_calibrate_data_s cs = {};
             obgc_encoder *cs_encoders[3];
             bool prev_quiet = quiet;
 
@@ -2113,7 +2116,7 @@ void setup(void) {
         // mpuxxxx_set_srate(main_imu, 8000 / TARGET_LOOP_RATE - 1, 0); /* No DLPF */
         mpuxxxx_set_srate(main_imu, 0, 1); /* 1000 Hz, minimum DLPF */
 
-    if (frame_imu && main_imu->cls->is_mpuxxxx)
+    if (frame_imu && frame_imu->cls->is_mpuxxxx)
         mpuxxxx_set_srate(frame_imu, 0, 1);
 
     if (!have_config) {
