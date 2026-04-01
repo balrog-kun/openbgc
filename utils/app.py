@@ -1196,6 +1196,7 @@ class ConnectionTab(QWidget):
         ports = serial.tools.list_ports.comports()
 
         show_all = self.show_all_checkbox.isChecked()
+        filtered = []
 
         for port in ports:
             # Filter ports if "Show all" is not checked
@@ -1208,7 +1209,11 @@ class ConnectionTab(QWidget):
                        'bluetooth' in port.description.lower()):
                     continue
 
+            filtered.append(port.device)
             self.port_list.addItem(f"{port.device} - {port.description}")
+
+        if filtered and self.port_input.text().strip() not in filtered:
+            self.port_input.setText(filtered[0])
 
     def on_ports_changed(self, ports):
         """Handle port list changes from monitoring."""
