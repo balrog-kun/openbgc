@@ -48,7 +48,8 @@ bl_baudrate = 115200
 port = /dev/ttyUSB0
 
 upload: $(FIRMWARE_BIN) $(port) stm32ld
-	# First place a jumper at FLASH pads on PilotFly H2 board then connect USB cable
+	# PilotFly H2: Place a jumper between FLASH pads on main board then connect USB cable
+	# Boards with switches: reset with the FLASH or BOOT0 button pressed
 	# The 1 at the end is to start the new binary immediately, drop last param to avoid this
 	./stm32ld $(port) $(bl_baudrate) $(FIRMWARE_BIN) 1
 	# Show serial port, ^a q to exit
