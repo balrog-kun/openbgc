@@ -691,7 +691,7 @@ void control_update_joint_vel(struct control_data_s *control) {
      *  control->frame_ahrs->velocity_vec == B
      */
 
-    if (control->frame_ahrs)
+    if (control->frame_ahrs && control->settings->have_forward)
         vector_sub(joint_velocities, control->frame_ahrs->velocity_vec);
 
     //control_apply_attenuation(control, joint_velocities);

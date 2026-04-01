@@ -120,11 +120,7 @@ int axes_calibrate(struct axes_calibrate_data_s *data) {
     data->print("1. Rotate the outer joint manually over full range of motion or at\r\n");
     data->print("   least 30 degs each direction, while keeping the other two joints'\r\n");
     data->print("   angles fixed.\r\n");
-
-    if (!data->frame_ahrs) {
-        data->print("   Without frame IMU, keep the frame/base absolutely static like\r\n");
-        data->print("   a on tripod.\r\n");
-    }
+    data->print("   Keep the frame/base absolutely static like on a tripod.\r\n");
 
     if (!all_encoders) {
         data->print("   Without all 3 encoders, orient the base and the joints in their\r\n");

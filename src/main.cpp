@@ -328,7 +328,7 @@ static void main_ahrs_from_encoders_debug(void) {
     /* We want the global main_ahrs->q estimated from frame_ahrs + rel_q (encoders).
      * If no frame_ahrs assume it was stationary.
      */
-    if (frame_ahrs)
+    if (frame_ahrs && control.settings->have_forward)
         quaternion_mult_to(frame_ahrs->q, rel_q, q);
     else
         memcpy(q, rel_q, 4 * sizeof(float));
@@ -395,6 +395,19 @@ static void error_beep(void) {
 
 void main_beep(void) {
     beep();
+}
+
+static void axes_precalc_aux_values(void) {
+    obgc_ahrs *tmp_frame_ahrs = NULL;
+    bool motor_based = drivers.encoder[0]->cls->motor_based || drivers.encoder[1]->cls->motor_based ||
+                drivers.encoder[2]->cls->motor_based;
+
+    /* Only use frame_ahrs in the if we have aligment between the two IMUs */
+    if (control.settings->have_forward && (motors_on || !motor_based))
+        tmp_frame_ahrs = frame_ahrs;
+
+    axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, tmp_frame_ahrs, rel_q,
+            frame_q, config.control.tripod_mode);
 }
 
 static void control_update_aux_values(void) {
@@ -570,8 +583,7 @@ static void motors_on_off(bool on) {
             /* Encoder readings only start to be valid now so update everything
              * that depends on them.
              */
-            axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, frame_ahrs, rel_q,
-                    frame_q, config.control.tripod_mode);
+            axes_precalc_aux_values();
 
             if (config.control.tripod_mode)
                 ahrs_reset_orientation(main_ahrs);
@@ -1073,7 +1085,7 @@ handle_set_param:
                 float angles_est[3], mapped[3];
 
                 /* Only frame_ahrs->q, can't use frame_q instead because that is calculated from encoder info */
-                if (frame_ahrs) {
+                if (frame_ahrs && control.settings->have_forward) {
                     float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
                     quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
                 } else
@@ -1104,6 +1116,10 @@ handle_set_param:
         serial->println("Recalibrating main AHRS");
         delay(100);
         ahrs_calibrate(main_ahrs);
+        if (frame_ahrs) {
+            serial->println("Recalibrating frame AHRS");
+            ahrs_calibrate(frame_ahrs);
+        }
         beep();
         break;
     case 'C':
@@ -1397,6 +1413,7 @@ handle_set_param:
         }
 
         control_update_aux_values();
+        axes_precalc_aux_values();
         break;
     case 't':
         set_use_motor = true;
@@ -2404,8 +2421,7 @@ void loop(void) {
 
     if (config.have_axes) {
         if (AXES_JACOBIAN_CYCLE)
-            axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, frame_ahrs, rel_q,
-                    frame_q, config.control.tripod_mode);
+            axes_precalc_aux_values();
 
         PERF_SAVE_TS;
 
