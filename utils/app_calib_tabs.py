@@ -91,6 +91,15 @@ class CalibrationTab(QWidget):
                 "lens keeps pointing at the same point, only the the image in camera\n" +
                 "rotates around its center.  You can have it on and zoomed in to\n" +
                 "make a precise roll rotation."),
+            "imu-align": ("Do this simultaneously with the previous step (Forward direction)\n" +
+                "or separately.  It will teach the firmware about the frame IMU's\n" +
+                "relative mounting orientation and allow it to use both IMUs to improve\n" +
+                "disturbance rejection.\n" +
+                "Instead of rotating just the camera, rotate both the base (frame) and\n" +
+                "the camera head together, i.e. rotate the whole device, by around 45\n" +
+                "degrees from the home position.  Then press \"Set\" to save the IMU\n" +
+                "alignment, or, if you haven't already, use the Forward direction\n" +
+                "\"Set\" button above to complete both steps at once."),
             "motor": ("Detects the number of each motor's rotor poles, their angle with\n" +
                 "relation to the encoder (aka. field offset) and the direction of the\n" +
                 "stator winding sequence wrt. current polarity.  Needed to drive the\n" +
@@ -134,6 +143,10 @@ class CalibrationTab(QWidget):
              [("Set", self.on_set_forward, 'go-next')],
              [],
              lambda: self.geometry.have_forward),
+            ('imu-align', "IMU alignment",
+             [("Set", self.on_set_imu_alignment, 'go-next')],
+             ['config.axes.have-imu-alignment'],
+             lambda: bool(self.params.get('config.axes.have-imu-alignment'))),
             ('motor', "Motor geometry",
              [("Go to tab", self.on_go_to_motor_tab, None)],
              motor_geom_params,
@@ -219,7 +232,7 @@ class CalibrationTab(QWidget):
         """Enable or disable all calibration buttons."""
         for step_id in self.calibration_btns:
             enabled = not self.connection.calibrating
-            if step_id == 'limit':
+            if step_id in ['forward', 'imu-align', 'limit']:
                 enabled = enabled and self.geometry.have_axes
 
             for button in self.calibration_btns[step_id]:
@@ -232,15 +245,7 @@ class CalibrationTab(QWidget):
             checkbox.setChecked(checked)
             checkbox.setToolTip("Already calibrated once" if checked else "Not done")
 
-    def start_updates(self):
-        """Update calibration status display."""
-        if not self.connection.is_connected():
-            return
-
-        # Update checkboxes based on current geometry state
-        self.update_checkboxes()
-        self.update_buttons()
-
+    def update_params(self):
         req_params = {}
         for _, _, _, params, _ in self.calibration_steps:
             for param in params:
@@ -256,6 +261,38 @@ class CalibrationTab(QWidget):
             self.update_checkboxes()
 
         self.connection.read_param(keys, read_cb)
+
+    def set_step_visible(self, step_id, visible):
+        widgets = [
+            self.calibration_checkboxes[step_id],
+            self.calibration_labels[step_id]
+        ] + self.calibration_btns[step_id]
+
+        for widget in widgets:
+            widget.setVisible(visible)
+
+    def update_imu_align(self):
+        # The IMU alignment step is only relevant if we want OpenBGC to use the frame IMU
+        # at all.  Check if we currently have a frame IMU and the corresponding AHRS
+        # instance by requesting frame-ahrs.velocity-vec and show/hide the whole IMU
+        # alignment row in the QGridLayout according to that.
+        def read_cb(value):
+            self.set_step_visible('imu-align', value is not None)
+
+        self.connection.read_param('frame-ahrs.velocity-vec', read_cb)
+
+    def start_updates(self):
+        """Update calibration status display."""
+        if not self.connection.is_connected():
+            return
+
+        # Update checkboxes based on current geometry state
+        self.update_checkboxes()
+        self.update_buttons()
+
+        self.update_params()
+
+        self.update_imu_align()
 
     def stop_updates(self):
         self.update_buttons()
@@ -287,8 +324,14 @@ class CalibrationTab(QWidget):
 
     def on_set_forward(self):
         self.connection.send_raw(b'K')
-        logger.info(f"New forward vector set")
+        logger.info(f"New forward vector requested, check result in console")
         self.geometry.update()
+        self.update_params()
+
+    def on_set_imu_alignment(self):
+        self.connection.send_raw(b'H')
+        logger.info(f"IMU alignment requested, check result in console")
+        self.update_params()
 
     def on_go_to_motor_tab(self):
         self.main_window.switch_to_tab('calib-motor')
