@@ -226,3 +226,5 @@ PARAM_DEF(config.hw.encoder[2].i2c.addr) /* For future drivers... */
 PARAM_DEF(config.hw.encoder[2].sbgc32_type)
 
 PARAM_DEF(config.auto_on)
+
+PARAM_DEF(config.axes.have_imu_alignment)

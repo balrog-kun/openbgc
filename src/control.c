@@ -623,7 +623,7 @@ void control_step(struct control_data_s *control) {
         }
 #endif
 
-    if (control->frame_ahrs) {
+    if (control->frame_ahrs && control->axes->have_imu_alignment) {
         float frame_velocities[3] = INIT_VEC(control->frame_ahrs->velocity_vec);
         float conj_frame_q[4] = INIT_CONJ_Q(control->frame_q);
 
@@ -691,7 +691,7 @@ void control_update_joint_vel(struct control_data_s *control) {
      *  control->frame_ahrs->velocity_vec == B
      */
 
-    if (control->frame_ahrs && control->settings->have_forward)
+    if (control->frame_ahrs && control->axes->have_imu_alignment)
         vector_sub(joint_velocities, control->frame_ahrs->velocity_vec);
 
     //control_apply_attenuation(control, joint_velocities);

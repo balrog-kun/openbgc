@@ -328,7 +328,7 @@ static void main_ahrs_from_encoders_debug(void) {
     /* We want the global main_ahrs->q estimated from frame_ahrs + rel_q (encoders).
      * If no frame_ahrs assume it was stationary.
      */
-    if (frame_ahrs && control.settings->have_forward)
+    if (frame_ahrs && config.axes.have_imu_alignment)
         quaternion_mult_to(frame_ahrs->q, rel_q, q);
     else
         memcpy(q, rel_q, 4 * sizeof(float));
@@ -403,7 +403,7 @@ static void axes_precalc_aux_values(void) {
                 drivers.encoder[2]->cls->motor_based;
 
     /* Only use frame_ahrs in the if we have aligment between the two IMUs */
-    if (control.settings->have_forward && (motors_on || !motor_based))
+    if (config.axes.have_imu_alignment && (motors_on || !motor_based))
         tmp_frame_ahrs = frame_ahrs;
 
     axes_precalc_rel_q(&config.axes, drivers.encoder, main_ahrs, tmp_frame_ahrs, rel_q,
@@ -1085,7 +1085,7 @@ handle_set_param:
                 float angles_est[3], mapped[3];
 
                 /* Only frame_ahrs->q, can't use frame_q instead because that is calculated from encoder info */
-                if (frame_ahrs && control.settings->have_forward) {
+                if (frame_ahrs && config.axes.have_imu_alignment) {
                     float conj_frame_q[4] = INIT_CONJ_Q(frame_ahrs->q);
                     quaternion_mult_to(conj_frame_q, main_ahrs->q, q);
                 } else
@@ -1155,6 +1155,8 @@ handle_set_param:
             config.have_axes = !axes_calibrate(&cs);
             quiet = prev_quiet;
         }
+
+        config.axes.have_imu_alignment = false;
 
         if (!config.have_axes)
             break;
@@ -1301,7 +1303,7 @@ handle_set_param:
         vector_normalize(control.settings->forward_vec);
         control.settings->have_forward = 1;
         control_update_aux_values();
-        break;
+        /* Fall through */
     case 'H':
         if (!frame_ahrs)
             return;
@@ -1316,20 +1318,16 @@ handle_set_param:
             break;
         }
 
-        /*
-         * Now the user is asked to roll (actually rotate around any roughly horizontal axis)
+        /* Now the user is asked to roll (actually rotate around any roughly horizontal axis)
          * the whole device including the base and the camera so that we can compare the rotation
          * axes reported by the frame IMU and main IMU and get a reliable yaw alignment.
          *
-         * If this is done after the camera forward calibration ('K') the camera needs to be first
-         * rolled back to the home position (how do we relax this requirement? maybe we should ask
-         * the user to make the rotation directly from the attitude at the time of 'K'?), and then
-         * the whole device rotated slowly enough that the joint friction prevent the joints
+         * This is ideally done together with 'K' so as to not introduce and extra calibration
+         * step.  To do both forward calibration and the IMU alignment at the same time
+         * rotate the whole device slowly enough that the joint friction prevents the joints
          * rotating.  If this is difficult or camera balance isn't perfect the joints probably
          * need to be locked or motors enabled to maintain angles (with encoders), or motor braking
          * enabled.
-         *
-         * TODO: make this idempotent and then merge with 'K'
          */
 
         {
@@ -1386,27 +1384,33 @@ handle_set_param:
             quaternion_rotate_z_to(frame_ahrs->q, cosf(angle), sinf(angle), true_frame_q);
             memcpy(frame_ahrs->q, true_frame_q, sizeof(true_frame_q));
 
-            /* During axes calibration ('C') we used the null / identity quaternion as frame
-             * attitude, on which all the axes and main_imu_mount_q are based, because we
-             * couldn't use the frame IMU.  Now that the frame IMU is aligned with the main
-             * IMU, we need to update the axes and main_imu_mount_q to be based on the true
-             * frame attitude.  To do that we need to find what the frame attitude was at
-             * calibration time.  true_frame_q represents current true frame attitude while
-             * frame_q represents the hypothetical current frame attitude implied by NULL
-             * quaternion frame attitude at calibration time.  So frame_q simply reflects
-             * the frame's rotation since calibration.
-             *
-             * Thus calibration-time true_frame_q is conj(frame_q) x current true_frame_q
-             * and conj(calibration true_frame_q) is conj(current true_frame_q) x frame_q
-             */
-            true_frame_q[0] = -true_frame_q[0];
-            quaternion_mult_to(true_frame_q, frame_q, conj_calib_time_frame_q);
+            if (!config.axes.have_imu_alignment) {
+                /* During axes calibration ('C') we used the null / identity quaternion as frame
+                 * attitude, on which all the axes and main_imu_mount_q are based, because we
+                 * couldn't use the frame IMU.  Now that the frame IMU is aligned with the main
+                 * IMU, we need to update the axes and main_imu_mount_q to be based on the true
+                 * frame attitude.  To do that we need to find what the frame attitude was at
+                 * calibration time.  true_frame_q represents current true frame attitude while
+                 * frame_q represents the hypothetical current frame attitude implied by NULL
+                 * quaternion frame attitude at calibration time.  So frame_q simply reflects
+                 * the frame's rotation since calibration.
+                 *
+                 * Thus calibration-time true_frame_q is conj(frame_q) x current true_frame_q
+                 * and conj(calibration true_frame_q) is conj(current true_frame_q) x frame_q
+                 */
+                true_frame_q[0] = -true_frame_q[0];
+                quaternion_mult_to(true_frame_q, frame_q, conj_calib_time_frame_q);
 
-            vector_rotate_by_quaternion(config.axes.axes[0], conj_calib_time_frame_q);
-            vector_rotate_by_quaternion(config.axes.axes[1], conj_calib_time_frame_q);
-            vector_rotate_by_quaternion(config.axes.axes[2], conj_calib_time_frame_q);
-            quaternion_mult_to(conj_calib_time_frame_q, config.axes.main_imu_mount_q, diff_q);
-            memcpy(config.axes.main_imu_mount_q, diff_q, sizeof(config.axes.main_imu_mount_q));
+                vector_rotate_by_quaternion(config.axes.axes[0], conj_calib_time_frame_q);
+                vector_rotate_by_quaternion(config.axes.axes[1], conj_calib_time_frame_q);
+                vector_rotate_by_quaternion(config.axes.axes[2], conj_calib_time_frame_q);
+                quaternion_mult_to(conj_calib_time_frame_q, config.axes.main_imu_mount_q, diff_q);
+                memcpy(config.axes.main_imu_mount_q, diff_q, sizeof(config.axes.main_imu_mount_q));
+
+                config.axes.have_imu_alignment = true;
+            } else {
+                /* TODO: rotate what can be easily rotated around Z in config.axes */
+            }
 
             /* Also update home_frame_q to what true_frame_q would have been at 'k' time */
             quaternion_rotate_z_to(tmp_home_frame_q, cosf(angle), sinf(angle), control.settings->home_frame_q);

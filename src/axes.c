@@ -395,7 +395,7 @@ void axes_precalc_rel_q(struct axes_data_s *data, struct obgc_encoder_s **encode
         q_tmp[0] = -q_tmp[0];
         quaternion_mult_to(main_ahrs->q, q_tmp, frame_q);
 
-        if (frame_ahrs)
+        if (frame_ahrs && data->have_imu_alignment)
             ahrs_set_encoder_q(frame_ahrs, frame_q);
     } else {
         static float main_q[4]; /* FIXME */

@@ -22,6 +22,7 @@ struct axes_data_s {
     bool has_limits[3];
     float limit_max[3];
     float limit_min[3];
+    bool have_imu_alignment;
 
     /* Dynamic precalculated values */
     float jacobian_t[3][3]; /* Same as .axes but rotated by current angles */
