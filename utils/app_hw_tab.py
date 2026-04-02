@@ -670,6 +670,11 @@ class HwSetupTab(QWidget):
                         bus_name = stripped[len('Scanning '):]
                         if bus_name.endswith('...'):
                             bus_name = bus_name[:-3].strip()
+                        count = 2
+                        orig_name = str(bus_name)
+                        while bus_name in self.scan_results:
+                            bus_name = orig_name + ' ' + str(count)
+                            count += 1
                         self.scan_current_bus = bus_name
                         self.scan_results.setdefault(bus_name, {})
                         self.scan_results[bus_name]["_order"] = len(self.scan_results)
