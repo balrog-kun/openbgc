@@ -812,6 +812,8 @@ class PortMonitor(QObject):
         super().__init__(parent)
         self.monitor_thread = None
         self.monitoring = False
+        self.udev_monitor = None
+        self.udev_notifier = None
 
         if PORT_MONITORING_AVAILABLE:
             if platform.system() == 'Linux':
@@ -822,24 +824,50 @@ class PortMonitor(QObject):
 
     def start_linux_monitoring(self):
         """Monitor serial ports using udev on Linux."""
-        def monitor_loop():
+        try:
+            context = pyudev.Context()
+            self.udev_monitor = pyudev.Monitor.from_netlink(context)
+            self.udev_monitor.filter_by(subsystem='tty')
             try:
-                context = pyudev.Context()
-                monitor = pyudev.Monitor.from_netlink(context)
-                monitor.filter_by(subsystem='tty')
-                self.monitoring = True
+                self.udev_monitor.start()
+            except Exception:
+                # Older pyudev versions don't require start() for poll/fileno use.
+                pass
 
-                for device in iter(monitor.poll, None):
-                    if not self.monitoring:
-                        break
-                    if device.action in ('add', 'remove'):
-                        self.update_ports()
-            except Exception as e:
-                logger.warning(f"Linux port monitoring failed: {e}")
-                self.start_polling_monitoring()
+            self.monitoring = True
 
-        self.monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
-        self.monitor_thread.start()
+            if self.udev_notifier:
+                self.udev_notifier.setEnabled(False)
+                self.udev_notifier.deleteLater()
+                self.udev_notifier = None
+
+            self.udev_notifier = QSocketNotifier(self.udev_monitor.fileno(), QSocketNotifier.Type.Read, self)
+            self.udev_notifier.activated.connect(self.on_udev_activated)
+            self.udev_notifier.setEnabled(True)
+        except Exception as e:
+            logger.warning(f"Linux port monitoring failed: {e}")
+            self.start_polling_monitoring()
+
+    def on_udev_activated(self, _fd=None):
+        if not self.monitoring or not self.udev_monitor or not self.udev_notifier:
+            return
+
+        # Avoid reentrancy while draining multiple pending udev events.
+        self.udev_notifier.setEnabled(False)
+        try:
+            while True:
+                try:
+                    device = self.udev_monitor.poll(timeout=0)
+                except TypeError:
+                    # For older pyudev versions
+                    device = self.udev_monitor.poll(0)
+                if device is None:
+                    break
+                if device.action in ('add', 'remove'):
+                    self.update_ports()
+        finally:
+            if self.udev_notifier:
+                self.udev_notifier.setEnabled(True)
 
     def start_windows_monitoring(self):
         """Monitor serial ports using WMI on Windows."""
@@ -922,6 +950,11 @@ class PortMonitor(QObject):
     def stop(self):
         """Stop monitoring."""
         self.monitoring = False
+        if self.udev_notifier:
+            self.udev_notifier.setEnabled(False)
+            self.udev_notifier.deleteLater()
+            self.udev_notifier = None
+        self.udev_monitor = None
         if self.monitor_thread:
             self.monitor_thread.join(timeout=1.0)
 
