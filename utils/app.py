@@ -814,13 +814,15 @@ class PortMonitor(QObject):
         self.monitoring = False
         self.udev_monitor = None
         self.udev_notifier = None
+        self.poll_timer = None
+        self.poll_last_ports = set()
 
-        if PORT_MONITORING_AVAILABLE:
-            if platform.system() == 'Linux':
-                self.start_linux_monitoring()
-            elif platform.system() == 'Windows':
-                self.start_windows_monitoring()
-            # else: no monitoring on unsupported platforms
+        if PORT_MONITORING_AVAILABLE and platform.system() == 'Linux':
+            self.start_linux_monitoring()
+        elif PORT_MONITORING_AVAILABLE and platform.system() == 'Windows':
+            self.start_windows_monitoring()
+        else:
+            self.start_polling_monitoring()
 
     def start_linux_monitoring(self):
         """Monitor serial ports using udev on Linux."""
@@ -849,9 +851,6 @@ class PortMonitor(QObject):
             self.start_polling_monitoring()
 
     def on_udev_activated(self, _fd=None):
-        if not self.monitoring or not self.udev_monitor or not self.udev_notifier:
-            return
-
         # Avoid reentrancy while draining multiple pending udev events.
         self.udev_notifier.setEnabled(False)
         try:
@@ -918,26 +917,23 @@ class PortMonitor(QObject):
 
     def start_polling_monitoring(self):
         """Fallback polling-based monitoring."""
-        def poll_loop():
-            last_ports = set()
-
-            while self.monitoring:
-                try:
-                    ports = serial.tools.list_ports.comports()
-                    current_ports = {f"{p.device} - {p.description}" for p in ports}
-
-                    if current_ports != last_ports:
-                        last_ports = current_ports
-                        self.ports_changed.emit(ports)
-
-                    time.sleep(2.0)  # Poll every 2 seconds
-                except Exception as e:
-                    logger.warning(f"Port polling error: {e}")
-                    time.sleep(5.0)  # Wait longer on error
-
         self.monitoring = True
-        self.monitor_thread = threading.Thread(target=poll_loop, daemon=True)
-        self.monitor_thread.start()
+        if self.poll_timer is None:
+            self.poll_timer = QTimer(self)
+            self.poll_timer.timeout.connect(self.on_poll_timeout)
+        self.poll_last_ports = set()
+        self.poll_timer.start(2000)  # Poll every 2 seconds
+
+    def on_poll_timeout(self):
+        try:
+            ports = serial.tools.list_ports.comports()
+            current_ports = {f"{p.device} - {p.description}" for p in ports}
+
+            if current_ports != self.poll_last_ports:
+                self.poll_last_ports = current_ports
+                self.ports_changed.emit(ports)
+        except Exception as e:
+            logger.warning(f"Port polling error: {e}")
 
     def update_ports(self):
         """Update the current port list."""
@@ -955,6 +951,8 @@ class PortMonitor(QObject):
             self.udev_notifier.deleteLater()
             self.udev_notifier = None
         self.udev_monitor = None
+        if self.poll_timer:
+            self.poll_timer.stop()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=1.0)
 
