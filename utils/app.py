@@ -2323,6 +2323,8 @@ class ParameterEditorTab(QWidget):
         self.connection = connection
         self.param_values = {}  # Cache of parameter values
         self.param_widgets = {}  # Cache of parameter widgets
+        self.param_changed = {}
+        self.updating_widgets = False
 
         layout = QVBoxLayout()
 
@@ -2332,7 +2334,10 @@ class ParameterEditorTab(QWidget):
         info_label = QLabel(
             "Generic parameter editor. Allows viewing and modifying all gimbal parameters. "
             "Use 'Read all' to load current values from the gimbal, then modify individual "
-            "parameters and use the Read/Write buttons or 'Save JSON' to export current values."
+            "parameters and use the Read/Write buttons.  You can also back up and restore "
+            "settings to/from JSON files.\n\nNote you're editing the running set in gimbal's "
+            "RAM but changes should be separately written to permanent storage in the Connection "
+            "tab if desired."
         )
         info_label.setWordWrap(True)
         top_layout.addWidget(info_label)
@@ -2341,14 +2346,30 @@ class ParameterEditorTab(QWidget):
 
         self.read_all_btn = QPushButton("Read all")
         self.read_all_btn.clicked.connect(self.on_read_all)
-        self.read_all_btn.setToolTip("Read all parameters from the gimbal")
+        self.read_all_btn.setToolTip("Read (download) all parameters from the gimbal")
         self.read_all_btn.setMinimumWidth(200)
         right_layout.addWidget(self.read_all_btn)
 
-        self.save_json_btn = QPushButton("Save JSON")
+        self.write_all_btn = QPushButton("Write all")
+        self.write_all_btn.clicked.connect(self.on_write_all)
+        self.write_all_btn.setToolTip("Write (upload) all unsaved parameters to the "
+                                      "gimbal.  If you want them saved to permanent "
+                                      "storage afterwards, use \"Write to storage\" in "
+                                      "the Connection tab.")
+        right_layout.addWidget(self.write_all_btn)
+
+        self.save_json_btn = QPushButton("Save JSON file")
         self.save_json_btn.clicked.connect(self.on_save_json)
         self.save_json_btn.setToolTip("Save currently loaded parameter values to JSON file")
         right_layout.addWidget(self.save_json_btn)
+
+        self.load_json_btn = QPushButton("Load JSON file")
+        self.load_json_btn.clicked.connect(self.on_load_json)
+        self.load_json_btn.setToolTip("Load parameter values from a JSON file into the editor.  "
+                                      "You must then separately upload them to the gimbal's "
+                                      "running set and optionally save to gimbal storage in the "
+                                      "Connection tab afterwards.")
+        right_layout.addWidget(self.load_json_btn)
 
         top_layout.addLayout(right_layout)
         top_layout.setStretch(0, 1)
@@ -2437,8 +2458,8 @@ class ParameterEditorTab(QWidget):
 
             # Write button
             write_btn = QPushButton()
-            write_btn.setToolTip(f"Write {pdef.name} to gimbal")
-            write_btn.clicked.connect(lambda checked, pid=pdef.id: self.on_write_param(pid))
+            write_btn.setToolTip(f"Write {pdef.name} to gimbal (running set)")
+            write_btn.clicked.connect(lambda checked, pdef=pdef: self.write_param(pdef, True))
             try:
                 write_btn.setIcon(QIcon.fromTheme("go-next"))
                 write_btn.setText("")
@@ -2476,6 +2497,10 @@ class ParameterEditorTab(QWidget):
                 'row': row
             }
 
+            if not (pdef.flags & param_defs.ParamFlag.ro):
+                self.set_param_changed(pdef, True, False) # Updates label
+                self.connect_value_widget_signals(pdef, value_widget)
+
             row += 1
 
         # Empty space after all the parameters if param_layout needs to stretch
@@ -2484,6 +2509,63 @@ class ParameterEditorTab(QWidget):
             row, 0, 1, -1)
 
         self.populated = True
+
+    def set_param_changed(self, pdef, changed, update=True):
+        if pdef.flags & param_defs.ParamFlag.ro:
+            return
+        if changed:
+            self.param_changed[pdef.id] = True
+        else:
+            self.param_changed.pop(pdef.id, None)
+        label = self.param_widgets[pdef.id]['name']
+
+        # Changed parameters have a * at the end
+        #suffix = '*' if changed else ''
+        #label.setText(pdef.name + suffix)
+
+        # Changed parameters printed in bold
+        font = label.font()
+        font.setBold(changed)
+        label.setFont(font)
+
+        # Intentionally not enabling/disabling the write button
+
+        if update:
+            self.update_buttons()
+
+    def connect_value_widget_signals(self, pdef, widget):
+        try:
+            construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+        except Exception:
+            return
+        self._connect_widget_signals_recursive(pdef, widget, construct_type)
+
+    def _connect_widget_signals_recursive(self, pdef, widget, construct_type):
+        # Arrays
+        if hasattr(construct_type, 'subcon') and hasattr(construct_type, 'count'):
+            layout = widget.layout()
+            for i in range(construct_type.count):
+                element_widget = layout.itemAt(i + 1).widget()
+                if element_widget:
+                    self._connect_widget_signals_recursive(pdef, element_widget, construct_type.subcon)
+            return
+
+        # Single
+        def on_changed(*args, pdef=pdef):
+            if self.updating_widgets:
+                return
+            self.set_param_changed(pdef, True)
+
+        if isinstance(construct_type, construct.Enum):
+            widget.currentIndexChanged.connect(on_changed)
+        elif construct_type == construct.Flag:
+            widget.stateChanged.connect(on_changed)
+        elif hasattr(construct_type, 'fmtstr') and construct_type.fmtstr[-1] in "def":
+            if isinstance(widget, QDoubleSpinBox):
+                widget.valueChanged.connect(on_changed)
+        elif isinstance(construct_type, construct.BytesInteger):
+            if isinstance(widget, QSpinBox):
+                widget.valueChanged.connect(on_changed)
 
     def create_toplevel_value_widget(self, pdef):
         """Create appropriate widget based on parameter type."""
@@ -2596,23 +2678,54 @@ class ParameterEditorTab(QWidget):
             if value is not None:
                 self.param_values[param_id] = value
                 self.update_value_widget(param_id, value)
-                self.update_buttons()
+                self.set_param_changed(pdef, False)
 
         self.connection.read_param(pdef.name, callback)
 
-    def on_write_param(self, param_id):
+    def write_param(self, pdef, update):
         """Write a single parameter."""
-        if not self.connection.is_connected() or self.connection.calibrating:# or param_id not in self.param_values:
+        if not self.connection.is_connected():
             return
 
-        pdef = param_defs.params[param_id]
-        self.param_values[param_id] = self.get_toplevel_widget_value(param_id)
-        value = self.param_values[param_id]
+        value = self.get_toplevel_widget_value(pdef.id)
+        self.param_values[pdef.id] = value
 
         self.connection.write_param(pdef.name, value)
         logger.info(f"Parameter {pdef.name} written to gimbal")
+        self.set_param_changed(pdef, False, update)
 
+    def start_batch(self):
+        self.connection.set_calibrating(True) # Abuse to show "busy" state
+
+    def end_batch(self):
+        self.connection.set_calibrating(False)
+
+    def on_write_all(self):
+        """Write all changed parameters to gimbal with a small delay between writes."""
+        if not self.connection.is_connected() or self.connection.calibrating:
+            return
+
+        self.write_all_queue = []
+        for pdef in sorted(param_defs.params.values(), key=lambda x: x.id):
+            if pdef.id not in self.param_changed:
+                continue
+            self.param_values[pdef.id] = self.get_toplevel_widget_value(pdef.id)
+            self.write_all_queue.append(pdef)
+
+        self.start_batch()
         self.update_buttons()
+        self.connection.drain_queues(self.write_all_next)
+
+    def write_all_next(self):
+        if not self.write_all_queue:
+            del self.write_all_queue
+            self.end_batch()
+            self.update_buttons()
+            return
+
+        pdef = self.write_all_queue.pop(0)
+        self.write_param(pdef, False)
+        QTimer.singleShot(30, self.write_all_next) # Add delay between writes, assume ~115200Kbps
 
     def on_read_all(self):
         """Read all parameters from gimbal."""
@@ -2625,6 +2738,7 @@ class ParameterEditorTab(QWidget):
         # Read in batches of 5
         batch_size = 5
         self.num_outstanding = 0
+        self.start_batch()
         for i in range(0, len(all_params), batch_size):
             batch = all_params[i:i + batch_size]
             param_names = [p.name for p in batch]
@@ -2638,6 +2752,7 @@ class ParameterEditorTab(QWidget):
                         if j < len(values):
                             self.param_values[pdef.id] = values[j]
                             self.update_value_widget(pdef.id, values[j])
+                            self.set_param_changed(pdef, False, False)
                 else:
                     # TODO: if the batch read failed, add reads of each
                     # param in the batch individually to the end of the queue
@@ -2646,11 +2761,13 @@ class ParameterEditorTab(QWidget):
                 self.num_outstanding -= 1
                 if self.num_outstanding == 0:
                     del self.num_outstanding
+                    self.end_batch()
                     self.update_buttons()
 
             self.connection.read_param(param_names, batch_callback)
             self.num_outstanding += 1
             if self.num_outstanding == 1:
+                self.start_batch()
                 self.update_buttons()
 
     def on_save_json(self):
@@ -2678,6 +2795,83 @@ class ParameterEditorTab(QWidget):
             except Exception as e:
                 logger.error(f"Failed to save parameters: {e}")
 
+    def on_load_json(self):
+        """Load parameter values from JSON file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Load Parameters from JSON", "", "JSON files (*.json);;All files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                json_data = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load parameters: {e}")
+            return
+
+        if not self.populated:
+            self.create_parameter_widgets()
+
+        by_name = {p.name: p for p in param_defs.params.values()}
+
+        for name, value in json_data.items():
+            if name not in by_name:
+                msg = f"Load JSON: parameter not in param_defs: {name}"
+                logger.info(msg)
+                continue
+
+            pdef = by_name[name]
+            param_id = pdef.id
+
+            prev = self.param_values.get(param_id, None)
+            try:
+                construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+            except Exception:
+                construct_type = None
+
+            def normalize(v): # A bit of AI slop here
+                if isinstance(v, list):
+                    return [normalize(x) for x in v]
+                if construct_type is not None and isinstance(construct_type, construct.Enum):
+                    try:
+                        return int(v)
+                    except Exception:
+                        try:
+                            return int(getattr(construct_type, str(v)))
+                        except Exception:
+                            try:
+                                return int(construct_type.encmapping.get(str(v), v))
+                            except Exception:
+                                return str(v)
+                try:
+                    return int(v)
+                except Exception:
+                    try:
+                        return float(v)
+                    except Exception:
+                        return v
+
+            prev_n = normalize(prev) if prev is not None else None
+            next_n = normalize(value)
+            different = (prev is None) or (prev_n != next_n)
+
+            value_to_set = value
+            if construct_type is not None and isinstance(construct_type, construct.Enum):
+                try:
+                    if isinstance(value, int):
+                        value_to_set = construct_type.decmapping.get(value, value)
+                except Exception:
+                    pass
+
+            self.param_values[param_id] = value_to_set
+            self.update_value_widget(param_id, value_to_set)
+
+            if different and not (pdef.flags & param_defs.ParamFlag.ro):
+                self.set_param_changed(pdef, True, False)
+
+        self.update_buttons()
+
     def on_filter_changed(self, text):
         """Handle filter text change."""
         filter_text = text.lower()
@@ -2698,9 +2892,11 @@ class ParameterEditorTab(QWidget):
 
         try:
             construct_type = param_utils.ctype_to_construct(pdef.typ, pdef.size)
+            self.updating_widgets = True
             self.set_widget_value(value_widget, construct_type, value)
         except Exception as e:
             logger.error(f"Failed to update widget for {pdef.name}: {e}")
+        self.updating_widgets = False
 
     def set_widget_value(self, widget, construct_type, value):
         # Handle arrays
@@ -2808,10 +3004,12 @@ class ParameterEditorTab(QWidget):
 
     def update_buttons(self):
         """Update button enabled states."""
-        enabled = self.connection.is_connected() and not self.connection.calibrating \
-            and not hasattr(self, 'num_outstanding')
+        enabled = self.connection.is_connected() and not self.connection.calibrating
         self.read_all_btn.setEnabled(enabled)
+        self.write_all_btn.setEnabled(enabled and len(self.param_changed))
         self.save_json_btn.setEnabled(enabled and len(self.param_values))
+        self.load_json_btn.setEnabled(not self.connection.calibrating)
+        self.filter_input.setEnabled(not self.connection.calibrating)
 
         # Update individual parameter buttons
         for param_id, widgets in self.param_widgets.items():
